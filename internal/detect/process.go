@@ -149,11 +149,8 @@ var unitRe = regexp.MustCompile(`/([^/]+\.service)`)
 func enrich(s *Server) {
 	proc := filepath.Join("/proc", strconv.Itoa(s.PID))
 
-	// Find the vllm console script. Typical argv is
-	// ["<venv>/bin/python3", "<venv>/bin/vllm", "serve", ...], so prefer an
-	// argv entry that IS the vllm script; fall back to a sibling of the
-	// interpreter or of argv[0]. /proc/<pid>/exe is useless here -- venv
-	// pythons symlink to the system interpreter.
+	// Find the vllm console script in argv. /proc/<pid>/exe is useless
+	// here: venv pythons symlink to the system interpreter.
 	for _, a := range s.Cmdline {
 		if strings.HasSuffix(a, "/vllm") && isExecutable(a) {
 			s.VLLMBin = a

@@ -62,6 +62,29 @@ func TestSetPreservesCommentsAndQuoting(t *testing.T) {
 	}
 }
 
+func TestParseEnvEscapedQuotes(t *testing.T) {
+	// Real-world case: JSON-valued flags are escaped for bash sourcing.
+	f := parseEnv(`EXTRA_ARGS="--default-chat-template-kwargs {\"thinking\":true}"` + "\n")
+	want := `--default-chat-template-kwargs {"thinking":true}`
+	if got := f.Get("EXTRA_ARGS"); got != want {
+		t.Errorf("EXTRA_ARGS = %q, want %q", got, want)
+	}
+}
+
+func TestQuoteRoundTrip(t *testing.T) {
+	for _, v := range []string{
+		"plain",
+		"two words",
+		`--default-chat-template-kwargs {"thinking":true}`,
+		`back\slash and "quote"`,
+	} {
+		f := parseEnv("K=" + Quote(v) + "\n")
+		if got := f.Get("K"); got != v {
+			t.Errorf("round-trip %q -> %q", v, got)
+		}
+	}
+}
+
 func TestDelete(t *testing.T) {
 	f := parseEnv("A=1\nB=2\n")
 	f.Delete("A")

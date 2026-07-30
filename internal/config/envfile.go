@@ -46,20 +46,32 @@ func parseEnv(content string) *EnvFile {
 
 func unquote(v string) string {
 	v = strings.TrimSpace(v)
-	if len(v) >= 2 && (v[0] == '"' && v[len(v)-1] == '"' || v[0] == '\'' && v[len(v)-1] == '\'') {
+	if len(v) < 2 {
+		return v
+	}
+	if v[0] == '\'' && v[len(v)-1] == '\'' {
 		return v[1 : len(v)-1]
+	}
+	if v[0] == '"' && v[len(v)-1] == '"' {
+		// Bash double-quote semantics: \" and \\ are escapes.
+		inner := v[1 : len(v)-1]
+		inner = strings.ReplaceAll(inner, `\\`, "\x00")
+		inner = strings.ReplaceAll(inner, `\"`, `"`)
+		return strings.ReplaceAll(inner, "\x00", `\`)
 	}
 	return v
 }
 
 // Quote renders a value so the file stays bash-sourceable: multi-word
 // values (like EXTRA_ARGS) must be double-quoted or bash treats the second
-// word as a command when sourcing.
+// word as a command when sourcing, and embedded quotes must be escaped.
 func Quote(v string) string {
-	if strings.ContainsAny(v, " \t") {
-		return `"` + v + `"`
+	if !strings.ContainsAny(v, " \t\"") {
+		return v
 	}
-	return v
+	escaped := strings.ReplaceAll(v, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
 }
 
 func (f *EnvFile) Get(key string) string { return f.vals[key] }

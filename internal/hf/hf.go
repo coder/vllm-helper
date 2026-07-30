@@ -104,12 +104,9 @@ type DetectedFlags struct {
 }
 
 // DetectFlags fetches a model's README and pulls known vLLM serving flags
-// out of any literal "vllm serve" snippet.
-//
-// Deliberately ignored even if present: --tensor-parallel-size,
-// --pipeline-parallel-size, --data-parallel-size, --host, --port,
-// --served-model-name -- deployment-topology flags that are wrong to copy
-// onto a different machine.
+// out of any literal "vllm serve" snippet. Topology flags (parallelism,
+// host, port, served-model-name) are deliberately ignored: they describe
+// someone else's deployment, not the model.
 func DetectFlags(repo string) (DetectedFlags, error) {
 	var d DetectedFlags
 	resp, err := httpClient.Get("https://huggingface.co/" + repo + "/raw/main/README.md")
@@ -149,6 +146,14 @@ func DetectFlags(repo string) (DetectedFlags, error) {
 	addValued("--reasoning-parser")
 	addBool("--enable-prefix-caching")
 	addBool("--trust-remote-code")
+
+	// deepseek_v3 and poolside_v1 use vLLM's raw DeepSeekV3ReasoningParser,
+	// which defaults thinking=false per request; when false, vLLM silently
+	// swaps in a no-op parser and raw <think> tags leak into content. No
+	// model card documents this, so default it here.
+	if m := regexp.MustCompile(`--reasoning-parser\s+(deepseek_v3|poolside_v1)\b`).FindStringSubmatch(snippet); m != nil {
+		flags = append(flags, `--default-chat-template-kwargs {"thinking":true}`)
+	}
 	d.ExtraArgs = strings.Join(flags, " ")
 
 	if m := regexp.MustCompile(`--max-model-len\s+(\d+)`).FindStringSubmatch(snippet); m != nil {

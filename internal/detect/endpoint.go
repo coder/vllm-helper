@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-// Endpoint is an OpenAI-compatible server found by probing localhost ports.
-// This is the catch-all detection layer: it finds servers whose process we
-// can't see (Docker Desktop VMs, Kubernetes, remote-mounted namespaces).
+// Endpoint is an OpenAI-compatible server found by probing localhost ports,
+// the catch-all layer for servers whose process we can't see.
 type Endpoint struct {
 	Port      string
 	Healthy   bool     // GET /health returned 200 (vLLM-style health route)

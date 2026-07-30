@@ -5,12 +5,8 @@ THISBOX.md
 bin/
 dist/
 
-# Legacy pre-XDG layout files -- config/secrets/state now live under
-# ~/.config/vllm-helper and ~/.local/state/vllm-helper, never in the repo.
-.env
-.env.bak*
-globals.env
-models/
+# Local leftovers that must never be committed
 tiktoken-encodings/
 *.bak
 *.bak.*
+.env

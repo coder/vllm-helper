@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/coder/vllm-helper/internal/config"
@@ -12,7 +14,7 @@ import (
 )
 
 // cmdDoctor prints everything we can detect about this machine and flags
-// drift between config and reality. Read-only, always safe.
+// drift between config and reality.
 func cmdDoctor() error {
 	hw := detect.Probe()
 	fmt.Println("HARDWARE")
@@ -103,7 +105,10 @@ func cmdDoctor() error {
 		fmt.Printf("  :%s  %s\n", ep.Port, strings.Join(desc, "; "))
 	}
 
-	// Drift checks -- the part a human wouldn't spot at a glance.
+	fmt.Println()
+	checkToolchain()
+
+	// Drift checks: the part a human wouldn't spot at a glance.
 	if cfg != nil {
 		var warnings []string
 		activeModel := ""
@@ -141,6 +146,61 @@ func orUnknown(s string) string {
 		return "unknown"
 	}
 	return s
+}
+
+// checkToolchain verifies the build packages vLLM's JIT kernel compilation
+// needs (Triton, FlashInfer). Which one bites depends on the first model
+// served, so checking up front beats discovering them one crash at a time.
+func checkToolchain() {
+	fmt.Println("BUILD TOOLCHAIN (for vLLM/FlashInfer/Triton JIT kernels)")
+	var missing []string
+	check := func(label, aptPkg string, ok bool) {
+		state := "ok"
+		if !ok {
+			state = "MISSING"
+			if aptPkg != "" {
+				missing = append(missing, aptPkg)
+			}
+		}
+		fmt.Printf("  %-12s %s\n", label, state)
+	}
+	has := func(bins ...string) bool {
+		for _, b := range bins {
+			if _, err := exec.LookPath(b); err != nil {
+				return false
+			}
+		}
+		return true
+	}
+	pyHeaders, _ := filepath.Glob("/usr/include/python3*/Python.h")
+	check("ninja", "ninja-build", has("ninja"))
+	check("gcc/g++", "build-essential", has("gcc", "g++"))
+	check("Python.h", pythonDevPkg(), len(pyHeaders) > 0)
+
+	if len(missing) == 0 {
+		return
+	}
+	if !has("apt-get") {
+		fmt.Printf("  install the missing packages with your distro's package manager: %s\n", strings.Join(missing, " "))
+		return
+	}
+	fmt.Println()
+	fmt.Printf("  fix: sudo apt-get install -y %s\n", strings.Join(missing, " "))
+	if confirm("  Run this now?", false) {
+		cmd := exec.Command("sudo", append([]string{"apt-get", "install", "-y"}, missing...)...)
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "  install failed:", err)
+		}
+	}
+}
+
+func pythonDevPkg() string {
+	out, err := exec.Command("python3", "-c", "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}-dev')").Output()
+	if err != nil {
+		return "python3-dev"
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // cmdAdopt detects a running vLLM server and takes it over: saves its

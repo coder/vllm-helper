@@ -1,11 +1,7 @@
-// Package coder implements the OPTIONAL Coder Agents sync: keeping a Coder
-// deployment's AI-model picker in sync with local profiles. Each profile
-// gets ONE persistent model-config entry; switching flips enabled/is_default
-// so only the loaded model is selectable. Profile -> config-id mappings live
-// in state (coder-ids.env), so profile files stay shareable.
-//
-// Sync failures never block local operations -- callers print a warning and
-// continue.
+// Package coder syncs a Coder deployment's AI-model picker with local
+// profiles: each profile gets one persistent model-config entry, and
+// switching flips enabled/is_default so only the loaded model is selectable.
+// Sync failures never block local operations.
 package coder
 
 import (
