@@ -1,0 +1,45 @@
+version: 2
+project_name: vllm-helper
+
+builds:
+  - main: .
+    binary: vllm-helper
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # macOS is Apple Silicon only (Intel Macs can't serve models anyway).
+      - goos: darwin
+        goarch: amd64
+    ldflags:
+      - -s -w -X github.com/coder/vllm-helper/internal/cli.Version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: coder
+    name: vllm-helper
+  draft: false
+  prerelease: auto

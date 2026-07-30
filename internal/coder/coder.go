@@ -1,0 +1,98 @@
+// Package coder implements the OPTIONAL Coder Agents sync: keeping a Coder
+// deployment's AI-model picker in sync with local profiles. Each profile
+// gets ONE persistent model-config entry; switching flips enabled/is_default
+// so only the loaded model is selectable. Profile -> config-id mappings live
+// in state (coder-ids.env), so profile files stay shareable.
+//
+// Sync failures never block local operations -- callers print a warning and
+// continue.
+package coder
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+)
+
+type Client struct {
+	URL        string
+	Token      string
+	ProviderID string
+	HTTP       *http.Client
+}
+
+func NewClient(url, token, providerID string) *Client {
+	return &Client{
+		URL:        url,
+		Token:      token,
+		ProviderID: providerID,
+		HTTP:       &http.Client{Timeout: 15 * time.Second},
+	}
+}
+
+type ModelConfig struct {
+	ID           string `json:"id,omitempty"`
+	AIProviderID string `json:"ai_provider_id,omitempty"`
+	Model        string `json:"model"`
+	DisplayName  string `json:"display_name"`
+	ContextLimit int64  `json:"context_limit"`
+	Enabled      bool   `json:"enabled"`
+	IsDefault    bool   `json:"is_default"`
+}
+
+func (c *Client) do(method, path string, body any, out any) error {
+	var buf bytes.Buffer
+	if body != nil {
+		if err := json.NewEncoder(&buf).Encode(body); err != nil {
+			return err
+		}
+	}
+	req, err := http.NewRequest(method, c.URL+"/api/experimental/chats/model-configs"+path, &buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Coder-Session-Token", c.Token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("coder API %s %s: HTTP %d", method, path, resp.StatusCode)
+	}
+	if out != nil {
+		return json.NewDecoder(resp.Body).Decode(out)
+	}
+	return nil
+}
+
+// Create posts a new model-config entry and returns its ID.
+func (c *Client) Create(mc ModelConfig) (string, error) {
+	mc.AIProviderID = c.ProviderID
+	var created ModelConfig
+	if err := c.do("POST", "", mc, &created); err != nil {
+		return "", err
+	}
+	return created.ID, nil
+}
+
+// Update patches an existing entry.
+func (c *Client) Update(id string, mc ModelConfig) error {
+	return c.do("PATCH", "/"+id, mc, nil)
+}
+
+// Disable flips an entry to disabled/non-default without touching its model.
+func (c *Client) Disable(id string) error {
+	return c.do("PATCH", "/"+id, map[string]bool{"enabled": false, "is_default": false}, nil)
+}
+
+// Delete removes an entry entirely.
+func (c *Client) Delete(id string) error {
+	return c.do("DELETE", "/"+id, nil, nil)
+}

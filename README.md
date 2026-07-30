@@ -20,15 +20,33 @@ What it gives you over raw `vllm serve`:
 - **Optional [Coder](https://coder.com) Agents sync** -- if configured, every
   switch keeps a Coder deployment's AI-model picker in sync so users can only
   select the model that's actually loaded.
+- **Adoption of existing setups** -- already running `vllm serve` by hand or
+  under your own systemd unit? `vllm-helper adopt` detects it (process scan,
+  systemd, Docker/Podman, endpoint probing), saves its live command line as a
+  profile, and takes over management **without restarting your server**.
 
 ## Requirements
 
 - Linux with systemd (macOS support is planned; see Roadmap)
-- An existing vLLM install (typically in a venv -- the installer finds
-  `vllm` on your PATH, or you set `VLLM_BIN` in config)
-- `bash`, `curl`, `python3`; `fzf` for the interactive search (optional)
+- An existing vLLM install (typically in a venv -- setup finds `vllm` on
+  your PATH, or you set `VLLM_BIN` in config)
 
 ## Install
+
+**Binary (recommended):** grab the latest release for your platform
+(linux amd64/arm64, macOS arm64) from
+[Releases](https://github.com/coder/vllm-helper/releases), put it on your
+PATH, and run first-time setup:
+
+```bash
+tar xzf vllm-helper_*.tar.gz
+sudo install vllm-helper /usr/local/bin/
+vllm-helper setup     # detects hardware + existing vLLM, offers adoption,
+                      # writes config, installs the systemd unit
+```
+
+**From source (bash scripts):** the original script implementation still
+works and installs the same layout:
 
 ```bash
 git clone https://github.com/coder/vllm-helper && cd vllm-helper
@@ -37,9 +55,8 @@ git clone https://github.com/coder/vllm-helper && cd vllm-helper
 ./install.sh --user   # user-scope unit, no sudo (enables lingering)
 ```
 
-The installer is idempotent (safe to re-run after `git pull`), never
-overwrites your config or profiles, and never restarts a running server. It
-creates:
+Both paths are idempotent, never overwrite your config or profiles, and
+never restart a running server. The layout:
 
 | Path | What |
 |---|---|
@@ -56,8 +73,10 @@ vllm-helper status                  # is it running, what model, is it healthy
 vllm-helper list                    # saved profiles
 vllm-helper switch qwen3-coder-next # switch to a saved profile
 vllm-helper new <org/model-repo>    # pull, profile, and switch to a new HF model
-vllm-helper search <query>          # interactive HuggingFace search (needs a real terminal)
+vllm-helper search <query>          # interactive HuggingFace search
 vllm-helper remove <profile>        # delete a profile (refuses if active)
+vllm-helper adopt                   # take over an already-running vLLM server
+vllm-helper doctor                  # hardware, running servers, config drift
 ```
 
 Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the API
@@ -149,33 +168,37 @@ switch -- the scripts warn and continue. `vllm-helper coder-sync
 ## How it's wired up
 
 ```
-vllm-helper              CLI entry point (symlinked onto PATH by install.sh)
-install.sh               Idempotent installer -- see Install above
-vllm.service.template    Rendered into the systemd unit by install.sh
+main.go                  Binary entry point
+internal/
+  cli/                   Command implementations (status, switch, adopt, doctor, setup, ...)
+  config/                XDG dir resolution + bash-compatible env-file parsing
+  profile/               Saved model profiles
+  detect/                Detection engine: /proc scan, Docker/Podman, endpoint
+                         probe, hardware (unified memory vs discrete VRAM)
+  hf/                    HuggingFace Hub client + flag auto-detection
+  systemd/               Service management (system and user scope)
+  coder/                 Optional Coder Agents sync client
+
+vllm-helper              Legacy bash CLI (same behavior, same config files)
+install.sh               Script-based installer (see Install above)
+lib/*.sh                 Bash implementation the script CLI dispatches to
 profiles/                Curated example profiles, copied to your config on install
-lib/
-  common.sh              Shared bootstrap: XDG dir resolution, config loading
-  start.sh               What systemd runs -- sources the generated runtime env, execs vllm serve
-  switch.sh              Core switch/new/remove/list logic
-  search.sh              fzf HuggingFace search picker
-  preview.sh             fzf preview pane (size/license/fit check)
-  detect-flags.sh        Auto-detects vllm serve flags from a model's HF card
-  sync-coder.sh          Optional Coder Agents sync
 ```
+
+The Go binary and the bash scripts read and write the exact same config,
+profile, and state files -- you can move between them freely.
 
 Nothing ever writes into the checkout -- config, secrets, state, and data all
 live in the XDG paths listed under Install.
 
 ## Roadmap
 
-This is the bash-based v0. Planned next (tracked in issues):
-
-- A Go rewrite shipping as a **single static binary** for linux/amd64,
-  linux/arm64, and macOS, with first-run **detection and adoption of existing
-  vLLM setups** (host processes, systemd units, Docker/Podman containers).
-- Hardware-aware sizing (unified memory vs discrete VRAM) instead of a
-  static budget.
-- macOS remote-control mode for managing a Linux vLLM box.
+- **Container-managed switching**: `adopt` already detects vLLM running in
+  Docker/Podman; making `switch` recreate the container is next.
+- Homebrew tap and `.deb` packaging.
+- macOS remote-control mode for managing a Linux vLLM box (the darwin
+  binary currently makes sense for search/sizing only -- vLLM itself cannot
+  serve on Apple Silicon).
 
 ## License
 

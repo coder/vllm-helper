@@ -1,6 +1,10 @@
 # Machine-local notes (endpoints, IPs, box-specific model table)
 THISBOX.md
 
+# Build output
+bin/
+dist/
+
 # Legacy pre-XDG layout files -- config/secrets/state now live under
 # ~/.config/vllm-helper and ~/.local/state/vllm-helper, never in the repo.
 .env
