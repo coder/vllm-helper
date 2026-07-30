@@ -28,6 +28,10 @@ COMMANDS
                            (switch/new/remove already do this automatically)
   status                   Quick health check: service state, active model,
                            and whether the endpoint is responding
+  doctor                   Check for (and offer to install) build-toolchain
+                           packages vLLM's JIT kernel compilation needs --
+                           run this once after setup, or if a switch fails
+                           with a FileNotFoundError for a compiler/build tool
 
 Run 'vllm-helper switch' (or new/remove) with no further arguments to see
 the full reference for that command, including the saved profile list.
@@ -48,6 +52,7 @@ case "$cmd" in
   search)     exec lib/search.sh "$@" ;;
   coder-sync) exec lib/sync-coder.sh "$@" ;;
   start)      exec lib/start.sh ;;
+  doctor)     exec lib/doctor.sh "$@" ;;
   status)
     vh_load_config
     if [ "$SERVICE_SCOPE" = "user" ]; then
