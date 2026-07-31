@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -78,14 +79,34 @@ func cmdNew(args []string) error {
 	fmt.Println("Pulling new model:", repo)
 	fmt.Println("Checking the model's README for known vLLM serving flags...")
 	detected, _ := hf.DetectFlags(repo)
+	extraArgs := detected.ExtraArgs
+
+	fmt.Println("Checking the model's chat template for known crash patterns...")
+	patchedTemplate, needsPatch, err := hf.DetectChatTemplatePatch(repo)
+	if err != nil {
+		fmt.Println("Chat template check failed, continuing without it:", err)
+	} else if needsPatch {
+		tmplPath := filepath.Join(cfg.Dirs.Data, "chat-templates", name+".jinja")
+		if err := os.MkdirAll(filepath.Dir(tmplPath), 0o755); err != nil {
+			fmt.Println("Couldn't create chat-templates dir, continuing without the patch:", err)
+		} else if err := os.WriteFile(tmplPath, []byte(patchedTemplate), 0o644); err != nil {
+			fmt.Println("Couldn't write patched template, continuing without it:", err)
+		} else {
+			fmt.Println("This model's bundled template crashes if a system-role message isn't")
+			fmt.Println("first in the conversation (common with agent harnesses like Coder Agents).")
+			fmt.Println("Patched a local copy:", tmplPath)
+			extraArgs = strings.TrimSpace(extraArgs + " --chat-template " + tmplPath)
+		}
+	}
+
 	opts := profile.CreateOpts{
 		Repo:        repo,
 		MaxModelLen: detected.MaxModelLen,
-		ExtraArgs:   detected.ExtraArgs,
+		ExtraArgs:   extraArgs,
 		Source:      "vllm-helper new",
 	}
-	if detected.ExtraArgs != "" {
-		fmt.Println("Auto-detected from the model card:", detected.ExtraArgs)
+	if extraArgs != "" {
+		fmt.Println("Auto-detected from the model card:", extraArgs)
 		opts.Status = "NOT YET VERIFIED -- flags auto-detected from README"
 	} else {
 		fmt.Println("No vllm serve snippet found in the model's README -- check its HF card by")
