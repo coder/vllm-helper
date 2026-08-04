@@ -44,13 +44,13 @@ vllm-helper logs                # follow the server journal
 vllm-helper doctor              # hardware, running servers, integrations, drift
 ```
 
-Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the key from `~/.config/vllm-helper/secrets.env`. Switching reloads the model, which takes a few minutes when the weights are cached and longer on first download. `switch` watches the boot and reports when the endpoint is actually serving; a crash or crash loop fails fast with the traceback instead of hanging.
+Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the key from `~/.config/vllm-helper/secrets.env`. Switching reloads the model, which takes a few minutes when the weights are cached and longer on first download. `switch` waits until the endpoint responds; if the service fails or crash-loops, it exits with the last log lines.
 
 `new` and `search` read the model's HuggingFace card and pre-fill known vLLM serving flags (tool call parsers, reasoning parsers, context length). `search` also checks each model's size against what your machine can actually hold.
 
 ### Scripting
 
-`status`, `list`, `search`, `inspect`, and `doctor` take `--json` for machine-readable output. `switch`, `new`, and `restart` take `--wait` (block quietly until the endpoint is healthy), `--no-follow` (fire and forget), and `--timeout`. Commands adapt to non-interactive use on their own: when stdout is piped they don't tail logs or start pickers, and when stdin isn't a terminal they never prompt and use `sudo -n` so nothing hangs waiting for a password.
+`status`, `list`, `search`, `inspect`, and `doctor` take `--json`. `switch`, `new`, and `restart` take `--wait` (block until the endpoint is healthy), `--no-follow` (return immediately), and `--timeout`. When stdout is piped, commands don't tail logs or start pickers; when stdin isn't a terminal, prompts take their defaults and sudo runs with `-n`.
 
 ## Profiles
 
@@ -70,7 +70,7 @@ Keep `EXTRA_ARGS` quoted if it has more than one flag; flag values with spaces (
 
 If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm-helper can keep Coder's model picker truthful: every profile gets a model-config entry, and only the loaded model is enabled. Set `CODER_URL` and `CODER_AI_PROVIDER_ID` in `config.env` and `CODER_API_TOKEN` in `secrets.env`. Sync failures never block a local switch.
 
-`vllm-helper coder-sync register-all` backfills a (disabled) entry for every saved profile so the picker shows your whole library, and `vllm-helper doctor` verifies the URL and token actually work instead of just checking that they're set.
+`vllm-helper coder-sync register-all` creates a disabled entry for every saved profile. `vllm-helper doctor` verifies the configured URL and token against the API.
 
 ## Troubleshooting
 
