@@ -50,7 +50,7 @@ Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the key fr
 
 ### Scripting
 
-`status`, `list`, `search`, `inspect`, and `doctor` take `--json` for machine-readable output. `switch`, `new`, and `restart` take `--wait` (block quietly until the endpoint is healthy), `--no-follow` (fire and forget), and `--timeout`. When output is piped, commands default to non-interactive behavior: no prompts, no log tailing, and `sudo -n` so nothing hangs waiting for a password.
+`status`, `list`, `search`, `inspect`, and `doctor` take `--json` for machine-readable output. `switch`, `new`, and `restart` take `--wait` (block quietly until the endpoint is healthy), `--no-follow` (fire and forget), and `--timeout`. Commands adapt to non-interactive use on their own: when stdout is piped they don't tail logs or start pickers, and when stdin isn't a terminal they never prompt and use `sudo -n` so nothing hangs waiting for a password.
 
 ## Profiles
 

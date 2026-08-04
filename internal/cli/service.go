@@ -67,10 +67,12 @@ func cmdRestart(args []string) error {
 	return watchBoot(cfg, name, o)
 }
 
-// cmdLogs shows the service journal: last -n lines, following by default.
+// cmdLogs shows the service journal: last -n lines, following by default
+// on a terminal. Piped output prints and exits so scripts never hang.
 func cmdLogs(args []string) error {
 	fs := newFlagSet("logs")
 	lines := fs.Int("n", 50, "how many past lines to show")
+	follow := fs.Bool("follow", false, "keep following even when output is piped")
 	noFollow := fs.Bool("no-follow", false, "print the lines and exit instead of following")
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
@@ -80,7 +82,14 @@ func cmdLogs(args []string) error {
 		return err
 	}
 	svc := service(cfg)
+	doFollow := stdoutIsTTY()
+	if *follow {
+		doFollow = true
+	}
 	if *noFollow {
+		doFollow = false
+	}
+	if !doFollow {
 		return svc.PrintLogs(*lines)
 	}
 	fmt.Println("Following the service log -- Ctrl+C to stop (the service keeps running):")

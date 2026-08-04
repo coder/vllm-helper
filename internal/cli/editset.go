@@ -38,8 +38,13 @@ func cmdEdit(args []string) error {
 	if editor == "" {
 		return fmt.Errorf("no editor found -- set $EDITOR, or edit %s directly", cfg.Dirs.ProfileFile(name))
 	}
+	// $EDITOR may carry arguments ("code --wait", "emacs -nw").
+	words, err := config.SplitWords(editor)
+	if err != nil || len(words) == 0 {
+		return fmt.Errorf("can't parse editor command %q", editor)
+	}
 
-	cmd := exec.Command(editor, cfg.Dirs.ProfileFile(name))
+	cmd := exec.Command(words[0], append(words[1:], cfg.Dirs.ProfileFile(name))...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("editor exited with an error: %w", err)

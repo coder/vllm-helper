@@ -81,6 +81,14 @@ func cmdSearch(args []string) error {
 	}
 	fmt.Println()
 
+	// The picker needs a human on both ends; piped sessions get the list
+	// (or --json) without prompts that would block forever.
+	if !stdoutIsTTY() || !stdinIsTTY() {
+		fmt.Println("(non-interactive session -- use --json for machine-readable results, or")
+		fmt.Println("'vllm-helper new <org/model>' to pull one of these directly)")
+		return nil
+	}
+
 	for {
 		pick := ask(fmt.Sprintf("Pick a model to inspect (1-%d, Enter to cancel)", len(models)), "")
 		if pick == "" {
