@@ -70,7 +70,7 @@ Keep `EXTRA_ARGS` quoted if it has more than one flag; flag values with spaces (
 
 If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm-helper can keep Coder's model picker truthful: every profile gets a model-config entry, and only the loaded model is enabled. Set `CODER_URL` and `CODER_AI_PROVIDER_ID` in `config.env` and `CODER_API_TOKEN` in `secrets.env`. Sync failures never block a local switch.
 
-`vllm-helper coder-sync register-all` creates a disabled entry for every saved profile. `vllm-helper doctor` verifies the configured URL and token against the API.
+`vllm-helper coder-sync register-all` adds a disabled entry for any profile that doesn't have one yet; existing entries are left as-is. `vllm-helper doctor` verifies the configured URL and token against the API.
 
 ## Troubleshooting
 
