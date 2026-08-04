@@ -50,6 +50,53 @@ func (m Model) QuantTags() []string {
 	return out
 }
 
+// Lookup fetches one model's metadata by repo id.
+func Lookup(repo string) (Model, error) {
+	var m Model
+	resp, err := httpClient.Get("https://huggingface.co/api/models/" + repo)
+	if err != nil {
+		return m, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return m, fmt.Errorf("no model %q on HuggingFace (private, gated, or a typo?)", repo)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return m, fmt.Errorf("hub lookup: HTTP %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		return m, err
+	}
+	if m.ID == "" {
+		m.ID = repo
+	}
+	return m, nil
+}
+
+// WhoAmI validates a Hub token and returns the account name it belongs to.
+func WhoAmI(token string) (string, error) {
+	req, _ := http.NewRequest("GET", "https://huggingface.co/api/whoami-v2", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "", fmt.Errorf("token rejected (HTTP 401)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("whoami: HTTP %d", resp.StatusCode)
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	return body.Name, nil
+}
+
 // Search queries the Hub for text-generation models, most-downloaded first.
 func Search(query string, limit int) ([]Model, error) {
 	u := fmt.Sprintf(

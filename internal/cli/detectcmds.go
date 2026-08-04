@@ -10,13 +10,187 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/detect"
+	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
+// doctorReport is everything doctor learns, in one machine-readable shape.
+type doctorReport struct {
+	Hardware    detect.Hardware    `json:"hardware"`
+	Config      *doctorConfig      `json:"config"`
+	ConfigError string             `json:"config_error,omitempty"`
+	Servers     []detect.Server    `json:"servers"`
+	Containers  []detect.Container `json:"containers"`
+	Endpoints   []detect.Endpoint  `json:"endpoints"`
+	Toolchain   []toolchainCheck   `json:"toolchain"`
+	Coder       coderStatus        `json:"coder_sync"`
+	HFToken     hfTokenStatus      `json:"hf_token"`
+	Warnings    []string           `json:"warnings"`
+}
+
+type doctorConfig struct {
+	Path            string `json:"path"`
+	Port            string `json:"port"`
+	VLLMBin         string `json:"vllm_bin"`
+	VLLMBinOK       bool   `json:"vllm_bin_ok"`
+	Service         string `json:"service"`
+	Scope           string `json:"scope"`
+	ServiceState    string `json:"service_state"`
+	CoderConfigured bool   `json:"coder_sync_configured"`
+}
+
+type toolchainCheck struct {
+	Name       string `json:"name"`
+	OK         bool   `json:"ok"`
+	AptPackage string `json:"apt_package,omitempty"`
+}
+
+type coderStatus struct {
+	Configured bool   `json:"configured"`
+	URL        string `json:"url,omitempty"`
+	Reachable  bool   `json:"reachable"`
+	Error      string `json:"error,omitempty"`
+}
+
+type hfTokenStatus struct {
+	Present bool   `json:"present"`
+	Source  string `json:"source,omitempty"`
+	Account string `json:"account,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
 // cmdDoctor prints everything we can detect about this machine and flags
 // drift between config and reality.
-func cmdDoctor() error {
-	hw := detect.Probe()
+func cmdDoctor(args []string) error {
+	fs := newFlagSet("doctor")
+	jsonOut := fs.Bool("json", false, "print the full report as JSON (no prompts)")
+	yes := fs.Bool("yes", false, "install missing toolchain packages without asking")
+	if _, err := parseArgs(fs, args); err != nil {
+		return err
+	}
+
+	r := gatherDoctor()
+	if *jsonOut {
+		return printJSON(r)
+	}
+	renderDoctor(r, *yes)
+	return nil
+}
+
+func gatherDoctor() doctorReport {
+	r := doctorReport{Hardware: detect.Probe()}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		r.ConfigError = err.Error()
+		cfg = nil
+	} else {
+		bin := cfg.VLLMBin()
+		binOK := false
+		if bin != "" {
+			if info, err := os.Stat(bin); err == nil && info.Mode()&0o111 != 0 {
+				binOK = true
+			}
+		}
+		r.Config = &doctorConfig{
+			Path:            cfg.Dirs.ConfigFile(),
+			Port:            cfg.Port(),
+			VLLMBin:         bin,
+			VLLMBinOK:       binOK,
+			Service:         cfg.ServiceName(),
+			Scope:           cfg.ServiceScope(),
+			ServiceState:    service(cfg).IsActive(),
+			CoderConfigured: cfg.CoderConfigured(),
+		}
+	}
+
+	r.Servers = detect.ScanProcesses()
+	r.Containers = detect.ScanContainers()
+
+	apiKey, extraPort := "", ""
+	if cfg != nil {
+		apiKey, extraPort = cfg.APIKey(), cfg.Port()
+	}
+	r.Endpoints = detect.ProbePorts(detect.DefaultPorts(extraPort), apiKey)
+
+	r.Toolchain = gatherToolchain()
+	r.Coder = gatherCoderStatus(cfg)
+	r.HFToken = gatherHFToken(cfg)
+
+	// Drift checks: the part a human wouldn't spot at a glance.
+	if cfg != nil {
+		activeModel := ""
+		if active, err := config.ParseEnvFile(cfg.Dirs.ActiveEnvFile()); err == nil {
+			activeModel = active.Get("MODEL")
+		}
+		for _, s := range r.Servers {
+			if s.InContainer {
+				continue
+			}
+			if s.Port == cfg.Port() && activeModel != "" && s.Model != "" && s.Model != activeModel {
+				r.Warnings = append(r.Warnings, fmt.Sprintf(
+					"config says model %s but port %s is serving %s -- was the server started outside vllm-helper? Run 'vllm-helper adopt'.",
+					activeModel, s.Port, s.Model))
+			}
+			if s.SystemdUnit != "" && s.SystemdUnit != cfg.ServiceName() {
+				r.Warnings = append(r.Warnings, fmt.Sprintf(
+					"running server belongs to systemd unit %s but config manages %s -- run 'vllm-helper adopt' to take it over.",
+					s.SystemdUnit, cfg.ServiceName()))
+			}
+		}
+	}
+	return r
+}
+
+// gatherCoderStatus goes beyond "the variables are set": it calls the API
+// so an expired token or wrong URL shows up here instead of on the next
+// switch.
+func gatherCoderStatus(cfg *config.Config) coderStatus {
+	st := coderStatus{}
+	if cfg == nil || !cfg.CoderConfigured() {
+		return st
+	}
+	st.Configured = true
+	st.URL = cfg.CoderURL()
+	client := coderClient(cfg)
+	if err := client.Check(); err != nil {
+		st.Error = err.Error()
+	} else {
+		st.Reachable = true
+	}
+	return st
+}
+
+// gatherHFToken reports whether a HuggingFace token is available (gated
+// models can't be pulled without one) and whether the Hub accepts it.
+func gatherHFToken(cfg *config.Config) hfTokenStatus {
+	st := hfTokenStatus{}
+	token := ""
+	if cfg != nil && cfg.HFToken() != "" {
+		token, st.Source = cfg.HFToken(), "config"
+	} else {
+		for _, k := range []string{"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_TOKEN"} {
+			if v := os.Getenv(k); v != "" {
+				token, st.Source = v, "environment ("+k+")"
+				break
+			}
+		}
+	}
+	if token == "" {
+		return st
+	}
+	st.Present = true
+	account, err := hf.WhoAmI(token)
+	if err != nil {
+		st.Error = err.Error()
+	} else {
+		st.Account = account
+	}
+	return st
+}
+
+func renderDoctor(r doctorReport, yes bool) {
+	hw := r.Hardware
 	fmt.Println("HARDWARE")
 	fmt.Printf("  memory:     %d GB total\n", hw.TotalMemGB)
 	if hw.GPUName != "" {
@@ -31,38 +205,30 @@ func cmdDoctor() error {
 	fmt.Printf("  budget:     ~%d GB of model weights (%s)\n", hw.BudgetGB, hw.BudgetReason)
 	fmt.Println()
 
-	cfg, err := loadConfig()
 	fmt.Println("CONFIG")
-	if err != nil {
-		fmt.Printf("  %v\n\n", err)
-		cfg = nil
+	if r.Config == nil {
+		fmt.Printf("  %s\n\n", r.ConfigError)
 	} else {
-		fmt.Printf("  config:     %s\n", cfg.Dirs.ConfigFile())
-		fmt.Printf("  port:       %s\n", cfg.Port())
-		bin := cfg.VLLMBin()
-		if bin == "" {
+		c := r.Config
+		fmt.Printf("  config:     %s\n", c.Path)
+		fmt.Printf("  port:       %s\n", c.Port)
+		switch {
+		case c.VLLMBin == "":
 			fmt.Println("  vllm bin:   NOT SET -- set VLLM_BIN in config.env")
-		} else if info, err := os.Stat(bin); err != nil || info.Mode()&0o111 == 0 {
-			fmt.Printf("  vllm bin:   %s (MISSING or not executable)\n", bin)
-		} else {
-			fmt.Printf("  vllm bin:   %s\n", bin)
+		case !c.VLLMBinOK:
+			fmt.Printf("  vllm bin:   %s (MISSING or not executable)\n", c.VLLMBin)
+		default:
+			fmt.Printf("  vllm bin:   %s\n", c.VLLMBin)
 		}
-		fmt.Printf("  service:    %s (%s scope) -- %s\n", cfg.ServiceName(), cfg.ServiceScope(), service(cfg).IsActive())
-		if cfg.CoderConfigured() {
-			fmt.Println("  coder sync: configured")
-		} else {
-			fmt.Println("  coder sync: not configured (optional)")
-		}
+		fmt.Printf("  service:    %s (%s scope) -- %s\n", c.Service, c.Scope, c.ServiceState)
 		fmt.Println()
 	}
 
-	servers := detect.ScanProcesses()
-	containers := detect.ScanContainers()
 	fmt.Println("RUNNING SERVERS")
-	if len(servers) == 0 && len(containers) == 0 {
+	if len(r.Servers) == 0 && len(r.Containers) == 0 {
 		fmt.Println("  no vLLM processes or containers found")
 	}
-	for _, s := range servers {
+	for _, s := range r.Servers {
 		fmt.Printf("  pid %d: %s on port %s", s.PID, orUnknown(s.Model), s.Port)
 		switch {
 		case s.InContainer:
@@ -77,21 +243,16 @@ func cmdDoctor() error {
 			fmt.Printf("      flags: %s\n", s.ExtraArgs)
 		}
 	}
-	for _, c := range containers {
+	for _, c := range r.Containers {
 		fmt.Printf("  %s container %s: image %s, ports %s\n", c.Runtime, c.Name, c.Image, orUnknown(c.Ports))
 	}
 	fmt.Println()
 
 	fmt.Println("ENDPOINTS (localhost probe)")
-	apiKey, extraPort := "", ""
-	if cfg != nil {
-		apiKey, extraPort = cfg.APIKey(), cfg.Port()
-	}
-	eps := detect.ProbePorts(detect.DefaultPorts(extraPort), apiKey)
-	if len(eps) == 0 {
+	if len(r.Endpoints) == 0 {
 		fmt.Println("  no OpenAI-compatible endpoints responding")
 	}
-	for _, ep := range eps {
+	for _, ep := range r.Endpoints {
 		desc := []string{}
 		if ep.Healthy {
 			desc = append(desc, "healthy")
@@ -104,41 +265,38 @@ func cmdDoctor() error {
 		}
 		fmt.Printf("  :%s  %s\n", ep.Port, strings.Join(desc, "; "))
 	}
-
 	fmt.Println()
-	checkToolchain()
 
-	// Drift checks: the part a human wouldn't spot at a glance.
-	if cfg != nil {
-		var warnings []string
-		activeModel := ""
-		if active, err := config.ParseEnvFile(cfg.Dirs.ActiveEnvFile()); err == nil {
-			activeModel = active.Get("MODEL")
-		}
-		for _, s := range servers {
-			if s.InContainer {
-				continue
-			}
-			if s.Port == cfg.Port() && activeModel != "" && s.Model != "" && s.Model != activeModel {
-				warnings = append(warnings, fmt.Sprintf(
-					"config says model %s but port %s is serving %s -- was the server started outside vllm-helper? Run 'vllm-helper adopt'.",
-					activeModel, s.Port, s.Model))
-			}
-			if s.SystemdUnit != "" && s.SystemdUnit != cfg.ServiceName() {
-				warnings = append(warnings, fmt.Sprintf(
-					"running server belongs to systemd unit %s but config manages %s -- run 'vllm-helper adopt' to take it over.",
-					s.SystemdUnit, cfg.ServiceName()))
-			}
-		}
-		if len(warnings) > 0 {
-			fmt.Println()
-			fmt.Println("WARNINGS")
-			for _, w := range warnings {
-				fmt.Println("  ! " + w)
-			}
+	fmt.Println("INTEGRATIONS")
+	switch {
+	case !r.Coder.Configured:
+		fmt.Println("  coder sync: not configured (optional)")
+	case r.Coder.Reachable:
+		fmt.Printf("  coder sync: OK -- %s answered with this token\n", r.Coder.URL)
+	default:
+		fmt.Printf("  coder sync: CONFIGURED BUT FAILING -- %s\n", r.Coder.Error)
+		fmt.Println("              (check CODER_URL and that CODER_API_TOKEN hasn't expired)")
+	}
+	switch {
+	case !r.HFToken.Present:
+		fmt.Println("  hf token:   not set (fine for public models; gated models like Llama")
+		fmt.Println("              need HF_TOKEN in config.env or the environment)")
+	case r.HFToken.Error != "":
+		fmt.Printf("  hf token:   set (%s) but the Hub rejected it: %s\n", r.HFToken.Source, r.HFToken.Error)
+	default:
+		fmt.Printf("  hf token:   OK -- authenticated as %q (%s)\n", r.HFToken.Account, r.HFToken.Source)
+	}
+	fmt.Println()
+
+	renderToolchain(r.Toolchain, yes)
+
+	if len(r.Warnings) > 0 {
+		fmt.Println()
+		fmt.Println("WARNINGS")
+		for _, w := range r.Warnings {
+			fmt.Println("  ! " + w)
 		}
 	}
-	return nil
 }
 
 func orUnknown(s string) string {
@@ -148,22 +306,10 @@ func orUnknown(s string) string {
 	return s
 }
 
-// checkToolchain verifies the build packages vLLM's JIT kernel compilation
+// gatherToolchain verifies the build packages vLLM's JIT kernel compilation
 // needs (Triton, FlashInfer). Which one bites depends on the first model
 // served, so checking up front beats discovering them one crash at a time.
-func checkToolchain() {
-	fmt.Println("BUILD TOOLCHAIN (for vLLM/FlashInfer/Triton JIT kernels)")
-	var missing []string
-	check := func(label, aptPkg string, ok bool) {
-		state := "ok"
-		if !ok {
-			state = "MISSING"
-			if aptPkg != "" {
-				missing = append(missing, aptPkg)
-			}
-		}
-		fmt.Printf("  %-12s %s\n", label, state)
-	}
+func gatherToolchain() []toolchainCheck {
 	has := func(bins ...string) bool {
 		for _, b := range bins {
 			if _, err := exec.LookPath(b); err != nil {
@@ -173,20 +319,36 @@ func checkToolchain() {
 		return true
 	}
 	pyHeaders, _ := filepath.Glob("/usr/include/python3*/Python.h")
-	check("ninja", "ninja-build", has("ninja"))
-	check("gcc/g++", "build-essential", has("gcc", "g++"))
-	check("Python.h", pythonDevPkg(), len(pyHeaders) > 0)
+	return []toolchainCheck{
+		{Name: "ninja", AptPackage: "ninja-build", OK: has("ninja")},
+		{Name: "gcc/g++", AptPackage: "build-essential", OK: has("gcc", "g++")},
+		{Name: "Python.h", AptPackage: pythonDevPkg(), OK: len(pyHeaders) > 0},
+	}
+}
 
+func renderToolchain(checks []toolchainCheck, yes bool) {
+	fmt.Println("BUILD TOOLCHAIN (for vLLM/FlashInfer/Triton JIT kernels)")
+	var missing []string
+	for _, c := range checks {
+		state := "ok"
+		if !c.OK {
+			state = "MISSING"
+			if c.AptPackage != "" {
+				missing = append(missing, c.AptPackage)
+			}
+		}
+		fmt.Printf("  %-12s %s\n", c.Name, state)
+	}
 	if len(missing) == 0 {
 		return
 	}
-	if !has("apt-get") {
+	if _, err := exec.LookPath("apt-get"); err != nil {
 		fmt.Printf("  install the missing packages with your distro's package manager: %s\n", strings.Join(missing, " "))
 		return
 	}
 	fmt.Println()
 	fmt.Printf("  fix: sudo apt-get install -y %s\n", strings.Join(missing, " "))
-	if confirm("  Run this now?", false) {
+	if yes || confirm("  Run this now?", false) {
 		cmd := exec.Command("sudo", append([]string{"apt-get", "install", "-y"}, missing...)...)
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {

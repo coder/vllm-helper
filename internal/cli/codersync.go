@@ -11,15 +11,25 @@ import (
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
+const coderSyncUsage = "usage: vllm-helper coder-sync <activate|register|remove> <profile>  |  coder-sync register-all"
+
 func cmdCoderSync(args []string) error {
-	if len(args) < 2 {
-		return errors.New("usage: vllm-helper coder-sync <activate|register|remove> <profile>")
+	if len(args) < 1 {
+		return errors.New(coderSyncUsage)
 	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	op, name := args[0], args[1]
+	op := args[0]
+
+	if op == "register-all" {
+		return coderRegisterAll(cfg)
+	}
+	if len(args) < 2 {
+		return errors.New(coderSyncUsage)
+	}
+	name := args[1]
 	p, err := profile.Load(cfg.Dirs, name)
 	if err != nil && op != "remove" {
 		return err
@@ -32,8 +42,30 @@ func cmdCoderSync(args []string) error {
 	case "remove":
 		coderRemove(cfg, name)
 	default:
-		return errors.New("usage: vllm-helper coder-sync <activate|register|remove> <profile>")
+		return errors.New(coderSyncUsage)
 	}
+	return nil
+}
+
+// coderRegisterAll backfills a (disabled) Coder model-config entry for
+// every saved profile, so the deployment's model picker shows the whole
+// library, not just models that have been active at least once.
+func coderRegisterAll(cfg *config.Config) error {
+	if !cfg.CoderConfigured() {
+		return errors.New("Coder sync is not configured (CODER_URL/CODER_API_TOKEN/CODER_AI_PROVIDER_ID)")
+	}
+	profiles, err := profile.List(cfg.Dirs)
+	if err != nil {
+		return err
+	}
+	if len(profiles) == 0 {
+		fmt.Println("No profiles to register.")
+		return nil
+	}
+	for _, p := range profiles {
+		coderRegister(cfg, p)
+	}
+	fmt.Printf("Done -- %d profile(s) checked against Coder.\n", len(profiles))
 	return nil
 }
 

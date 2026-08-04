@@ -9,23 +9,24 @@ import (
 )
 
 // Server is one detected vLLM server and everything we learned about it.
+// Cmdline is deliberately kept out of JSON: it can contain --api-key values.
 type Server struct {
-	PID     int
-	Cmdline []string
+	PID     int      `json:"pid"`
+	Cmdline []string `json:"-"`
 
 	// Parsed from the command line:
-	Model       string
-	Port        string
-	MaxModelLen string
-	ExtraArgs   string // recognized per-model serving flags, reassembled
-	APIKeySet   bool
+	Model       string `json:"model"`
+	Port        string `json:"port"`
+	MaxModelLen string `json:"max_model_len,omitempty"`
+	ExtraArgs   string `json:"extra_args,omitempty"` // recognized per-model serving flags, reassembled
+	APIKeySet   bool   `json:"api_key_set"`
 
 	// How it's being run:
-	VLLMBin       string // resolved vllm executable ("" if unknown)
-	SystemdUnit   string // e.g. "vllm.service" ("" if not under systemd)
-	UserScope     bool   // true if under the user manager (user@.service slice)
-	InContainer   bool   // cgroup says it's inside a container
-	ContainerHint string // raw cgroup fragment for container correlation
+	VLLMBin       string `json:"vllm_bin,omitempty"`       // resolved vllm executable ("" if unknown)
+	SystemdUnit   string `json:"systemd_unit,omitempty"`   // e.g. "vllm.service" ("" if not under systemd)
+	UserScope     bool   `json:"user_scope"`               // true if under the user manager (user@.service slice)
+	InContainer   bool   `json:"in_container"`             // cgroup says it's inside a container
+	ContainerHint string `json:"container_hint,omitempty"` // raw cgroup fragment for container correlation
 }
 
 // vLLM's OpenAI server shows up either as "... vllm serve <model> ..." or

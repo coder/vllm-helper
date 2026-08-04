@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strings"
 	"syscall"
 
 	"github.com/coder/vllm-helper/internal/config"
@@ -36,7 +35,11 @@ func cmdStart() error {
 		"--api-key", active.Get("VLLM_API_KEY"),
 	}
 	if extra := active.Get("EXTRA_ARGS"); extra != "" {
-		args = append(args, strings.Fields(extra)...)
+		words, err := config.SplitWords(extra)
+		if err != nil {
+			return fmt.Errorf("EXTRA_ARGS: %w", err)
+		}
+		args = append(args, words...)
 	}
 
 	// Give vLLM the merged env (TIKTOKEN_ENCODINGS_BASE, HF_HOME, ...) on

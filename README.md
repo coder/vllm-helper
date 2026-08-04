@@ -34,13 +34,23 @@ vllm-helper list                # saved profiles
 vllm-helper switch <profile>    # load a different model (restarts the server)
 vllm-helper new <org/model>     # pull a HuggingFace model and switch to it
 vllm-helper search <query>      # find models on HuggingFace, with size checks
+vllm-helper inspect <org/model> # license, size vs budget, detected vLLM flags
+vllm-helper edit <profile>      # open a profile in $EDITOR (validated on save)
+vllm-helper set <profile> K=V   # change a profile setting from the CLI
 vllm-helper remove <profile>    # delete a profile
-vllm-helper doctor              # hardware, running servers, config drift
+vllm-helper restart             # re-apply the active profile and restart
+vllm-helper stop                # stop the server
+vllm-helper logs                # follow the server journal
+vllm-helper doctor              # hardware, running servers, integrations, drift
 ```
 
-Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the key from `~/.config/vllm-helper/secrets.env`. Switching reloads the model, which takes a few minutes when the weights are cached and longer on first download.
+Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the key from `~/.config/vllm-helper/secrets.env`. Switching reloads the model, which takes a few minutes when the weights are cached and longer on first download. `switch` watches the boot and reports when the endpoint is actually serving; a crash or crash loop fails fast with the traceback instead of hanging.
 
 `new` and `search` read the model's HuggingFace card and pre-fill known vLLM serving flags (tool call parsers, reasoning parsers, context length). `search` also checks each model's size against what your machine can actually hold.
+
+### Scripting
+
+`status`, `list`, `search`, `inspect`, and `doctor` take `--json` for machine-readable output. `switch`, `new`, and `restart` take `--wait` (block quietly until the endpoint is healthy), `--no-follow` (fire and forget), and `--timeout`. When output is piped, commands default to non-interactive behavior: no prompts, no log tailing, and `sudo -n` so nothing hangs waiting for a password.
 
 ## Profiles
 
@@ -54,11 +64,13 @@ GPU_MEMORY_UTILIZATION=0.85
 EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 ```
 
-Keep `EXTRA_ARGS` quoted if it has more than one flag. Before pulling a large model, prefer the smallest official quantized release: roughly 1 byte per parameter for FP8/INT8 and 0.5 for INT4/AWQ/GPTQ, against the budget `doctor` reports for your machine.
+Keep `EXTRA_ARGS` quoted if it has more than one flag; flag values with spaces (like JSON) can be quoted inside it. Before pulling a large model, prefer the smallest official quantized release: roughly 1 byte per parameter for FP8/INT8 and 0.5 for INT4/AWQ/GPTQ, against the budget `doctor` reports for your machine.
 
 ## Coder Agents sync
 
 If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm-helper can keep Coder's model picker truthful: every profile gets a model-config entry, and only the loaded model is enabled. Set `CODER_URL` and `CODER_AI_PROVIDER_ID` in `config.env` and `CODER_API_TOKEN` in `secrets.env`. Sync failures never block a local switch.
+
+`vllm-helper coder-sync register-all` backfills a (disabled) entry for every saved profile so the picker shows your whole library, and `vllm-helper doctor` verifies the URL and token actually work instead of just checking that they're set.
 
 ## Troubleshooting
 

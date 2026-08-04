@@ -10,12 +10,12 @@ import (
 
 // Hardware describes what we can serve models with on this machine.
 type Hardware struct {
-	TotalMemGB   int    // system RAM
-	GPUName      string // e.g. "NVIDIA GB10", "" if no NVIDIA GPU visible
-	GPUMemGB     int    // VRAM reported by nvidia-smi; 0 if unknown/none
-	Unified      bool   // GPU shares system memory (DGX Spark / GB10 / Grace)
-	BudgetGB     int    // recommended max GB of model weights on disk
-	BudgetReason string // one-liner explaining the budget for the user
+	TotalMemGB   int    `json:"total_mem_gb"`  // system RAM
+	GPUName      string `json:"gpu_name"`      // e.g. "NVIDIA GB10", "" if no NVIDIA GPU visible
+	GPUMemGB     int    `json:"gpu_mem_gb"`    // VRAM reported by nvidia-smi; 0 if unknown/none
+	Unified      bool   `json:"unified"`       // GPU shares system memory (DGX Spark / GB10 / Grace)
+	BudgetGB     int    `json:"budget_gb"`     // recommended max GB of model weights on disk
+	BudgetReason string `json:"budget_reason"` // one-liner explaining the budget for the user
 }
 
 // Probe inspects /proc/meminfo and nvidia-smi (if present). Never fails --

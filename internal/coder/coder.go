@@ -68,6 +68,14 @@ func (c *Client) do(method, path string, body any, out any) error {
 	return nil
 }
 
+// Check verifies the URL, token, and API availability by listing the
+// deployment's model-configs. It doesn't validate the provider ID (the API
+// has no cheap probe for that), but it catches the common failures: wrong
+// URL, expired token, or a Coder build without the experimental chats API.
+func (c *Client) Check() error {
+	return c.do("GET", "", nil, nil)
+}
+
 // Create posts a new model-config entry and returns its ID.
 func (c *Client) Create(mc ModelConfig) (string, error) {
 	mc.AIProviderID = c.ProviderID

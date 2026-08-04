@@ -64,9 +64,10 @@ func unquote(v string) string {
 
 // Quote renders a value so the file stays bash-sourceable: multi-word
 // values (like EXTRA_ARGS) must be double-quoted or bash treats the second
-// word as a command when sourcing, and embedded quotes must be escaped.
+// word as a command when sourcing, and embedded quotes and backslashes
+// must be escaped (bash treats an unquoted backslash as an escape).
 func Quote(v string) string {
-	if !strings.ContainsAny(v, " \t\"") {
+	if !strings.ContainsAny(v, " \t\"\\'") {
 		return v
 	}
 	escaped := strings.ReplaceAll(v, `\`, `\\`)
