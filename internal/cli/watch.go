@@ -61,7 +61,11 @@ func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
 				fmt.Fprintln(os.Stderr, logs)
 			}
 		}
-		return fmt.Errorf("%s -- full log: journalctl -u %s -n 100", reason, cfg.ServiceName())
+		userFlag := ""
+		if cfg.ServiceScope() == "user" {
+			userFlag = "--user "
+		}
+		return fmt.Errorf("%s -- full log: journalctl %s-u %s -n 100", reason, userFlag, cfg.ServiceName())
 	}
 
 	for {

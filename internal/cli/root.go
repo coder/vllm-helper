@@ -3,6 +3,8 @@ package cli
 
 import (
 	"bufio"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -105,6 +107,9 @@ func Run(args []string) int {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n%s", cmd, topHelp)
 		return 1
+	}
+	if errors.Is(err, flag.ErrHelp) {
+		return 0 // -h/--help: the flag set already printed its usage
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "vllm-helper:", err)
