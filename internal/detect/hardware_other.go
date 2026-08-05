@@ -6,4 +6,7 @@ package detect
 // falls back to whatever MODEL_BUDGET_GB says in config.env.
 func totalMemGB() int { return 0 }
 
+// AvailableMemMB has no portable implementation.
+func AvailableMemMB() int { return 0 }
+
 func describeLocalGPU(*Hardware) {}

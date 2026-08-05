@@ -2,6 +2,7 @@ package detect
 
 import (
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -22,6 +23,38 @@ func totalMemGB() int {
 		return 0
 	}
 	return int(n / 1024 / 1024 / 1024)
+}
+
+var pageSizeRe = regexp.MustCompile(`page size of (\d+) bytes`)
+
+// AvailableMemMB reports memory that can be allocated right now, counted the
+// way psutil -- and therefore vLLM's CPU backend -- counts it on macOS: free
+// pages plus the reclaimable ones.
+func AvailableMemMB() int {
+	out, err := exec.Command("vm_stat").Output()
+	if err != nil {
+		return 0
+	}
+	text := string(out)
+
+	pageSize := int64(4096)
+	if m := pageSizeRe.FindStringSubmatch(text); m != nil {
+		if n, err := strconv.ParseInt(m[1], 10, 64); err == nil && n > 0 {
+			pageSize = n
+		}
+	}
+
+	var pages int64
+	for _, key := range []string{"Pages free", "Pages inactive", "Pages speculative"} {
+		m := regexp.MustCompile(regexp.QuoteMeta(key) + `:\s+(\d+)`).FindStringSubmatch(text)
+		if m == nil {
+			continue
+		}
+		if n, err := strconv.ParseInt(m[1], 10, 64); err == nil {
+			pages += n
+		}
+	}
+	return int(pages * pageSize / 1024 / 1024)
 }
 
 // describeLocalGPU names the Apple Silicon SoC and marks its memory unified:

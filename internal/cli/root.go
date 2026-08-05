@@ -43,7 +43,7 @@ COMMANDS
   logs [-n N] [--no-follow]
                            Show the server journal (follows by default)
   adopt                    Detect an already-running vLLM server (host
-                           process, systemd unit, or container) and save it
+                           process, service unit, or container) and save it
                            as a managed profile
   doctor [--json] [--yes]  Diagnose this machine: hardware, running servers,
                            integrations, config drift

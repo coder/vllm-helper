@@ -14,7 +14,7 @@ import (
 )
 
 // cmdSetup is first-time setup for binary installs: detect hardware and any
-// existing vLLM, write config + secrets, install the systemd unit, and
+// existing vLLM, write config + secrets, install the service unit, and
 // offer to adopt a running server. Idempotent; never overwrites existing
 // config and never restarts anything.
 func cmdSetup() error {

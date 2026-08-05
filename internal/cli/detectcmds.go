@@ -134,8 +134,8 @@ func gatherDoctor() doctorReport {
 			}
 			if s.SystemdUnit != "" && s.SystemdUnit != cfg.ServiceName() {
 				r.Warnings = append(r.Warnings, fmt.Sprintf(
-					"running server belongs to systemd unit %s but config manages %s -- run 'vllm-helper adopt' to take it over.",
-					s.SystemdUnit, cfg.ServiceName()))
+					"running server belongs to %s unit %s but config manages %s -- run 'vllm-helper adopt' to take it over.",
+					config.ServiceManager, s.SystemdUnit, cfg.ServiceName()))
 			}
 		}
 	}
@@ -234,7 +234,7 @@ func renderDoctor(r doctorReport, yes bool) {
 		case s.InContainer:
 			fmt.Printf(" (inside a %s container)", s.ContainerHint)
 		case s.SystemdUnit != "":
-			fmt.Printf(" (systemd unit %s)", s.SystemdUnit)
+			fmt.Printf(" (%s: %s)", config.ServiceManager, s.SystemdUnit)
 		default:
 			fmt.Printf(" (bare process -- not service-managed)")
 		}
@@ -503,7 +503,7 @@ func adoptInto(cfg *config.Config) error {
 
 	if s.SystemdUnit == "" {
 		fmt.Println()
-		fmt.Println("NOTE: the running server is a bare process (no systemd unit), so")
+		fmt.Printf("NOTE: the running server is a bare process (no %s unit), so\n", config.ServiceManager)
 		fmt.Println("'vllm-helper switch' can't restart it. Stop it yourself when ready and")
 		fmt.Println("run 'vllm-helper setup' to install the service, then switch normally.")
 	}

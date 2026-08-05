@@ -8,8 +8,8 @@ import (
 	"github.com/coder/vllm-helper/internal/config"
 )
 
-// cmdStart is what systemd runs: source the generated active.env and exec
-// vllm serve, replacing this process so signals flow straight to vLLM.
+// cmdStart is what the service manager runs: source the generated active.env
+// and exec vllm serve, replacing this process so signals flow straight to vLLM.
 func cmdStart() error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -36,7 +36,7 @@ func cmdStart() error {
 	args := []string{bin, "serve", active.Get("MODEL"),
 		"--port", active.Get("PORT"),
 		"--max-model-len", active.Get("MAX_MODEL_LEN"),
-		"--gpu-memory-utilization", active.Get("GPU_MEMORY_UTILIZATION"),
+		"--gpu-memory-utilization", fitMemUtilization(active.Get("GPU_MEMORY_UTILIZATION")),
 		"--api-key", active.Get("VLLM_API_KEY"),
 	}
 	if extra := active.Get("EXTRA_ARGS"); extra != "" {
