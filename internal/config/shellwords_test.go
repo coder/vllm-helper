@@ -20,7 +20,7 @@ func TestSplitWords(t *testing.T) {
 		{`--default-chat-template-kwargs "{\"thinking\": true}"`,
 			[]string{"--default-chat-template-kwargs", `{"thinking": true}`}},
 		// Quotes glued to unquoted text form a single word.
-		{`--x=a" b"c`, []string{`--x=a b`+"c"}},
+		{`--x=a" b"c`, []string{`--x=a b` + "c"}},
 		{`a\ b`, []string{"a b"}},
 		{"--tool-call-parser qwen3_coder", []string{"--tool-call-parser", "qwen3_coder"}},
 		{"\ttabs\nand newlines ", []string{"tabs", "and", "newlines"}},
@@ -64,5 +64,51 @@ func TestQuoteSplitRoundTrip(t *testing.T) {
 		if len(got) != 1 || got[0] != v {
 			t.Errorf("round trip %q = %#v", v, got)
 		}
+	}
+}
+
+func TestSplitArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{{
+		// Profiles created before values were quoted -- and everything
+		// 'adopt' reconstructs from a running server's argv -- store bare
+		// JSON. Quote removal must not corrupt it.
+		name: "legacy bare JSON survives",
+		in:   `--default-chat-template-kwargs {"thinking":true}`,
+		want: []string{"--default-chat-template-kwargs", `{"thinking":true}`},
+	}, {
+		name: "quoted JSON with spaces stays one argument",
+		in:   `--override-generation-config '{"temperature": 0.7}'`,
+		want: []string{"--override-generation-config", `{"temperature": 0.7}`},
+	}, {
+		name: "ordinary flags are untouched",
+		in:   "--enable-auto-tool-choice --tool-call-parser poolside_v1",
+		want: []string{"--enable-auto-tool-choice", "--tool-call-parser", "poolside_v1"},
+	}, {
+		// Not JSON, so POSIX quote removal still applies.
+		name: "quoted plain text is still unquoted",
+		in:   `--served-model-name "my model"`,
+		want: []string{"--served-model-name", "my model"},
+	}}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := SplitArgs(c.in)
+			if err != nil {
+				t.Fatalf("SplitArgs(%q) error: %v", c.in, err)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("SplitArgs(%q) = %#v, want %#v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// The bare-JSON rule must not resurrect malformed input as valid.
+func TestSplitArgsErrors(t *testing.T) {
+	if _, err := SplitArgs(`--x '{"unterminated": 1}`); err == nil {
+		t.Error("unterminated quote should still fail")
 	}
 }

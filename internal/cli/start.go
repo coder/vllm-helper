@@ -35,7 +35,7 @@ func cmdStart() error {
 		"--api-key", active.Get("VLLM_API_KEY"),
 	}
 	if extra := active.Get("EXTRA_ARGS"); extra != "" {
-		words, err := config.SplitWords(extra)
+		words, err := config.SplitArgs(extra)
 		if err != nil {
 			return fmt.Errorf("EXTRA_ARGS: %w", err)
 		}

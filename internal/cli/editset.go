@@ -110,7 +110,7 @@ func afterProfileChange(cfg *config.Config, name string) error {
 		return fmt.Errorf("profile '%s' has no MODEL= line -- it can't be served like this", name)
 	}
 	if extra := p.ExtraArgs(); extra != "" {
-		if _, err := config.SplitWords(extra); err != nil {
+		if _, err := config.SplitArgs(extra); err != nil {
 			return fmt.Errorf("profile '%s' EXTRA_ARGS won't parse: %w", name, err)
 		}
 	}

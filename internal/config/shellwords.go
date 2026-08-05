@@ -1,9 +1,49 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
+
+// SplitArgs splits an EXTRA_ARGS value into arguments for vllm serve.
+//
+// It is SplitWords plus one backward-compatibility rule. Profiles written
+// before values were quoted store bare JSON, e.g.
+//
+//	EXTRA_ARGS="--default-chat-template-kwargs {\"thinking\":true}"
+//
+// which the env file already unquotes to {"thinking":true}. A second,
+// POSIX-correct pass would then remove those inner quotes and hand vLLM
+// {thinking:true}, which is not JSON -- so where shell parsing would turn a
+// valid JSON argument into an invalid one, keep the literal text instead.
+// Splitting is unambiguous in that case because such values contain no
+// spaces; anything the shell regrouped is left to SplitWords.
+func SplitArgs(s string) ([]string, error) {
+	words, err := SplitWords(s)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(s)
+	if len(fields) != len(words) {
+		return words, nil
+	}
+	for i := range words {
+		if words[i] != fields[i] && isJSON(fields[i]) && !isJSON(words[i]) {
+			words[i] = fields[i]
+		}
+	}
+	return words, nil
+}
+
+// isJSON reports whether s is a JSON object or array. Bare scalars don't
+// count: quote removal can't corrupt them.
+func isJSON(s string) bool {
+	if !strings.HasPrefix(s, "{") && !strings.HasPrefix(s, "[") {
+		return false
+	}
+	return json.Valid([]byte(s))
+}
 
 // SplitWords splits a string into words the way a POSIX shell would:
 // unquoted whitespace separates words, single quotes are literal, double
