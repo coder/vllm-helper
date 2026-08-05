@@ -75,8 +75,15 @@ func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
 				checkmark(), cfg.Port(), elapsed, label)
 			return nil
 		}
-		if state := svc.IsActive(); state == "failed" {
+		switch svc.IsActive() {
+		case "failed":
 			return fail("the service entered a failed state")
+		case "inactive", "deactivating":
+			// The unit is started before we get here, so a stopped unit
+			// means the server exited on its own (or something else
+			// stopped it). Waiting for a health check it will never answer
+			// would hang forever with the default timeout.
+			return fail("the service stopped instead of coming up")
 		}
 		if n := svc.NRestarts(); baseline >= 0 && n > baseline+1 {
 			return fail(fmt.Sprintf("the service is crash-looping (%d restarts since the switch)", n-baseline))
