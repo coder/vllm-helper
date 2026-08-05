@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -206,7 +207,49 @@ func DetectFlags(repo string) (DetectedFlags, error) {
 	if m := regexp.MustCompile(`--max-model-len\s+(\d+)`).FindStringSubmatch(snippet); m != nil {
 		d.MaxModelLen = m[1]
 	}
+
+	// Model cards routinely paste a snippet from a bigger sibling model, so
+	// the advertised context can exceed what this model actually supports.
+	// vLLM refuses to start in that case, so clamp to the real ceiling.
+	if limit, err := ContextLimit(repo); err == nil {
+		d.MaxModelLen = clampContext(d.MaxModelLen, limit)
+	}
 	return d, nil
+}
+
+// ContextLimit reads max_position_embeddings from a model's config.json --
+// the ceiling vLLM validates --max-model-len against. Returns 0 when the
+// field is absent.
+func ContextLimit(repo string) (int, error) {
+	resp, err := httpClient.Get("https://huggingface.co/" + repo + "/raw/main/config.json")
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("model config: HTTP %d", resp.StatusCode)
+	}
+	var cfg struct {
+		MaxPositionEmbeddings int `json:"max_position_embeddings"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&cfg); err != nil {
+		return 0, err
+	}
+	return cfg.MaxPositionEmbeddings, nil
+}
+
+// clampContext caps a model card's advertised context length at the model's
+// real limit. An unparseable or absent value falls back to the limit itself,
+// which is a better default than vLLM's.
+func clampContext(value string, limit int) string {
+	if limit <= 0 {
+		return value
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n > limit {
+		return strconv.Itoa(limit)
+	}
+	return value
 }
 
 var systemMessagePositionRe = regexp.MustCompile(
