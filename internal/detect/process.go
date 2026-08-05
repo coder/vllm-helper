@@ -85,6 +85,20 @@ var valuelessFlags = map[string]bool{
 	"--trust-remote-code":       true,
 }
 
+// looksSecret reports whether a flag carries a credential. Those are left
+// out of ExtraArgs entirely: it lands in a profile file and in
+// 'doctor --json', which is the same reason Cmdline is withheld from JSON.
+// Matching on the trailing word keeps real flags like --tokenizer-mode and
+// --ssl-keyfile from being mistaken for secrets.
+func looksSecret(flag string) bool {
+	for _, suffix := range []string{"-key", "-token", "-secret", "-password"} {
+		if strings.HasSuffix(strings.ToLower(flag), suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 // looksLikeValue distinguishes a flag's value from the next flag. Negative
 // numbers are values despite the leading dash (e.g. --seed -1).
 func looksLikeValue(s string) bool {
@@ -144,6 +158,8 @@ func parseServer(pid int, args []string) Server {
 				s.APIKeySet = true
 			case valuelessFlags[flag]: // e.g. --trust-remote-code=true
 				extra = append(extra, flag)
+			case looksSecret(flag):
+				// Deliberately dropped, like --api-key.
 			default:
 				extra = append(extra, flag+"="+config.Quote(val))
 			}
@@ -152,7 +168,14 @@ func parseServer(pid int, args []string) Server {
 		case strings.HasPrefix(a, "--"):
 			// Anything else the server was started with: carry it over so
 			// the profile can reproduce this configuration.
-			if i+1 < len(args) && looksLikeValue(args[i+1]) {
+			hasValue := i+1 < len(args) && looksLikeValue(args[i+1])
+			if looksSecret(a) {
+				if hasValue {
+					next() // consume it so it can't be read as a flag
+				}
+				break
+			}
+			if hasValue {
 				extra = append(extra, a+" "+config.Quote(next()))
 			} else {
 				extra = append(extra, a)

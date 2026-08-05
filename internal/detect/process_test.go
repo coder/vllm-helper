@@ -115,6 +115,22 @@ func TestParseServerNeverLeaksAPIKey(t *testing.T) {
 	}
 }
 
+// ExtraArgs reaches both a profile file and 'doctor --json', so credentials
+// must not ride along -- without catching real flags that merely look like
+// they might.
+func TestParseServerDropsSecretsButKeepsLookalikes(t *testing.T) {
+	s := parseServer(8, strings.Fields(
+		"/usr/bin/vllm serve m/x --hf-token hf_secret --tokenizer-mode auto --ssl-keyfile /etc/k.pem"))
+	if strings.Contains(s.ExtraArgs, "hf_secret") || strings.Contains(s.ExtraArgs, "--hf-token") {
+		t.Errorf("secret leaked into ExtraArgs %q", s.ExtraArgs)
+	}
+	for _, want := range []string{"--tokenizer-mode auto", "--ssl-keyfile /etc/k.pem"} {
+		if !strings.Contains(s.ExtraArgs, want) {
+			t.Errorf("ExtraArgs %q lost %q", s.ExtraArgs, want)
+		}
+	}
+}
+
 func TestParseServerDefaultsPort(t *testing.T) {
 	s := parseServer(3, strings.Fields("/usr/bin/vllm serve meta-llama/Llama-3-8B"))
 	if s.Port != "8000" {
