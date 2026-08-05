@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/systemd"
+	"github.com/coder/vllm-helper/internal/service"
 )
 
 // Version is stamped by goreleaser via ldflags.
@@ -122,8 +122,8 @@ func loadConfig() (*config.Config, error) {
 	return config.Load()
 }
 
-func service(cfg *config.Config) systemd.Service {
-	return systemd.Service{
+func svc(cfg *config.Config) service.Service {
+	return service.Service{
 		Name:  cfg.ServiceName(),
 		Scope: cfg.ServiceScope(),
 		// Without a terminal, sudo must fail fast instead of prompting

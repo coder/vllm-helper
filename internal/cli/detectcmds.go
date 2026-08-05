@@ -99,7 +99,7 @@ func gatherDoctor() doctorReport {
 			VLLMBinOK:       binOK,
 			Service:         cfg.ServiceName(),
 			Scope:           cfg.ServiceScope(),
-			ServiceState:    service(cfg).IsActive(),
+			ServiceState:    svc(cfg).IsActive(),
 			CoderConfigured: cfg.CoderConfigured(),
 		}
 	}

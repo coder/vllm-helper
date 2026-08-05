@@ -240,7 +240,7 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	fmt.Println()
 	fmt.Printf("Restarting %s (this reloads the model -- can take several minutes,\n", cfg.ServiceName())
 	fmt.Println("longer if the model isn't cached on disk yet)...")
-	if err := service(cfg).Restart(); err != nil {
+	if err := svc(cfg).Restart(); err != nil {
 		return fmt.Errorf("restarting service: %w", err)
 	}
 
@@ -300,7 +300,7 @@ type statusReport struct {
 
 func gatherStatus(cfg *config.Config) statusReport {
 	r := statusReport{
-		Service: service(cfg).IsActive(),
+		Service: svc(cfg).IsActive(),
 		Profile: cfg.ActiveProfile(),
 		Model:   "unknown",
 		Port:    cfg.Port(),
@@ -338,6 +338,9 @@ func cmdStatus(args []string) error {
 		fmt.Printf("endpoint: healthy (http %d on port %s)\n", r.HTTPStatus, r.Port)
 	} else {
 		fmt.Printf("endpoint: not responding (http %03d on port %s) -- still loading, or check the service logs\n", r.HTTPStatus, r.Port)
+		if hint := svc(cfg).LogHint(); hint != "" {
+			fmt.Printf("logs:     %s\n", hint)
+		}
 	}
 	return nil
 }

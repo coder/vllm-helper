@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -33,13 +34,13 @@ func probeHealth(port string) (int, bool) {
 // and crash loops instead of letting the user stare at a stalled log.
 // Returns nil once the endpoint is healthy.
 func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
-	svc := service(cfg)
+	s := svc(cfg)
 	start := time.Now()
 
 	var tail interface{ Kill() error }
 	if opts.follow {
 		fmt.Println("Watching boot log -- Ctrl+C to stop watching (the service keeps running):")
-		cmd, err := svc.StartTail(10)
+		cmd, err := s.StartTail(10)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "couldn't follow the journal (continuing to wait):", err)
 		} else {
@@ -51,21 +52,20 @@ func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
 		}
 	}
 
-	baseline := svc.NRestarts()
+	baseline := s.NRestarts()
 	fail := func(reason string) error {
 		if tail != nil {
 			_ = tail.Kill()
 		}
 		if !opts.follow {
-			if logs := svc.LastLogs(30); logs != "" {
+			if logs := s.LastLogs(30); logs != "" {
 				fmt.Fprintln(os.Stderr, logs)
 			}
 		}
-		userFlag := ""
-		if cfg.ServiceScope() == "user" {
-			userFlag = "--user "
+		if hint := s.LogHint(); hint != "" {
+			return fmt.Errorf("%s -- full log: %s", reason, hint)
 		}
-		return fmt.Errorf("%s -- full log: journalctl %s-u %s -n 100", reason, userFlag, cfg.ServiceName())
+		return errors.New(reason)
 	}
 
 	for {
@@ -75,7 +75,7 @@ func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
 				checkmark(), cfg.Port(), elapsed, label)
 			return nil
 		}
-		switch svc.IsActive() {
+		switch s.IsActive() {
 		case "failed":
 			return fail("the service entered a failed state")
 		case "inactive", "deactivating":
@@ -85,7 +85,7 @@ func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
 			// would hang forever with the default timeout.
 			return fail("the service stopped instead of coming up")
 		}
-		if n := svc.NRestarts(); baseline >= 0 && n > baseline+1 {
+		if n := s.NRestarts(); baseline >= 0 && n > baseline+1 {
 			return fail(fmt.Sprintf("the service is crash-looping (%d restarts since the switch)", n-baseline))
 		}
 		if opts.timeout > 0 && time.Since(start) > opts.timeout {

@@ -108,7 +108,7 @@ func Create(dirs config.Dirs, opts CreateOpts) (*Profile, error) {
 		opts.MaxModelLen = "131072"
 	}
 	if opts.MemUtilization == "" {
-		opts.MemUtilization = "0.85"
+		opts.MemUtilization = config.DefaultMemUtilization
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err

@@ -13,11 +13,11 @@ func cmdStop() error {
 	if err != nil {
 		return err
 	}
-	if state := service(cfg).IsActive(); state != "active" && state != "activating" {
+	if state := svc(cfg).IsActive(); state != "active" && state != "activating" {
 		fmt.Printf("%s is not running (state: %s) -- nothing to stop.\n", cfg.ServiceName(), state)
 		return nil
 	}
-	if err := service(cfg).Stop(); err != nil {
+	if err := svc(cfg).Stop(); err != nil {
 		return fmt.Errorf("stopping %s: %w", cfg.ServiceName(), err)
 	}
 	fmt.Printf("Stopped %s. Start it again with 'vllm-helper restart' or by\n", cfg.ServiceName())
@@ -56,7 +56,7 @@ func cmdRestart(args []string) error {
 
 	o := opts()
 	fmt.Printf("Restarting %s with profile '%s'...\n", cfg.ServiceName(), name)
-	if err := service(cfg).Restart(); err != nil {
+	if err := svc(cfg).Restart(); err != nil {
 		return fmt.Errorf("restarting service: %w", err)
 	}
 	if !o.follow && !o.wait {
@@ -81,7 +81,7 @@ func cmdLogs(args []string) error {
 	if err != nil {
 		return err
 	}
-	svc := service(cfg)
+	s := svc(cfg)
 	doFollow := stdoutIsTTY()
 	if *follow {
 		doFollow = true
@@ -90,10 +90,10 @@ func cmdLogs(args []string) error {
 		doFollow = false
 	}
 	if !doFollow {
-		return svc.PrintLogs(*lines)
+		return s.PrintLogs(*lines)
 	}
 	fmt.Println("Following the service log -- Ctrl+C to stop (the service keeps running):")
-	cmd, err := svc.StartTail(*lines)
+	cmd, err := s.StartTail(*lines)
 	if err != nil {
 		return err
 	}

@@ -94,8 +94,8 @@ func (c *Config) get(key, def string) string {
 
 func (c *Config) Port() string          { return c.get("PORT", "8001") }
 func (c *Config) VLLMBin() string       { return c.get("VLLM_BIN", "") }
-func (c *Config) ServiceName() string   { return c.get("SERVICE_NAME", "vllm.service") }
-func (c *Config) ServiceScope() string  { return c.get("SERVICE_SCOPE", "system") }
+func (c *Config) ServiceName() string   { return c.get("SERVICE_NAME", DefaultServiceName) }
+func (c *Config) ServiceScope() string  { return c.get("SERVICE_SCOPE", DefaultServiceScope) }
 func (c *Config) ModelBudgetGB() string { return c.get("MODEL_BUDGET_GB", "90") }
 func (c *Config) APIKey() string        { return c.get("VLLM_API_KEY", "") }
 
