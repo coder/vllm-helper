@@ -1,7 +1,6 @@
 package detect
 
 import (
-	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -18,7 +17,7 @@ type Hardware struct {
 	BudgetReason string `json:"budget_reason"` // one-liner explaining the budget for the user
 }
 
-// Probe inspects /proc/meminfo and nvidia-smi (if present). Never fails --
+// Probe inspects system memory and nvidia-smi (if present). Never fails --
 // missing pieces just degrade the result.
 func Probe() Hardware {
 	hw := Hardware{TotalMemGB: totalMemGB()}
@@ -48,6 +47,12 @@ func Probe() Hardware {
 		hw.Unified = true
 	}
 
+	// No NVIDIA GPU, but the platform may still have an accelerator worth
+	// naming (Apple Silicon shares one memory pool with the CPU).
+	if hw.GPUName == "" {
+		describeLocalGPU(&hw)
+	}
+
 	switch {
 	case hw.Unified || hw.GPUMemGB == 0:
 		// Unified (or unknown GPU): weights + KV cache + OS all share RAM.
@@ -59,21 +64,4 @@ func Probe() Hardware {
 		hw.BudgetReason = "~80% of discrete VRAM (leaves room for KV cache)"
 	}
 	return hw
-}
-
-func totalMemGB() int {
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return 0
-	}
-	for line := range strings.SplitSeq(string(data), "\n") {
-		if rest, ok := strings.CutPrefix(line, "MemTotal:"); ok {
-			fields := strings.Fields(rest)
-			if len(fields) >= 1 {
-				kb, _ := strconv.ParseInt(fields[0], 10, 64)
-				return int(kb / 1024 / 1024)
-			}
-		}
-	}
-	return 0
 }
