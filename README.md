@@ -14,9 +14,14 @@ sudo install vllm-helper /usr/local/bin/
 vllm-helper setup
 ```
 
-Setup detects your hardware and any existing vLLM install, generates an API key, writes config, and installs a systemd unit (system or user scope). It never overwrites existing config and never restarts a running server.
+Setup detects your hardware and any existing vLLM install, generates an API key, writes config, and installs a service unit — a systemd unit on Linux, a launchd job on macOS — in system or user scope. It never overwrites existing config and never restarts a running server.
 
-Requires Linux with systemd and a vLLM install (usually in a venv). If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.env`.
+Requires a vLLM install (usually in a venv). If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.env`.
+
+| Platform | Service manager | vLLM backend |
+| --- | --- | --- |
+| Linux + NVIDIA GPU | systemd | CUDA — the setup this tool was built for |
+| macOS on Apple Silicon | launchd | CPU only, experimental (see below) |
 
 ## Already running vLLM?
 
@@ -66,6 +71,28 @@ EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 
 Keep `EXTRA_ARGS` quoted if it has more than one flag; flag values with spaces (like JSON) can be quoted inside it. Before pulling a large model, prefer the smallest official quantized release: roughly 1 byte per parameter for FP8/INT8 and 0.5 for INT4/AWQ/GPTQ, against the budget `doctor` reports for your machine.
 
+## macOS
+
+vLLM has no GPU backend on Apple Silicon, so a Mac runs models on the CPU through vLLM's experimental CPU backend. Expect it to be useful for small models and development, not for serving anything large.
+
+There are no Apple Silicon wheels, so vLLM has to be built from source:
+
+```bash
+brew install cmake ninja
+uv venv --python 3.12 ~/venvs/vllm
+git clone https://github.com/vllm-project/vllm.git ~/vllm-src && cd ~/vllm-src
+VIRTUAL_ENV=~/venvs/vllm uv pip install -r requirements/cpu.txt --index-strategy unsafe-best-match
+VIRTUAL_ENV=~/venvs/vllm VLLM_TARGET_DEVICE=cpu uv pip install -e . --index-strategy unsafe-best-match
+```
+
+Then `vllm-helper setup` and point `VLLM_BIN` at `~/venvs/vllm/bin/vllm`. Three differences from a GPU box are worth knowing:
+
+- **Quantized weights don't work.** The CPU backend handles FP32, FP16 and BF16, so the usual advice to reach for an FP8 or INT4 release doesn't apply — pick a model small enough to run unquantized.
+- **`GPU_MEMORY_UTILIZATION` means system RAM.** Despite the name, on the CPU backend it reserves a fraction of total RAM and vLLM refuses to start unless that much is free right then. Profiles default to a much lower fraction here, and `start` lowers it further when the machine is busy, logging the change.
+- **Logs are a file, not a journal.** The launchd job writes to `~/Library/Logs/vllm-helper/<label>.log`.
+
+A 0.6B model in BF16 serves at roughly 30 tokens/sec on an M4 Pro, which is enough to develop against.
+
 ## Coder Agents sync
 
 If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm-helper can keep Coder's model picker truthful: every profile gets a model-config entry, and only the loaded model is enabled. Set `CODER_URL` and `CODER_AI_PROVIDER_ID` in `config.env` and `CODER_API_TOKEN` in `secrets.env`. Sync failures never block a local switch.
@@ -74,7 +101,7 @@ If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm
 
 ## Troubleshooting
 
-Run `vllm-helper doctor` first. It checks the build toolchain vLLM's JIT kernel compilation needs, inventories running servers, and warns when config has drifted from reality. For crash loops, read the actual traceback: `journalctl -u vllm.service -n 100`.
+Run `vllm-helper doctor` first. It checks the build toolchain vLLM needs, inventories running servers, and warns when config has drifted from reality. For crash loops, read the actual traceback: `journalctl -u vllm.service -n 100` on Linux, or `tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log` on macOS. `vllm-helper status` prints the right command for your platform when the endpoint isn't responding.
 
 ## License
 
