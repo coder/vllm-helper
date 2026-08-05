@@ -348,11 +348,21 @@ func renderToolchain(checks []toolchainCheck, yes bool) {
 	}
 	fmt.Println()
 	fmt.Printf("  fix: sudo apt-get install -y %s\n", strings.Join(missing, " "))
-	if yes || confirm("  Run this now?", false) {
-		cmd := exec.Command("sudo", append([]string{"apt-get", "install", "-y"}, missing...)...)
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintln(os.Stderr, "  install failed:", err)
+	if !yes && !confirm("  Run this now?", false) {
+		return
+	}
+	args := []string{"apt-get", "install", "-y"}
+	if !stdinIsTTY() {
+		// Nothing can answer a password prompt, so fail fast rather than
+		// hang whatever script invoked us.
+		args = append([]string{"-n"}, args...)
+	}
+	cmd := exec.Command("sudo", append(args, missing...)...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "  install failed:", err)
+		if !stdinIsTTY() {
+			fmt.Fprintln(os.Stderr, "  (no terminal for sudo -- run the fix above yourself)")
 		}
 	}
 }
