@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/coder/vllm-helper/internal/config"
 )
 
 // Server is one detected vLLM server and everything we learned about it.
@@ -15,11 +17,12 @@ type Server struct {
 	Cmdline []string `json:"-"`
 
 	// Parsed from the command line:
-	Model       string `json:"model"`
-	Port        string `json:"port"`
-	MaxModelLen string `json:"max_model_len,omitempty"`
-	ExtraArgs   string `json:"extra_args,omitempty"` // recognized per-model serving flags, reassembled
-	APIKeySet   bool   `json:"api_key_set"`
+	Model          string `json:"model"`
+	Port           string `json:"port"`
+	MaxModelLen    string `json:"max_model_len,omitempty"`
+	MemUtilization string `json:"mem_utilization,omitempty"` // --gpu-memory-utilization
+	ExtraArgs      string `json:"extra_args,omitempty"`      // every other serving flag, reassembled
+	APIKeySet      bool   `json:"api_key_set"`
 
 	// How it's being run:
 	VLLMBin       string `json:"vllm_bin,omitempty"`       // resolved vllm executable ("" if unknown)
@@ -73,19 +76,26 @@ func ScanProcesses() []Server {
 	return out
 }
 
-// perModelFlags are serving flags worth adopting into a profile. Everything
-// else on the command line is either deployment topology (port, host,
-// parallelism) or handled explicitly (model, max-model-len, api-key).
-var perModelBoolFlags = map[string]bool{
+// valuelessFlags never consume the following argument. Any other flag is
+// assumed to take a value when the next argument doesn't look like a flag,
+// which is how unrecognized flags get carried over intact.
+var valuelessFlags = map[string]bool{
 	"--enable-auto-tool-choice": true,
 	"--enable-prefix-caching":   true,
 	"--trust-remote-code":       true,
 }
-var perModelValuedFlags = map[string]bool{
-	"--tool-call-parser": true,
-	"--reasoning-parser": true,
-	"--quantization":     true,
-	"--kv-cache-dtype":   true,
+
+// looksLikeValue distinguishes a flag's value from the next flag. Negative
+// numbers are values despite the leading dash (e.g. --seed -1).
+func looksLikeValue(s string) bool {
+	if s == "" {
+		return false
+	}
+	if !strings.HasPrefix(s, "-") {
+		return true
+	}
+	_, err := strconv.ParseFloat(s, 64)
+	return err == nil
 }
 
 func parseServer(pid int, args []string) Server {
@@ -113,13 +123,11 @@ func parseServer(pid int, args []string) Server {
 			s.Port = next()
 		case a == "--max-model-len":
 			s.MaxModelLen = next()
+		case a == "--gpu-memory-utilization":
+			s.MemUtilization = next()
 		case a == "--api-key":
 			next()
 			s.APIKeySet = true
-		case perModelBoolFlags[a]:
-			extra = append(extra, a)
-		case perModelValuedFlags[a]:
-			extra = append(extra, a+" "+next())
 		case strings.HasPrefix(a, "--") && strings.Contains(a, "="):
 			// --flag=value form
 			flag, val, _ := strings.Cut(a, "=")
@@ -130,12 +138,24 @@ func parseServer(pid int, args []string) Server {
 				s.Port = val
 			case flag == "--max-model-len":
 				s.MaxModelLen = val
+			case flag == "--gpu-memory-utilization":
+				s.MemUtilization = val
 			case flag == "--api-key":
 				s.APIKeySet = true
-			case perModelBoolFlags[flag]: // e.g. --trust-remote-code=true
+			case valuelessFlags[flag]: // e.g. --trust-remote-code=true
 				extra = append(extra, flag)
-			case perModelValuedFlags[flag]:
-				extra = append(extra, flag+" "+val)
+			default:
+				extra = append(extra, flag+"="+config.Quote(val))
+			}
+		case valuelessFlags[a]:
+			extra = append(extra, a)
+		case strings.HasPrefix(a, "--"):
+			// Anything else the server was started with: carry it over so
+			// the profile can reproduce this configuration.
+			if i+1 < len(args) && looksLikeValue(args[i+1]) {
+				extra = append(extra, a+" "+config.Quote(next()))
+			} else {
+				extra = append(extra, a)
 			}
 		}
 	}

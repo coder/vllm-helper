@@ -433,6 +433,9 @@ func adoptInto(cfg *config.Config) error {
 	if s.MaxModelLen != "" {
 		fmt.Printf("  ctx:    %s\n", s.MaxModelLen)
 	}
+	if s.MemUtilization != "" {
+		fmt.Printf("  mem:    %s\n", s.MemUtilization)
+	}
 	if s.ExtraArgs != "" {
 		fmt.Printf("  flags:  %s\n", s.ExtraArgs)
 	}
@@ -462,11 +465,12 @@ func adoptInto(cfg *config.Config) error {
 	p, err := profile.Load(cfg.Dirs, name)
 	if err != nil {
 		p, err = profile.Create(cfg.Dirs, profile.CreateOpts{
-			Repo:        s.Model,
-			MaxModelLen: s.MaxModelLen,
-			ExtraArgs:   s.ExtraArgs,
-			Status:      "ADOPTED from a running server -- flags taken from its live command line",
-			Source:      "vllm-helper adopt",
+			Repo:           s.Model,
+			MaxModelLen:    s.MaxModelLen,
+			MemUtilization: s.MemUtilization,
+			ExtraArgs:      s.ExtraArgs,
+			Status:         "ADOPTED from a running server -- flags taken from its live command line",
+			Source:         "vllm-helper adopt",
 		})
 		if err != nil {
 			return err

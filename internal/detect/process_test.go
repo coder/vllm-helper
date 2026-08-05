@@ -1,8 +1,11 @@
 package detect
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/coder/vllm-helper/internal/config"
 )
 
 // Real-world argv observed on a GB10 box (venv console-script form).
@@ -46,6 +49,69 @@ func TestParseServerAPIServerForm(t *testing.T) {
 	}
 	if s.ExtraArgs != "--trust-remote-code" {
 		t.Errorf("ExtraArgs = %q", s.ExtraArgs)
+	}
+}
+
+// Adoption has to reproduce the server it took over, so every serving flag
+// on the command line must survive into the profile -- not just the handful
+// the parser knows by name.
+func TestParseServerCarriesUnrecognizedFlags(t *testing.T) {
+	s := parseServer(4, strings.Fields(
+		"/usr/bin/vllm serve poolside/Laguna-S-2.1-NVFP4 --tensor-parallel-size 2 "+
+			"--dtype bfloat16 --enforce-eager --max-num-seqs 64"))
+	want := "--tensor-parallel-size 2 --dtype bfloat16 --enforce-eager --max-num-seqs 64"
+	if s.ExtraArgs != want {
+		t.Errorf("ExtraArgs = %q, want %q", s.ExtraArgs, want)
+	}
+}
+
+// --gpu-memory-utilization belongs to the profile, not EXTRA_ARGS: 'start'
+// passes it explicitly, so adopting it into both would duplicate the flag.
+func TestParseServerCapturesMemUtilization(t *testing.T) {
+	for _, argv := range []string{
+		"/usr/bin/vllm serve m/x --gpu-memory-utilization 0.92",
+		"python -m vllm.entrypoints.openai.api_server --model=m/x --gpu-memory-utilization=0.92",
+	} {
+		s := parseServer(5, strings.Fields(argv))
+		if s.MemUtilization != "0.92" {
+			t.Errorf("%s: MemUtilization = %q, want 0.92", argv, s.MemUtilization)
+		}
+		if strings.Contains(s.ExtraArgs, "gpu-memory-utilization") {
+			t.Errorf("%s: memory fraction leaked into ExtraArgs %q", argv, s.ExtraArgs)
+		}
+	}
+}
+
+// A carried-over value containing spaces has to survive the round trip
+// through the profile, so it is quoted on the way out.
+func TestParseServerQuotesValuesWithSpaces(t *testing.T) {
+	s := parseServer(6, []string{
+		"/usr/bin/vllm", "serve", "m/x",
+		"--override-generation-config", `{"temperature": 0.7}`,
+	})
+	got, err := config.SplitArgs(s.ExtraArgs)
+	if err != nil {
+		t.Fatalf("SplitArgs(%q): %v", s.ExtraArgs, err)
+	}
+	want := []string{"--override-generation-config", `{"temperature": 0.7}`}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("round trip = %#v, want %#v", got, want)
+	}
+}
+
+// The API key must never reach a profile, in either flag form.
+func TestParseServerNeverLeaksAPIKey(t *testing.T) {
+	for _, argv := range []string{
+		"/usr/bin/vllm serve m/x --api-key sk-secret --dtype bfloat16",
+		"/usr/bin/vllm serve m/x --api-key=sk-secret --dtype bfloat16",
+	} {
+		s := parseServer(7, strings.Fields(argv))
+		if !s.APIKeySet {
+			t.Errorf("%s: APIKeySet should be true", argv)
+		}
+		if strings.Contains(s.ExtraArgs, "sk-secret") || strings.Contains(s.ExtraArgs, "api-key") {
+			t.Errorf("%s: api key leaked into ExtraArgs %q", argv, s.ExtraArgs)
+		}
 	}
 }
 

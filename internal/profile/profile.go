@@ -89,11 +89,12 @@ func NameFromRepo(repo string) string {
 
 // CreateOpts are the settings for a brand-new profile.
 type CreateOpts struct {
-	Repo        string
-	MaxModelLen string // default 131072
-	ExtraArgs   string
-	Status      string // human note for the header
-	Source      string // e.g. "vllm-helper new", "adopted from running server"
+	Repo           string
+	MaxModelLen    string // default 131072
+	MemUtilization string // default 0.85
+	ExtraArgs      string
+	Status         string // human note for the header
+	Source         string // e.g. "vllm-helper new", "adopted from running server"
 }
 
 // Create writes a new profile file. Fails if it already exists.
@@ -106,16 +107,19 @@ func Create(dirs config.Dirs, opts CreateOpts) (*Profile, error) {
 	if opts.MaxModelLen == "" {
 		opts.MaxModelLen = "131072"
 	}
+	if opts.MemUtilization == "" {
+		opts.MemUtilization = "0.85"
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
 	content := fmt.Sprintf(`# Status: %s (added via %s on %s)
 MODEL=%s
 MAX_MODEL_LEN=%s
-GPU_MEMORY_UTILIZATION=0.85
+GPU_MEMORY_UTILIZATION=%s
 EXTRA_ARGS=%s
 `, opts.Status, opts.Source, time.Now().Format("2006-01-02"),
-		opts.Repo, opts.MaxModelLen, config.Quote(opts.ExtraArgs))
+		opts.Repo, opts.MaxModelLen, opts.MemUtilization, config.Quote(opts.ExtraArgs))
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return nil, err
 	}
