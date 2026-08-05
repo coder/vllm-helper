@@ -3,6 +3,7 @@ package detect
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/coder/vllm-helper/internal/config"
