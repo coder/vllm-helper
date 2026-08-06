@@ -5,6 +5,9 @@ THISBOX.md
 bin/
 dist/
 
+# Prettier is the only JS dependency and is not vendored.
+node_modules/
+
 # Local leftovers that must never be committed
 tiktoken-encodings/
 *.bak

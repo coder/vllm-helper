@@ -18,10 +18,10 @@ Setup detects your hardware and any existing vLLM install, generates an API key,
 
 Requires a vLLM install (usually in a venv). If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.env`.
 
-| Platform | Service manager | vLLM backend |
-| --- | --- | --- |
-| Linux + NVIDIA GPU | systemd | CUDA — the setup this tool was built for |
-| macOS on Apple Silicon | launchd | CPU only, experimental (see below) |
+| Platform               | Service manager | vLLM backend                             |
+| ---------------------- | --------------- | ---------------------------------------- |
+| Linux + NVIDIA GPU     | systemd         | CUDA — the setup this tool was built for |
+| macOS on Apple Silicon | launchd         | CPU only, experimental (see below)       |
 
 ## Already running vLLM?
 
@@ -102,6 +102,17 @@ If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm
 ## Troubleshooting
 
 Run `vllm-helper doctor` first. It checks the build toolchain vLLM needs, inventories running servers, and warns when config has drifted from reality. For crash loops, read the actual traceback: `journalctl -u vllm.service -n 100` on Linux, or `tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log` on macOS. `vllm-helper status` prints the right command for your platform when the endpoint isn't responding.
+
+## Development
+
+`go test ./...` needs no fixtures or network — it spawns real processes and local servers. CI additionally runs `go test -race ./...` on Linux and macOS, since the service, process-scanning, and hardware code is build-tagged per platform.
+
+Formatting is checked in CI and is worth running before pushing:
+
+```sh
+gofmt -w .                 # Go
+bun install && bun run fmt # Markdown and YAML
+```
 
 ## Changelog
 

@@ -1,0 +1,7 @@
+{%- for message in messages %}
+    {%- set content = render_content(message.content, true)|trim %}
+    {{- '<|im_start|>' + message.role + '\n' + content + '<|im_end|>' + '\n' }}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|im_start|>assistant\n' }}
+{%- endif %}

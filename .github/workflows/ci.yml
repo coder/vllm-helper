@@ -9,6 +9,19 @@ permissions:
   contents: read
 
 jobs:
+  # Markdown and YAML only: Go files are gofmt's job, below.
+  prettier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: install
+        run: bun install --frozen-lockfile
+      - name: prettier
+        run: bun run fmt:ci
+
   go:
     strategy:
       fail-fast: false
@@ -32,4 +45,4 @@ jobs:
           GOOS=linux  GOARCH=amd64 go build ./...
           GOOS=darwin GOARCH=arm64 go build ./...
       - name: test
-        run: go test ./...
+        run: go test -race ./...

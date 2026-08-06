@@ -1,0 +1,11 @@
+node_modules/
+
+# Recorded HuggingFace API responses. They are fixtures, so they stay
+# byte-identical to what the Hub actually returned.
+internal/hf/testdata/
+
+# Fuzzing corpus, written by `go test -fuzz`.
+internal/config/testdata/
+
+go.mod
+go.sum

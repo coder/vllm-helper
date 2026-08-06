@@ -1,0 +1,29 @@
+[
+  {
+    "_id": "68f0b1f0a1b2c3d4e5f60718",
+    "id": "Qwen/Qwen3-8B-FP8",
+    "downloads": 481233,
+    "likes": 912,
+    "pipeline_tag": "text-generation",
+    "createdAt": "2026-04-28T09:14:02.000Z",
+    "tags": ["text-generation", "fp8", "license:apache-2.0"]
+  },
+  {
+    "_id": "68f0b1f0a1b2c3d4e5f60719",
+    "id": "Qwen/Qwen3-8B",
+    "downloads": 220145,
+    "likes": 604,
+    "pipeline_tag": "text-generation",
+    "createdAt": "2026-04-27T11:02:44.000Z",
+    "tags": ["text-generation", "bf16", "license:apache-2.0"]
+  },
+  {
+    "_id": "68f0b1f0a1b2c3d4e5f6071a",
+    "id": "unsloth/Qwen3-8B-GGUF",
+    "downloads": 90112,
+    "likes": 133,
+    "pipeline_tag": "text-generation",
+    "createdAt": "2026-05-02T18:40:00.000Z",
+    "tags": ["text-generation", "gguf", "region:us"]
+  }
+]

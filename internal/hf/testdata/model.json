@@ -1,0 +1,21 @@
+{
+  "_id": "68f0b1f0a1b2c3d4e5f60718",
+  "id": "Qwen/Qwen3-8B-FP8",
+  "modelId": "Qwen/Qwen3-8B-FP8",
+  "author": "Qwen",
+  "downloads": 481233,
+  "likes": 912,
+  "pipeline_tag": "text-generation",
+  "createdAt": "2026-04-28T09:14:02.000Z",
+  "library_name": "transformers",
+  "tags": [
+    "transformers",
+    "safetensors",
+    "qwen3",
+    "text-generation",
+    "fp8",
+    "conversational",
+    "license:apache-2.0",
+    "region:us"
+  ]
+}

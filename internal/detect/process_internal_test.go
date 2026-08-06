@@ -140,3 +140,172 @@ func TestParseServerDefaultsPort(t *testing.T) {
 		t.Error("looksLikeVLLM failed on a vllm serve command")
 	}
 }
+
+// 'start' passes model, port, context, memory fraction and api key from the
+// profile's own fields, so leaving any of them in EXTRA_ARGS would hand vLLM
+// the same flag twice.
+func TestParseServerKeepsRepassedFlagsOutOfExtraArgs(t *testing.T) {
+	t.Parallel()
+
+	for _, argv := range []string{
+		"/usr/bin/vllm serve m/x --port 8001 --max-model-len 131072 " +
+			"--gpu-memory-utilization 0.85 --api-key sk-secret --dtype bfloat16",
+		"python -m vllm.entrypoints.openai.api_server --model=m/x --port=8001 " +
+			"--max-model-len=131072 --gpu-memory-utilization=0.85 --api-key=sk-secret --dtype=bfloat16",
+	} {
+		s := parseServer(9, strings.Fields(argv))
+		for _, flag := range []string{"--model", "--port", "--max-model-len", "--gpu-memory-utilization", "--api-key"} {
+			if strings.Contains(s.ExtraArgs, flag) {
+				t.Errorf("%s: %s would be passed twice, ExtraArgs = %q", argv, flag, s.ExtraArgs)
+			}
+		}
+		if !strings.Contains(s.ExtraArgs, "--dtype") {
+			t.Errorf("%s: an unrecognized flag must still survive, ExtraArgs = %q", argv, s.ExtraArgs)
+		}
+	}
+}
+
+// Values that begin with a dash are the parser's ambiguous case: a negative
+// number belongs to the flag before it, a flag does not.
+func TestParseServerBoundaryBetweenFlagsAndValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		argv string
+		want string
+	}{{
+		name: "negative number is a value",
+		argv: "/usr/bin/vllm serve m/x --seed -1 --enforce-eager",
+		want: "--seed -1 --enforce-eager",
+	}, {
+		name: "a flag is not the previous flag's value",
+		argv: "/usr/bin/vllm serve m/x --enforce-eager --dtype bfloat16",
+		want: "--enforce-eager --dtype bfloat16",
+	}, {
+		name: "trailing flag with no value",
+		argv: "/usr/bin/vllm serve m/x --enforce-eager",
+		want: "--enforce-eager",
+	}, {
+		name: "known boolean never swallows the next argument",
+		argv: "/usr/bin/vllm serve m/x --trust-remote-code --dtype bfloat16",
+		want: "--trust-remote-code --dtype bfloat16",
+	}, {
+		name: "boolean written as --flag=value keeps just the flag",
+		argv: "/usr/bin/vllm serve m/x --trust-remote-code=true",
+		want: "--trust-remote-code",
+	}, {
+		name: "single-dash flags are ignored",
+		argv: "/usr/bin/vllm serve m/x -q --dtype bfloat16",
+		want: "--dtype bfloat16",
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := parseServer(10, strings.Fields(tt.argv)).ExtraArgs; got != tt.want {
+				t.Errorf("ExtraArgs = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseServerModelPositionAfterServe(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{"positional after serve", []string{"/usr/bin/vllm", "serve", "org/model"}, "org/model"},
+		{"a flag is not the model", []string{"/usr/bin/vllm", "serve", "--model", "org/model"}, "org/model"},
+		{"serve with nothing after it", []string{"/usr/bin/vllm", "serve"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := parseServer(11, tt.argv).Model; got != tt.want {
+				t.Errorf("Model = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLooksLikeVLLM(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		argv string
+		want bool
+	}{
+		{"console script", "/opt/venv/bin/python3 /opt/venv/bin/vllm serve org/model", true},
+		{"api server module", "python -m vllm.entrypoints.openai.api_server --model org/model", true},
+		{"vllm without serve", "/usr/bin/vllm --help", false},
+		{"a different server", "python -m sglang.launch_server --model org/model", false},
+		{"our own name in an argument", "grep vllm /var/log/syslog", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := looksLikeVLLM(strings.Fields(tt.argv)); got != tt.want {
+				t.Errorf("looksLikeVLLM(%q) = %v, want %v", tt.argv, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLooksSecret(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		flag string
+		want bool
+	}{
+		{"--api-key", true},
+		{"--hf-token", true},
+		{"--HF-TOKEN", true},
+		{"--some-vendor-secret", true},
+		{"--redis-password", true},
+		{"--tokenizer-mode", false},
+		{"--ssl-keyfile", false},
+		{"--served-model-name", false},
+		{"--dtype", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.flag, func(t *testing.T) {
+			t.Parallel()
+			if got := looksSecret(tt.flag); got != tt.want {
+				t.Errorf("looksSecret(%q) = %v, want %v", tt.flag, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLooksLikeValue(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"bfloat16", true},
+		{"0.85", true},
+		{"-1", true},
+		{"-0.5", true},
+		{"--dtype", false},
+		{"-q", false},
+		{"", false},
+		{`{"temperature": 0.7}`, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			t.Parallel()
+			if got := looksLikeValue(tt.in); got != tt.want {
+				t.Errorf("looksLikeValue(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
