@@ -14,7 +14,11 @@ import (
 	"time"
 )
 
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+var (
+	httpClient = &http.Client{Timeout: 15 * time.Second}
+	// baseURL is the Hub root; tests point it at a local server.
+	baseURL = "https://huggingface.co"
+)
 
 type Model struct {
 	ID          string   `json:"id"`
@@ -54,7 +58,7 @@ func (m Model) QuantTags() []string {
 // Lookup fetches one model's metadata by repo id.
 func Lookup(repo string) (Model, error) {
 	var m Model
-	resp, err := httpClient.Get("https://huggingface.co/api/models/" + repo)
+	resp, err := httpClient.Get(baseURL + "/api/models/" + repo)
 	if err != nil {
 		return m, err
 	}
@@ -76,7 +80,7 @@ func Lookup(repo string) (Model, error) {
 
 // WhoAmI validates a Hub token and returns the account name it belongs to.
 func WhoAmI(token string) (string, error) {
-	req, _ := http.NewRequest("GET", "https://huggingface.co/api/whoami-v2", nil)
+	req, _ := http.NewRequest("GET", baseURL+"/api/whoami-v2", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -101,7 +105,7 @@ func WhoAmI(token string) (string, error) {
 // Search queries the Hub for text-generation models, most-downloaded first.
 func Search(query string, limit int) ([]Model, error) {
 	u := fmt.Sprintf(
-		"https://huggingface.co/api/models?search=%s&filter=text-generation&sort=downloads&direction=-1&limit=%d",
+		baseURL+"/api/models?search=%s&filter=text-generation&sort=downloads&direction=-1&limit=%d",
 		url.QueryEscape(query), limit)
 	resp, err := httpClient.Get(u)
 	if err != nil {
@@ -121,7 +125,7 @@ func Search(query string, limit int) ([]Model, error) {
 // WeightsSizeGB sums the weight files (.safetensors/.bin/.gguf) at the root
 // of a model repo. Returns 0 if the repo keeps weights in subfolders.
 func WeightsSizeGB(repo string) (float64, error) {
-	resp, err := httpClient.Get("https://huggingface.co/api/models/" + repo + "/tree/main")
+	resp, err := httpClient.Get(baseURL + "/api/models/" + repo + "/tree/main")
 	if err != nil {
 		return 0, err
 	}
@@ -157,7 +161,7 @@ type DetectedFlags struct {
 // someone else's deployment, not the model.
 func DetectFlags(repo string) (DetectedFlags, error) {
 	var d DetectedFlags
-	resp, err := httpClient.Get("https://huggingface.co/" + repo + "/raw/main/README.md")
+	resp, err := httpClient.Get(baseURL + "/" + repo + "/raw/main/README.md")
 	if err != nil {
 		return d, err
 	}
@@ -221,7 +225,7 @@ func DetectFlags(repo string) (DetectedFlags, error) {
 // the ceiling vLLM validates --max-model-len against. Returns 0 when the
 // field is absent.
 func ContextLimit(repo string) (int, error) {
-	resp, err := httpClient.Get("https://huggingface.co/" + repo + "/raw/main/config.json")
+	resp, err := httpClient.Get(baseURL + "/" + repo + "/raw/main/config.json")
 	if err != nil {
 		return 0, err
 	}
@@ -272,7 +276,7 @@ var systemMessagePositionRe = regexp.MustCompile(
 // doesn't have this issue -- the caller should just use the model's own
 // bundled template as normal in that case, not add --chat-template at all.
 func DetectChatTemplatePatch(repo string) (patched string, ok bool, err error) {
-	resp, err := httpClient.Get("https://huggingface.co/" + repo + "/raw/main/chat_template.jinja")
+	resp, err := httpClient.Get(baseURL + "/" + repo + "/raw/main/chat_template.jinja")
 	if err != nil {
 		return "", false, err
 	}

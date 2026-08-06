@@ -1,0 +1,10 @@
+[
+  { "type": "file", "oid": "a1b2c3", "size": 1519, "path": ".gitattributes" },
+  { "type": "file", "oid": "d4e5f6", "size": 14211, "path": "README.md" },
+  { "type": "file", "oid": "071819", "size": 726, "path": "config.json" },
+  { "type": "file", "oid": "1a2b3c", "size": 4000000000, "path": "model-00001-of-00002.safetensors" },
+  { "type": "file", "oid": "4d5e6f", "size": 2500000000, "path": "model-00002-of-00002.safetensors" },
+  { "type": "file", "oid": "7a8b9c", "size": 61362, "path": "model.safetensors.index.json" },
+  { "type": "file", "oid": "0d1e2f", "size": 11422654, "path": "tokenizer.json" },
+  { "type": "directory", "oid": "3a4b5c", "path": "original" }
+]

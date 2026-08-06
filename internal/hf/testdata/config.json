@@ -1,0 +1,10 @@
+{
+  "architectures": ["Qwen3ForCausalLM"],
+  "hidden_size": 4096,
+  "max_position_embeddings": 40960,
+  "model_type": "qwen3",
+  "num_attention_heads": 32,
+  "num_hidden_layers": 36,
+  "torch_dtype": "bfloat16",
+  "vocab_size": 151936
+}

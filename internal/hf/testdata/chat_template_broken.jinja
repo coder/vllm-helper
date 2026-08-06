@@ -1,0 +1,24 @@
+{%- if tools %}
+    {{- '<|im_start|>system\n' }}
+    {{- '# Tools\n\n' }}
+    {%- for tool in tools %}
+        {{- tool | tojson }}
+    {%- endfor %}
+    {{- '<|im_end|>\n' }}
+{%- endif %}
+{%- for message in messages %}
+    {%- set content = render_content(message.content, true)|trim %}
+    {%- if message.role == "system" %}
+        {%- if not loop.first %}
+            {{- raise_exception('System message must be at the beginning.') }}
+        {%- endif %}
+        {{- '<|im_start|>system\n' + content + '<|im_end|>' + '\n' }}
+    {%- elif message.role == "user" %}
+        {{- '<|im_start|>' + message.role + '\n' + content + '<|im_end|>' + '\n' }}
+    {%- elif message.role == "assistant" %}
+        {{- '<|im_start|>assistant\n' + content + '<|im_end|>' + '\n' }}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|im_start|>assistant\n' }}
+{%- endif %}
