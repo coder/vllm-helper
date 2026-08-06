@@ -1,8 +1,10 @@
-package config
+package config_test
 
 import (
 	"reflect"
 	"testing"
+
+	"github.com/coder/vllm-helper/internal/config"
 )
 
 func TestSplitWords(t *testing.T) {
@@ -26,21 +28,21 @@ func TestSplitWords(t *testing.T) {
 		{"\ttabs\nand newlines ", []string{"tabs", "and", "newlines"}},
 	}
 	for _, c := range cases {
-		got, err := SplitWords(c.in)
+		got, err := config.SplitWords(c.in)
 		if err != nil {
-			t.Errorf("SplitWords(%q) error: %v", c.in, err)
+			t.Errorf("config.SplitWords(%q) error: %v", c.in, err)
 			continue
 		}
 		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("SplitWords(%q) = %#v, want %#v", c.in, got, c.want)
+			t.Errorf("config.SplitWords(%q) = %#v, want %#v", c.in, got, c.want)
 		}
 	}
 }
 
 func TestSplitWordsErrors(t *testing.T) {
 	for _, in := range []string{`"unterminated`, `'unterminated`, `trailing\`} {
-		if _, err := SplitWords(in); err == nil {
-			t.Errorf("SplitWords(%q) should have failed", in)
+		if _, err := config.SplitWords(in); err == nil {
+			t.Errorf("config.SplitWords(%q) should have failed", in)
 		}
 	}
 }
@@ -56,7 +58,7 @@ func TestQuoteSplitRoundTrip(t *testing.T) {
 		`back\slash`,
 	}
 	for _, v := range values {
-		got, err := SplitWords(Quote(v))
+		got, err := config.SplitWords(config.Quote(v))
 		if err != nil {
 			t.Errorf("round trip %q: %v", v, err)
 			continue
@@ -95,12 +97,12 @@ func TestSplitArgs(t *testing.T) {
 	}}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := SplitArgs(c.in)
+			got, err := config.SplitArgs(c.in)
 			if err != nil {
-				t.Fatalf("SplitArgs(%q) error: %v", c.in, err)
+				t.Fatalf("config.SplitArgs(%q) error: %v", c.in, err)
 			}
 			if !reflect.DeepEqual(got, c.want) {
-				t.Errorf("SplitArgs(%q) = %#v, want %#v", c.in, got, c.want)
+				t.Errorf("config.SplitArgs(%q) = %#v, want %#v", c.in, got, c.want)
 			}
 		})
 	}
@@ -108,7 +110,7 @@ func TestSplitArgs(t *testing.T) {
 
 // The bare-JSON rule must not resurrect malformed input as valid.
 func TestSplitArgsErrors(t *testing.T) {
-	if _, err := SplitArgs(`--x '{"unterminated": 1}`); err == nil {
+	if _, err := config.SplitArgs(`--x '{"unterminated": 1}`); err == nil {
 		t.Error("unterminated quote should still fail")
 	}
 }
