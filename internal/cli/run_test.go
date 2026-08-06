@@ -485,6 +485,61 @@ func TestRunSearchAndInspectNeedAnArgument(t *testing.T) {
 	}
 }
 
+// start is what the service manager runs. Before the first switch there is no
+// active model, and exiting non-zero here would send systemd's
+// Restart=on-failure -- or launchd's KeepAlive -- into a crash loop serving
+// nothing.
+func TestRunStartWithoutAnActiveModel(t *testing.T) {
+	newTree(t)
+	code, stdout, stderr := runCLI(t, "start")
+	if code != 0 {
+		t.Fatalf("exited %d (%s), want 0 so the service manager doesn't restart it", code, stderr)
+	}
+	if !strings.Contains(stdout, "switch") {
+		t.Errorf("stdout = %q, want it to point at 'vllm-helper switch'", stdout)
+	}
+}
+
+// Only a missing active.env means "not set up yet". A file that exists and
+// can't be read is a fault, and swallowing it would hide the breakage behind
+// the same quiet exit.
+func TestRunStartReportsAnUnreadableActiveModel(t *testing.T) {
+	newTree(t)
+	state := os.Getenv("VLLM_HELPER_STATE_DIR")
+	// A directory in its place fails to read for every user, including root.
+	if err := os.MkdirAll(filepath.Join(state, "active.env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runCLI(t, "start")
+	if code == 0 {
+		t.Fatal("exited 0, want non-zero when the active model config can't be read")
+	}
+	if !strings.Contains(stderr, "active.env") {
+		t.Errorf("stderr = %q, want it to name the file it couldn't read", stderr)
+	}
+}
+
+// Every command has to stay reachable through Run. A rejected flag is enough
+// to prove the arm is wired without running what's behind it, which keeps
+// commands that install units or drive a service out of the test.
+func TestRunDispatchesEveryCommand(t *testing.T) {
+	for _, cmd := range []string{
+		"status", "list", "switch", "new", "remove", "search", "inspect",
+		"restart", "logs", "coder-sync", "doctor",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			newTree(t)
+			code, _, stderr := runCLI(t, cmd, "--not-a-real-flag")
+			if code == 0 {
+				t.Errorf("exited 0, want a rejected flag to fail")
+			}
+			if strings.Contains(stderr, "Unknown command") {
+				t.Errorf("%q is not wired into Run: %s", cmd, stderr)
+			}
+		})
+	}
+}
+
 // stop is safe to run against a service that was never installed, and says
 // so rather than failing.
 func TestRunStopWhenNothingIsRunning(t *testing.T) {
