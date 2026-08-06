@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/coder/vllm-helper/internal/config"
@@ -40,9 +39,10 @@ type doctorConfig struct {
 }
 
 type toolchainCheck struct {
-	Name       string `json:"name"`
-	OK         bool   `json:"ok"`
-	AptPackage string `json:"apt_package,omitempty"`
+	Name    string `json:"name"`
+	OK      bool   `json:"ok"`
+	Package string `json:"package,omitempty"` // apt package on Linux, brew formula on macOS
+	Hint    string `json:"hint,omitempty"`    // fix for what a package manager can't install
 }
 
 type coderStatus struct {
@@ -99,7 +99,7 @@ func gatherDoctor() doctorReport {
 			VLLMBinOK:       binOK,
 			Service:         cfg.ServiceName(),
 			Scope:           cfg.ServiceScope(),
-			ServiceState:    service(cfg).IsActive(),
+			ServiceState:    svc(cfg).IsActive(),
 			CoderConfigured: cfg.CoderConfigured(),
 		}
 	}
@@ -134,8 +134,8 @@ func gatherDoctor() doctorReport {
 			}
 			if s.SystemdUnit != "" && s.SystemdUnit != cfg.ServiceName() {
 				r.Warnings = append(r.Warnings, fmt.Sprintf(
-					"running server belongs to systemd unit %s but config manages %s -- run 'vllm-helper adopt' to take it over.",
-					s.SystemdUnit, cfg.ServiceName()))
+					"running server belongs to %s unit %s but config manages %s -- run 'vllm-helper adopt' to take it over.",
+					config.ServiceManager, s.SystemdUnit, cfg.ServiceName()))
 			}
 		}
 	}
@@ -234,7 +234,7 @@ func renderDoctor(r doctorReport, yes bool) {
 		case s.InContainer:
 			fmt.Printf(" (inside a %s container)", s.ContainerHint)
 		case s.SystemdUnit != "":
-			fmt.Printf(" (systemd unit %s)", s.SystemdUnit)
+			fmt.Printf(" (%s: %s)", config.ServiceManager, s.SystemdUnit)
 		default:
 			fmt.Printf(" (bare process -- not service-managed)")
 		}
@@ -306,73 +306,61 @@ func orUnknown(s string) string {
 	return s
 }
 
-// gatherToolchain verifies the build packages vLLM's JIT kernel compilation
-// needs (Triton, FlashInfer). Which one bites depends on the first model
-// served, so checking up front beats discovering them one crash at a time.
-func gatherToolchain() []toolchainCheck {
-	has := func(bins ...string) bool {
-		for _, b := range bins {
-			if _, err := exec.LookPath(b); err != nil {
-				return false
-			}
+func hasBins(bins ...string) bool {
+	for _, b := range bins {
+		if _, err := exec.LookPath(b); err != nil {
+			return false
 		}
-		return true
 	}
-	pyHeaders, _ := filepath.Glob("/usr/include/python3*/Python.h")
-	return []toolchainCheck{
-		{Name: "ninja", AptPackage: "ninja-build", OK: has("ninja")},
-		{Name: "gcc/g++", AptPackage: "build-essential", OK: has("gcc", "g++")},
-		{Name: "Python.h", AptPackage: pythonDevPkg(), OK: len(pyHeaders) > 0},
-	}
+	return true
 }
 
 func renderToolchain(checks []toolchainCheck, yes bool) {
 	fmt.Println("BUILD TOOLCHAIN (for vLLM/FlashInfer/Triton JIT kernels)")
-	var missing []string
+	var missing, hints []string
 	for _, c := range checks {
 		state := "ok"
 		if !c.OK {
 			state = "MISSING"
-			if c.AptPackage != "" {
-				missing = append(missing, c.AptPackage)
+			if c.Package != "" {
+				missing = append(missing, c.Package)
+			}
+			if c.Hint != "" {
+				hints = append(hints, c.Hint)
 			}
 		}
 		fmt.Printf("  %-12s %s\n", c.Name, state)
 	}
+	for _, h := range hints {
+		fmt.Printf("  fix: %s\n", h)
+	}
 	if len(missing) == 0 {
 		return
 	}
-	if _, err := exec.LookPath("apt-get"); err != nil {
-		fmt.Printf("  install the missing packages with your distro's package manager: %s\n", strings.Join(missing, " "))
+	installer, args := toolchainInstaller()
+	if installer == "" {
+		fmt.Printf("  install the missing packages with your package manager: %s\n", strings.Join(missing, " "))
 		return
 	}
 	fmt.Println()
-	fmt.Printf("  fix: sudo apt-get install -y %s\n", strings.Join(missing, " "))
+	fmt.Printf("  fix: %s %s\n", strings.Join(append([]string{installer}, args...), " "), strings.Join(missing, " "))
 	if !yes && !confirm("  Run this now?", false) {
 		return
 	}
-	args := []string{"apt-get", "install", "-y"}
-	if !stdinIsTTY() {
+	needsSudo := installer == "sudo"
+	if needsSudo && !stdinIsTTY() {
 		// Nothing can answer a password prompt, so fail fast rather than
 		// hang whatever script invoked us.
 		args = append([]string{"-n"}, args...)
 	}
-	cmd := exec.Command("sudo", append(args, missing...)...)
+	cmd := exec.Command(installer, append(args, missing...)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "  install failed:", err)
-		if !stdinIsTTY() {
+		if needsSudo && !stdinIsTTY() {
 			fmt.Fprintln(os.Stderr, "  (no terminal for sudo -- run the fix above yourself)")
 		}
 	}
-}
-
-func pythonDevPkg() string {
-	out, err := exec.Command("python3", "-c", "import sys; print(f'python{sys.version_info.major}.{sys.version_info.minor}-dev')").Output()
-	if err != nil {
-		return "python3-dev"
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // cmdAdopt detects a running vLLM server and takes it over: saves its
@@ -515,7 +503,7 @@ func adoptInto(cfg *config.Config) error {
 
 	if s.SystemdUnit == "" {
 		fmt.Println()
-		fmt.Println("NOTE: the running server is a bare process (no systemd unit), so")
+		fmt.Printf("NOTE: the running server is a bare process (no %s unit), so\n", config.ServiceManager)
 		fmt.Println("'vllm-helper switch' can't restart it. Stop it yourself when ready and")
 		fmt.Println("run 'vllm-helper setup' to install the service, then switch normally.")
 	}

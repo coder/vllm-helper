@@ -22,6 +22,7 @@ var standardProfileKeys = map[string]bool{
 
 // cmdEdit opens a profile in $VISUAL/$EDITOR and validates the result.
 func cmdEdit(args []string) error {
+	args = dropTerminator(args)
 	if len(args) < 1 {
 		return errors.New("usage: vllm-helper edit <profile>")
 	}
@@ -68,6 +69,7 @@ func pickEditor() string {
 
 // cmdSet updates profile keys in place: vllm-helper set <profile> KEY=VALUE...
 func cmdSet(args []string) error {
+	args = dropTerminator(args)
 	if len(args) < 2 {
 		return errors.New("usage: vllm-helper set <profile> KEY=VALUE [KEY=VALUE ...]")
 	}
@@ -81,31 +83,56 @@ func cmdSet(args []string) error {
 		printProfiles(cfg)
 		return err
 	}
+	// Validate everything against an in-memory copy first: a bad pair
+	// halfway through the list must not leave a half-applied profile on
+	// disk, and a broken EXTRA_ARGS must not be written at all.
+	type assignment struct{ key, val string }
+	pairs := make([]assignment, 0, len(args)-1)
 	for _, pair := range args[1:] {
 		key, val, ok := strings.Cut(pair, "=")
 		if !ok || key == "" || strings.ContainsAny(key, " \t") {
-			return fmt.Errorf("%q is not KEY=VALUE", pair)
+			return fmt.Errorf("%q is not KEY=VALUE (nothing was written)", pair)
 		}
-		p.File.Set(key, val)
-		fmt.Printf("%s: %s=%s\n", name, key, val)
-		if !standardProfileKeys[key] {
-			fmt.Printf("  (note: %s isn't a standard profile key -- it will be exported into the\n", key)
-			fmt.Println("  server environment as-is)")
-		}
+		pairs = append(pairs, assignment{key, val})
 	}
+	for _, a := range pairs {
+		p.File.Set(a.key, a.val)
+	}
+	if err := validateProfile(p, name); err != nil {
+		return fmt.Errorf("%w (nothing was written)", err)
+	}
+
 	if err := p.File.Write(cfg.Dirs.ProfileFile(name), 0o644); err != nil {
 		return err
 	}
-	return afterProfileChange(cfg, name)
+	for _, a := range pairs {
+		fmt.Printf("%s: %s=%s\n", name, a.key, a.val)
+		if !standardProfileKeys[a.key] {
+			fmt.Printf("  (note: %s isn't a standard profile key -- it will be exported into the\n", a.key)
+			fmt.Println("  server environment as-is)")
+		}
+	}
+	profileChangeHint(cfg, name)
+	return nil
 }
 
-// afterProfileChange re-validates a profile and tells the user how the
-// change takes effect.
+// afterProfileChange re-validates a profile that was written by something
+// outside our control (an editor) and tells the user how the change takes
+// effect.
 func afterProfileChange(cfg *config.Config, name string) error {
 	p, err := profile.Load(cfg.Dirs, name)
 	if err != nil {
 		return fmt.Errorf("the profile no longer parses: %w", err)
 	}
+	if err := validateProfile(p, name); err != nil {
+		return err
+	}
+	profileChangeHint(cfg, name)
+	return nil
+}
+
+// validateProfile reports whether a profile is servable as written.
+func validateProfile(p *profile.Profile, name string) error {
 	if p.Model() == "" {
 		return fmt.Errorf("profile '%s' has no MODEL= line -- it can't be served like this", name)
 	}
@@ -114,10 +141,13 @@ func afterProfileChange(cfg *config.Config, name string) error {
 			return fmt.Errorf("profile '%s' EXTRA_ARGS won't parse: %w", name, err)
 		}
 	}
+	return nil
+}
+
+func profileChangeHint(cfg *config.Config, name string) {
 	if name == cfg.ActiveProfile() {
 		fmt.Printf("'%s' is the active profile -- run 'vllm-helper restart' to apply the change.\n", name)
 	} else {
 		fmt.Printf("Saved. The change applies the next time you switch to '%s'.\n", name)
 	}
-	return nil
 }

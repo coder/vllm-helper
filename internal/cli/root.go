@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/systemd"
+	"github.com/coder/vllm-helper/internal/service"
 )
 
 // Version is stamped by goreleaser via ldflags.
@@ -43,7 +43,7 @@ COMMANDS
   logs [-n N] [--no-follow]
                            Show the server journal (follows by default)
   adopt                    Detect an already-running vLLM server (host
-                           process, systemd unit, or container) and save it
+                           process, service unit, or container) and save it
                            as a managed profile
   doctor [--json] [--yes]  Diagnose this machine: hardware, running servers,
                            integrations, config drift
@@ -122,8 +122,8 @@ func loadConfig() (*config.Config, error) {
 	return config.Load()
 }
 
-func service(cfg *config.Config) systemd.Service {
-	return systemd.Service{
+func svc(cfg *config.Config) service.Service {
+	return service.Service{
 		Name:  cfg.ServiceName(),
 		Scope: cfg.ServiceScope(),
 		// Without a terminal, sudo must fail fast instead of prompting

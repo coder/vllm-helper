@@ -63,3 +63,25 @@ func TestPatchSystemMessageCheck(t *testing.T) {
 		}
 	})
 }
+
+func TestClampContext(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		limit int
+		want  string
+	}{
+		{"caps a card that oversells the context", "131072", 40960, "40960"},
+		{"leaves a value the model supports alone", "32768", 40960, "32768"},
+		{"fills in the limit when the card says nothing", "", 40960, "40960"},
+		{"keeps the value when the limit is unknown", "131072", 0, "131072"},
+		{"allows exactly the limit", "40960", 40960, "40960"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := clampContext(tc.value, tc.limit); got != tc.want {
+				t.Errorf("clampContext(%q, %d) = %q, want %q", tc.value, tc.limit, got, tc.want)
+			}
+		})
+	}
+}

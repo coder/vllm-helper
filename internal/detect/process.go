@@ -3,7 +3,6 @@ package detect
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -26,8 +25,8 @@ type Server struct {
 
 	// How it's being run:
 	VLLMBin       string `json:"vllm_bin,omitempty"`       // resolved vllm executable ("" if unknown)
-	SystemdUnit   string `json:"systemd_unit,omitempty"`   // e.g. "vllm.service" ("" if not under systemd)
-	UserScope     bool   `json:"user_scope"`               // true if under the user manager (user@.service slice)
+	SystemdUnit   string `json:"systemd_unit,omitempty"`   // managing unit: systemd unit or launchd label ("" if none)
+	UserScope     bool   `json:"user_scope"`               // true if under the user manager (user@.service slice, or a launchd user agent)
 	InContainer   bool   `json:"in_container"`             // cgroup says it's inside a container
 	ContainerHint string `json:"container_hint,omitempty"` // raw cgroup fragment for container correlation
 }
@@ -40,29 +39,22 @@ func looksLikeVLLM(args []string) bool {
 		strings.Contains(joined, "vllm.entrypoints.openai.api_server")
 }
 
-// ScanProcesses walks /proc for running vLLM servers. Worker subprocesses
-// (spawned engine processes share the same cmdline root) are deduped by
-// keeping only the lowest PID per port.
+// rawProc is one process as the platform reported it.
+type rawProc struct {
+	PID  int
+	Args []string
+}
+
+// ScanProcesses finds running vLLM servers. Worker subprocesses (spawned
+// engine processes share the same cmdline root) are deduped by keeping only
+// the lowest PID per port.
 func ScanProcesses() []Server {
-	procs, err := os.ReadDir("/proc")
-	if err != nil {
-		return nil
-	}
 	byPort := map[string]Server{}
-	for _, entry := range procs {
-		pid, err := strconv.Atoi(entry.Name())
-		if err != nil {
+	for _, p := range listProcesses() {
+		if !looksLikeVLLM(p.Args) {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
-		if err != nil || len(raw) == 0 {
-			continue
-		}
-		args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
-		if !looksLikeVLLM(args) {
-			continue
-		}
-		s := parseServer(pid, args)
+		s := parseServer(p.PID, p.Args)
 		enrich(&s)
 		key := s.Port
 		if prev, ok := byPort[key]; !ok || s.PID < prev.PID {
@@ -186,15 +178,11 @@ func parseServer(pid int, args []string) Server {
 	return s
 }
 
-var unitRe = regexp.MustCompile(`/([^/]+\.service)`)
-
 // enrich adds context that isn't on the command line: the vllm binary, the
-// systemd unit (if any), and whether the process lives in a container.
+// service unit (if any), and whether the process lives in a container.
 func enrich(s *Server) {
-	proc := filepath.Join("/proc", strconv.Itoa(s.PID))
-
-	// Find the vllm console script in argv. /proc/<pid>/exe is useless
-	// here: venv pythons symlink to the system interpreter.
+	// Find the vllm console script in argv. The process's own executable is
+	// useless here: venv pythons symlink to the system interpreter.
 	for _, a := range s.Cmdline {
 		if strings.HasSuffix(a, "/vllm") && isExecutable(a) {
 			s.VLLMBin = a
@@ -206,32 +194,7 @@ func enrich(s *Server) {
 			s.VLLMBin = cand
 		}
 	}
-	if s.VLLMBin == "" {
-		if exe, err := os.Readlink(filepath.Join(proc, "exe")); err == nil {
-			if cand := filepath.Join(filepath.Dir(exe), "vllm"); isExecutable(cand) {
-				s.VLLMBin = cand
-			}
-		}
-	}
-
-	cg, err := os.ReadFile(filepath.Join(proc, "cgroup"))
-	if err != nil {
-		return
-	}
-	cgs := string(cg)
-	for _, marker := range []string{"docker", "containerd", "libpod", "crio", "kubepods"} {
-		if strings.Contains(cgs, marker) {
-			s.InContainer = true
-			s.ContainerHint = marker
-			break
-		}
-	}
-	if !s.InContainer {
-		if m := unitRe.FindStringSubmatch(cgs); m != nil && m[1] != "user@"+os.Getenv("UID")+".service" && !strings.HasPrefix(m[1], "user@") {
-			s.SystemdUnit = m[1]
-		}
-		s.UserScope = strings.Contains(cgs, "/user.slice/") && s.SystemdUnit != ""
-	}
+	enrichPlatform(s)
 }
 
 func isExecutable(path string) bool {

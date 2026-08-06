@@ -18,11 +18,18 @@ func newFlagSet(name string) *flag.FlagSet {
 
 // parseArgs parses fs against args with flags allowed anywhere on the
 // command line (stdlib flag stops at the first positional, which makes
-// "vllm-helper switch qwen --wait" fail). Returns the positional args.
+// "vllm-helper switch qwen --wait" fail). A "--" terminator ends flag
+// parsing so values that begin with a dash can be passed through, as in
+// 'vllm-helper set EXTRA_ARGS -- --enable-prefix-caching'. Returns the
+// positional args.
 func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 	var flags, pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if a == "--" {
+			pos = append(pos, args[i+1:]...)
+			break
+		}
 		if !strings.HasPrefix(a, "-") || a == "-" {
 			pos = append(pos, a)
 			continue
@@ -48,6 +55,20 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 		return nil, err
 	}
 	return pos, nil
+}
+
+// dropTerminator removes the first standalone "--" from args. Commands that
+// take no flags never reach parseArgs, but users still type the terminator
+// out of habit; it is never a meaningful operand for them.
+func dropTerminator(args []string) []string {
+	for i, a := range args {
+		if a == "--" {
+			out := make([]string, 0, len(args)-1)
+			out = append(out, args[:i]...)
+			return append(out, args[i+1:]...)
+		}
+	}
+	return args
 }
 
 // stdoutIsTTY reports whether stdout is a terminal. When it isn't (pipes,

@@ -14,7 +14,7 @@ import (
 )
 
 // cmdSetup is first-time setup for binary installs: detect hardware and any
-// existing vLLM, write config + secrets, install the systemd unit, and
+// existing vLLM, write config + secrets, install the service unit, and
 // offer to adopt a running server. Idempotent; never overwrites existing
 // config and never restarts anything.
 func cmdSetup() error {
@@ -62,10 +62,9 @@ PORT=8001
 # Full path to the vllm executable (usually inside a venv). REQUIRED.
 VLLM_BIN=%s
 
-# How the systemd unit is managed: "system" (sudo systemctl) or "user"
-# (systemctl --user).
-SERVICE_SCOPE=system
-SERVICE_NAME=vllm.service
+# How the %s unit is managed: "system" (needs sudo) or "user".
+SERVICE_SCOPE=%s
+SERVICE_NAME=%s
 
 # Rough budget for model weights on disk, used by 'vllm-helper search' to
 # flag models that won't fit. Auto-detected: %s.
@@ -79,7 +78,8 @@ TIKTOKEN_ENCODINGS_BASE=%s
 # deployment's AI-model picker in sync with the active profile.
 #CODER_URL=https://coder.example.com
 #CODER_AI_PROVIDER_ID=
-`, vllmBin, hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"))
+`, vllmBin, config.ServiceManager, config.DefaultServiceScope, config.DefaultServiceName,
+			hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"))
 		if err := os.WriteFile(dirs.ConfigFile(), []byte(content), 0o644); err != nil {
 			return err
 		}
@@ -134,36 +134,22 @@ VLLM_API_KEY=%s
 	if err != nil {
 		return err
 	}
-	if unitInstalled(cfg) {
+	if svc(cfg).Installed() {
 		fmt.Println()
 		fmt.Printf("Service unit %s already installed -- setup complete.\n", cfg.ServiceName())
 		return nil
 	}
 
 	fmt.Println()
-	if !confirm(fmt.Sprintf("Install the %s-scope systemd unit (%s)?", cfg.ServiceScope(), cfg.ServiceName()), true) {
+	if !confirm(fmt.Sprintf("Install the %s-scope %s unit (%s)?", cfg.ServiceScope(), config.ServiceManager, cfg.ServiceName()), true) {
 		fmt.Println("Skipped unit install. Re-run 'vllm-helper setup' when ready.")
 		return nil
 	}
 	return installUnit(cfg)
 }
 
-func unitInstalled(cfg *config.Config) bool {
-	if cfg.ServiceScope() == "user" {
-		home, _ := os.UserHomeDir()
-		base := os.Getenv("XDG_CONFIG_HOME")
-		if base == "" {
-			base = filepath.Join(home, ".config")
-		}
-		_, err := os.Stat(filepath.Join(base, "systemd", "user", cfg.ServiceName()))
-		return err == nil
-	}
-	_, err := os.Stat(filepath.Join("/etc/systemd/system", cfg.ServiceName()))
-	return err == nil
-}
-
-// installUnit renders and installs the systemd unit pointing at this
-// binary's `start` command.
+// installUnit installs the host's service unit pointing at this binary's
+// `start` command.
 func installUnit(cfg *config.Config) error {
 	self, err := os.Executable()
 	if err != nil {
@@ -171,75 +157,12 @@ func installUnit(cfg *config.Config) error {
 	}
 	self, _ = filepath.EvalSymlinks(self)
 
-	userLine, wantedBy := "User="+os.Getenv("USER"), "multi-user.target"
-	if cfg.ServiceScope() == "user" {
-		userLine, wantedBy = "", "default.target"
+	path, err := svc(cfg).Install(self)
+	if err != nil {
+		return err
 	}
-	unit := fmt.Sprintf(`[Unit]
-Description=vLLM OpenAI-compatible server (active model set via vllm-helper)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-%s
-ExecStart=%s start
-Restart=on-failure
-RestartSec=5
-TimeoutStartSec=600
-
-[Install]
-WantedBy=%s
-`, userLine, self, wantedBy)
-
-	if cfg.ServiceScope() == "user" {
-		home, _ := os.UserHomeDir()
-		base := os.Getenv("XDG_CONFIG_HOME")
-		if base == "" {
-			base = filepath.Join(home, ".config")
-		}
-		path := filepath.Join(base, "systemd", "user", cfg.ServiceName())
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
-			return err
-		}
-		run(nil, "systemctl", "--user", "daemon-reload")
-		run(nil, "systemctl", "--user", "enable", cfg.ServiceName())
-		if err := exec.Command("loginctl", "enable-linger", os.Getenv("USER")).Run(); err != nil {
-			fmt.Printf("note: couldn't enable lingering -- the server stops at logout (fix: sudo loginctl enable-linger %s)\n", os.Getenv("USER"))
-		}
-		fmt.Println("Installed user unit at", path)
-	} else {
-		tmp, err := os.CreateTemp("", "vllm-unit-*.service")
-		if err != nil {
-			return err
-		}
-		defer os.Remove(tmp.Name())
-		if _, err := tmp.WriteString(unit); err != nil {
-			return err
-		}
-		tmp.Close()
-		path := filepath.Join("/etc/systemd/system", cfg.ServiceName())
-		if err := run(os.Stdout, "sudo", "cp", tmp.Name(), path); err != nil {
-			return fmt.Errorf("installing unit (needs sudo): %w", err)
-		}
-		run(nil, "sudo", "chmod", "644", path)
-		run(nil, "sudo", "systemctl", "daemon-reload")
-		run(nil, "sudo", "systemctl", "enable", cfg.ServiceName())
-		fmt.Println("Installed system unit at", path)
-	}
+	fmt.Printf("Installed %s unit at %s\n", cfg.ServiceScope(), path)
 	fmt.Println()
 	fmt.Println("Setup complete. Next: 'vllm-helper new <org/model>' or 'vllm-helper search <query>'.")
 	return nil
-}
-
-func run(out *os.File, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdin = os.Stdin
-	if out != nil {
-		cmd.Stdout, cmd.Stderr = out, out
-	}
-	return cmd.Run()
 }

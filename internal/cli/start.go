@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -8,16 +9,25 @@ import (
 	"github.com/coder/vllm-helper/internal/config"
 )
 
-// cmdStart is what systemd runs: source the generated active.env and exec
-// vllm serve, replacing this process so signals flow straight to vLLM.
+// cmdStart is what the service manager runs: source the generated active.env
+// and exec vllm serve, replacing this process so signals flow straight to vLLM.
 func cmdStart() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
 	active, err := config.ParseEnvFile(cfg.Dirs.ActiveEnvFile())
-	if err != nil {
-		return fmt.Errorf("no active model config at %s -- run 'vllm-helper switch <profile>' first", cfg.Dirs.ActiveEnvFile())
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// Exit cleanly instead of failing. The unit gets installed before the
+		// first switch, and a non-zero exit here would send systemd's
+		// Restart=on-failure -- or launchd's KeepAlive -- into a crash loop
+		// with no model to serve. Only a missing file means "not set up yet";
+		// anything else is a fault worth reporting.
+		fmt.Println("No active model yet -- run 'vllm-helper switch <profile>' to load one.")
+		return nil
+	case err != nil:
+		return fmt.Errorf("reading the active model config at %s: %w", cfg.Dirs.ActiveEnvFile(), err)
 	}
 
 	bin := active.Get("VLLM_BIN")
@@ -31,7 +41,7 @@ func cmdStart() error {
 	args := []string{bin, "serve", active.Get("MODEL"),
 		"--port", active.Get("PORT"),
 		"--max-model-len", active.Get("MAX_MODEL_LEN"),
-		"--gpu-memory-utilization", active.Get("GPU_MEMORY_UTILIZATION"),
+		"--gpu-memory-utilization", fitMemUtilization(active.Get("GPU_MEMORY_UTILIZATION")),
 		"--api-key", active.Get("VLLM_API_KEY"),
 	}
 	if extra := active.Get("EXTRA_ARGS"); extra != "" {
