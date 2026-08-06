@@ -9,12 +9,12 @@ import (
 // Container is a running Docker/Podman container that looks like a vLLM
 // server (by image name or command).
 type Container struct {
-	Runtime string // "docker" or "podman"
-	ID      string
-	Name    string
-	Image   string
-	Command string
-	Ports   string
+	Runtime string `json:"runtime"` // "docker" or "podman"
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Image   string `json:"image"`
+	Command string `json:"command"`
+	Ports   string `json:"ports"`
 }
 
 // ScanContainers asks docker and podman (whichever are installed) for

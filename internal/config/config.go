@@ -99,6 +99,10 @@ func (c *Config) ServiceScope() string  { return c.get("SERVICE_SCOPE", "system"
 func (c *Config) ModelBudgetGB() string { return c.get("MODEL_BUDGET_GB", "90") }
 func (c *Config) APIKey() string        { return c.get("VLLM_API_KEY", "") }
 
+// HFToken returns a HuggingFace token from config/secrets ("" if unset).
+// Needed only for gated or private models.
+func (c *Config) HFToken() string { return c.get("HF_TOKEN", "") }
+
 func (c *Config) CoderURL() string        { return c.get("CODER_URL", "") }
 func (c *Config) CoderToken() string      { return c.get("CODER_API_TOKEN", "") }
 func (c *Config) CoderProviderID() string { return c.get("CODER_AI_PROVIDER_ID", "") }

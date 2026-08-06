@@ -6,26 +6,30 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/coder/vllm-helper/internal/config"
 )
 
 // Server is one detected vLLM server and everything we learned about it.
+// Cmdline is deliberately kept out of JSON: it can contain --api-key values.
 type Server struct {
-	PID     int
-	Cmdline []string
+	PID     int      `json:"pid"`
+	Cmdline []string `json:"-"`
 
 	// Parsed from the command line:
-	Model       string
-	Port        string
-	MaxModelLen string
-	ExtraArgs   string // recognized per-model serving flags, reassembled
-	APIKeySet   bool
+	Model          string `json:"model"`
+	Port           string `json:"port"`
+	MaxModelLen    string `json:"max_model_len,omitempty"`
+	MemUtilization string `json:"mem_utilization,omitempty"` // --gpu-memory-utilization
+	ExtraArgs      string `json:"extra_args,omitempty"`      // every other serving flag, reassembled
+	APIKeySet      bool   `json:"api_key_set"`
 
 	// How it's being run:
-	VLLMBin       string // resolved vllm executable ("" if unknown)
-	SystemdUnit   string // e.g. "vllm.service" ("" if not under systemd)
-	UserScope     bool   // true if under the user manager (user@.service slice)
-	InContainer   bool   // cgroup says it's inside a container
-	ContainerHint string // raw cgroup fragment for container correlation
+	VLLMBin       string `json:"vllm_bin,omitempty"`       // resolved vllm executable ("" if unknown)
+	SystemdUnit   string `json:"systemd_unit,omitempty"`   // e.g. "vllm.service" ("" if not under systemd)
+	UserScope     bool   `json:"user_scope"`               // true if under the user manager (user@.service slice)
+	InContainer   bool   `json:"in_container"`             // cgroup says it's inside a container
+	ContainerHint string `json:"container_hint,omitempty"` // raw cgroup fragment for container correlation
 }
 
 // vLLM's OpenAI server shows up either as "... vllm serve <model> ..." or
@@ -72,19 +76,40 @@ func ScanProcesses() []Server {
 	return out
 }
 
-// perModelFlags are serving flags worth adopting into a profile. Everything
-// else on the command line is either deployment topology (port, host,
-// parallelism) or handled explicitly (model, max-model-len, api-key).
-var perModelBoolFlags = map[string]bool{
+// valuelessFlags never consume the following argument. Any other flag is
+// assumed to take a value when the next argument doesn't look like a flag,
+// which is how unrecognized flags get carried over intact.
+var valuelessFlags = map[string]bool{
 	"--enable-auto-tool-choice": true,
 	"--enable-prefix-caching":   true,
 	"--trust-remote-code":       true,
 }
-var perModelValuedFlags = map[string]bool{
-	"--tool-call-parser": true,
-	"--reasoning-parser": true,
-	"--quantization":     true,
-	"--kv-cache-dtype":   true,
+
+// looksSecret reports whether a flag carries a credential. Those are left
+// out of ExtraArgs entirely: it lands in a profile file and in
+// 'doctor --json', which is the same reason Cmdline is withheld from JSON.
+// Matching on the trailing word keeps real flags like --tokenizer-mode and
+// --ssl-keyfile from being mistaken for secrets.
+func looksSecret(flag string) bool {
+	for _, suffix := range []string{"-key", "-token", "-secret", "-password"} {
+		if strings.HasSuffix(strings.ToLower(flag), suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeValue distinguishes a flag's value from the next flag. Negative
+// numbers are values despite the leading dash (e.g. --seed -1).
+func looksLikeValue(s string) bool {
+	if s == "" {
+		return false
+	}
+	if !strings.HasPrefix(s, "-") {
+		return true
+	}
+	_, err := strconv.ParseFloat(s, 64)
+	return err == nil
 }
 
 func parseServer(pid int, args []string) Server {
@@ -112,13 +137,11 @@ func parseServer(pid int, args []string) Server {
 			s.Port = next()
 		case a == "--max-model-len":
 			s.MaxModelLen = next()
+		case a == "--gpu-memory-utilization":
+			s.MemUtilization = next()
 		case a == "--api-key":
 			next()
 			s.APIKeySet = true
-		case perModelBoolFlags[a]:
-			extra = append(extra, a)
-		case perModelValuedFlags[a]:
-			extra = append(extra, a+" "+next())
 		case strings.HasPrefix(a, "--") && strings.Contains(a, "="):
 			// --flag=value form
 			flag, val, _ := strings.Cut(a, "=")
@@ -129,12 +152,33 @@ func parseServer(pid int, args []string) Server {
 				s.Port = val
 			case flag == "--max-model-len":
 				s.MaxModelLen = val
+			case flag == "--gpu-memory-utilization":
+				s.MemUtilization = val
 			case flag == "--api-key":
 				s.APIKeySet = true
-			case perModelBoolFlags[flag]: // e.g. --trust-remote-code=true
+			case valuelessFlags[flag]: // e.g. --trust-remote-code=true
 				extra = append(extra, flag)
-			case perModelValuedFlags[flag]:
-				extra = append(extra, flag+" "+val)
+			case looksSecret(flag):
+				// Deliberately dropped, like --api-key.
+			default:
+				extra = append(extra, flag+"="+config.Quote(val))
+			}
+		case valuelessFlags[a]:
+			extra = append(extra, a)
+		case strings.HasPrefix(a, "--"):
+			// Anything else the server was started with: carry it over so
+			// the profile can reproduce this configuration.
+			hasValue := i+1 < len(args) && looksLikeValue(args[i+1])
+			if looksSecret(a) {
+				if hasValue {
+					next() // consume it so it can't be read as a flag
+				}
+				break
+			}
+			if hasValue {
+				extra = append(extra, a+" "+config.Quote(next()))
+			} else {
+				extra = append(extra, a)
 			}
 		}
 	}

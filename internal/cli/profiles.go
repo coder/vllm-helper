@@ -2,22 +2,54 @@ package cli
 
 import (
 	"errors"
+	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
-func cmdList() error {
+// profileInfo is the machine-readable shape of one saved profile.
+type profileInfo struct {
+	Name        string `json:"name"`
+	Model       string `json:"model"`
+	MaxModelLen string `json:"max_model_len"`
+	GPUMemUtil  string `json:"gpu_memory_utilization"`
+	ExtraArgs   string `json:"extra_args"`
+	Status      string `json:"status"`
+	Active      bool   `json:"active"`
+}
+
+func cmdList(args []string) error {
+	fs := newFlagSet("list")
+	jsonOut := fs.Bool("json", false, "print profiles as JSON")
+	if _, err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
+	}
+	if *jsonOut {
+		profiles, _ := profile.List(cfg.Dirs)
+		active := cfg.ActiveProfile()
+		out := make([]profileInfo, 0, len(profiles))
+		for _, p := range profiles {
+			out = append(out, profileInfo{
+				Name:        p.Name,
+				Model:       p.Model(),
+				MaxModelLen: p.MaxModelLen(),
+				GPUMemUtil:  p.File.Get("GPU_MEMORY_UTILIZATION"),
+				ExtraArgs:   p.ExtraArgs(),
+				Status:      p.Status(),
+				Active:      p.Name == active,
+			})
+		}
+		return printJSON(out)
 	}
 	printProfiles(cfg)
 	return nil
@@ -40,40 +72,80 @@ func printProfiles(cfg *config.Config) {
 	}
 }
 
+// switchFlags registers the flags shared by switch/new/restart and returns
+// a resolver that turns them into watchOpts.
+func switchFlags(fs *flag.FlagSet) func() watchOpts {
+	noFollow := fs.Bool("no-follow", false, "restart and return immediately instead of watching the boot")
+	wait := fs.Bool("wait", false, "block until the endpoint is healthy, without streaming logs")
+	timeout := fs.Duration("timeout", 0, "give up waiting after this long (default: wait forever)")
+	return func() watchOpts {
+		opts := watchOpts{timeout: *timeout}
+		switch {
+		case *noFollow:
+			// fire-and-forget
+		case *wait:
+			opts.wait = true
+		default:
+			// Interactive terminals get the log stream; pipes and scripts
+			// get quiet blocking (--wait behavior).
+			opts.follow = stdoutIsTTY()
+			opts.wait = true
+		}
+		return opts
+	}
+}
+
 func cmdSwitch(args []string) error {
+	fs := newFlagSet("switch")
+	opts := switchFlags(fs)
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		return err
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	if len(args) < 1 {
+	if len(pos) < 1 {
 		printProfiles(cfg)
-		fmt.Println("\nusage: vllm-helper switch <profile>")
+		fmt.Println("\nusage: vllm-helper switch <profile> [--wait|--no-follow] [--timeout 30m]")
 		return errors.New("missing profile name")
 	}
-	p, err := profile.Load(cfg.Dirs, args[0])
+	p, err := profile.Load(cfg.Dirs, pos[0])
 	if err != nil {
 		printProfiles(cfg)
 		return err
 	}
-	return activateProfile(cfg, p)
+	return activateProfile(cfg, p, opts())
 }
 
 func cmdNew(args []string) error {
+	fs := newFlagSet("new")
+	opts := switchFlags(fs)
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) < 1 {
+		return errors.New("usage: vllm-helper new <org/model-repo> [--wait|--no-follow] [--timeout 30m]")
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	if len(args) < 1 {
-		return errors.New("usage: vllm-helper new <org/model-repo>")
-	}
-	repo := args[0]
+	return pullAndSwitch(cfg, pos[0], opts())
+}
+
+// pullAndSwitch is `new` minus the flag parsing, so `search` can funnel
+// into it with its own options.
+func pullAndSwitch(cfg *config.Config, repo string, opts watchOpts) error {
 	name := profile.NameFromRepo(repo)
 
 	p, err := profile.Load(cfg.Dirs, name)
 	if err == nil {
 		fmt.Printf("Profile '%s' already exists for %s -- using its saved settings.\n", name, repo)
-		fmt.Printf("(edit %s by hand if you want to change its flags)\n", cfg.Dirs.ProfileFile(name))
-		return activateProfile(cfg, p)
+		fmt.Printf("(change it with 'vllm-helper edit %s' if it needs different flags)\n", name)
+		return activateProfile(cfg, p, opts)
 	}
 
 	fmt.Println("Pulling new model:", repo)
@@ -99,7 +171,7 @@ func cmdNew(args []string) error {
 		}
 	}
 
-	opts := profile.CreateOpts{
+	createOpts := profile.CreateOpts{
 		Repo:        repo,
 		MaxModelLen: detected.MaxModelLen,
 		ExtraArgs:   extraArgs,
@@ -107,18 +179,18 @@ func cmdNew(args []string) error {
 	}
 	if extraArgs != "" {
 		fmt.Println("Auto-detected from the model card:", extraArgs)
-		opts.Status = "NOT YET VERIFIED -- flags auto-detected from README"
+		createOpts.Status = "NOT YET VERIFIED -- flags auto-detected from README"
 	} else {
 		fmt.Println("No vllm serve snippet found in the model's README -- check its HF card by")
 		fmt.Println("hand and edit the profile if it needs specific flags.")
-		opts.Status = "NOT YET VERIFIED -- no flags auto-detected, check the model card by hand"
+		createOpts.Status = "NOT YET VERIFIED -- no flags auto-detected, check the model card by hand"
 	}
 	fmt.Printf("Saving it as profile '%s' for next time.\n", name)
-	p, err = profile.Create(cfg.Dirs, opts)
+	p, err = profile.Create(cfg.Dirs, createOpts)
 	if err != nil {
 		return err
 	}
-	return activateProfile(cfg, p)
+	return activateProfile(cfg, p, opts)
 }
 
 func cmdRemove(args []string) error {
@@ -146,8 +218,9 @@ func cmdRemove(args []string) error {
 }
 
 // activateProfile is the core of switch/new: assemble the runtime env,
-// record the active profile, sync Coder, restart the service, tail logs.
-func activateProfile(cfg *config.Config, p *profile.Profile) error {
+// record the active profile, sync Coder, restart the service, and watch
+// the boot according to opts.
+func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) error {
 	if err := writeActiveEnv(cfg, p); err != nil {
 		return err
 	}
@@ -171,10 +244,14 @@ func activateProfile(cfg *config.Config, p *profile.Profile) error {
 		return fmt.Errorf("restarting service: %w", err)
 	}
 
+	if !opts.follow && !opts.wait {
+		fmt.Println()
+		fmt.Println("Not waiting for the model to load. Check progress with 'vllm-helper status'")
+		fmt.Println("or 'vllm-helper logs'.")
+		return nil
+	}
 	fmt.Println()
-	fmt.Println("Watching boot log -- Ctrl+C to stop watching (the service keeps running):")
-	_ = service(cfg).TailLogs()
-	return nil
+	return watchBoot(cfg, p.Name, opts)
 }
 
 // writeActiveEnv assembles state/active.env from config.env + secrets.env +
@@ -211,37 +288,56 @@ func writeActiveEnv(cfg *config.Config, p *profile.Profile) error {
 	return os.WriteFile(cfg.Dirs.ActiveProfileFile(), []byte(p.Name+"\n"), 0o644)
 }
 
-func cmdStatus() error {
+// statusReport is the machine-readable shape of `status`.
+type statusReport struct {
+	Service    string `json:"service"`
+	Profile    string `json:"profile"`
+	Model      string `json:"model"`
+	Port       string `json:"port"`
+	Healthy    bool   `json:"endpoint_healthy"`
+	HTTPStatus int    `json:"http_status"`
+}
+
+func gatherStatus(cfg *config.Config) statusReport {
+	r := statusReport{
+		Service: service(cfg).IsActive(),
+		Profile: cfg.ActiveProfile(),
+		Model:   "unknown",
+		Port:    cfg.Port(),
+	}
+	if r.Profile == "" {
+		r.Profile = "unknown"
+	}
+	if active, err := config.ParseEnvFile(cfg.Dirs.ActiveEnvFile()); err == nil {
+		if m := active.Get("MODEL"); m != "" {
+			r.Model = m
+		}
+	}
+	r.HTTPStatus, r.Healthy = probeHealth(cfg.Port())
+	return r
+}
+
+func cmdStatus(args []string) error {
+	fs := newFlagSet("status")
+	jsonOut := fs.Bool("json", false, "print status as JSON")
+	if _, err := parseArgs(fs, args); err != nil {
+		return err
+	}
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("systemd:  %s\n", service(cfg).IsActive())
-
-	model, prof := "unknown", cfg.ActiveProfile()
-	if prof == "" {
-		prof = "unknown"
+	r := gatherStatus(cfg)
+	if *jsonOut {
+		return printJSON(r)
 	}
-	if active, err := config.ParseEnvFile(cfg.Dirs.ActiveEnvFile()); err == nil {
-		if m := active.Get("MODEL"); m != "" {
-			model = m
-		}
-	}
-	fmt.Printf("profile:  %s\n", prof)
-	fmt.Printf("model:    %s\n", model)
-
-	client := &http.Client{Timeout: 3 * time.Second}
-	url := fmt.Sprintf("http://localhost:%s/health", cfg.Port())
-	resp, err := client.Get(url)
-	code := 0
-	if err == nil {
-		code = resp.StatusCode
-		resp.Body.Close()
-	}
-	if code == http.StatusOK {
-		fmt.Printf("endpoint: healthy (http %d on port %s)\n", code, cfg.Port())
+	fmt.Printf("systemd:  %s\n", r.Service)
+	fmt.Printf("profile:  %s\n", r.Profile)
+	fmt.Printf("model:    %s\n", r.Model)
+	if r.Healthy {
+		fmt.Printf("endpoint: healthy (http %d on port %s)\n", r.HTTPStatus, r.Port)
 	} else {
-		fmt.Printf("endpoint: not responding (http %03d on port %s) -- still loading, or check the service logs\n", code, cfg.Port())
+		fmt.Printf("endpoint: not responding (http %03d on port %s) -- still loading, or check the service logs\n", r.HTTPStatus, r.Port)
 	}
 	return nil
 }

@@ -10,10 +10,10 @@ import (
 // Endpoint is an OpenAI-compatible server found by probing localhost ports,
 // the catch-all layer for servers whose process we can't see.
 type Endpoint struct {
-	Port      string
-	Healthy   bool     // GET /health returned 200 (vLLM-style health route)
-	NeedsAuth bool     // /v1/models returned 401/403
-	Models    []string // model IDs from /v1/models when reachable
+	Port      string   `json:"port"`
+	Healthy   bool     `json:"healthy"`    // GET /health returned 200 (vLLM-style health route)
+	NeedsAuth bool     `json:"needs_auth"` // /v1/models returned 401/403
+	Models    []string `json:"models"`     // model IDs from /v1/models when reachable
 }
 
 var probeClient = &http.Client{Timeout: 2 * time.Second}
