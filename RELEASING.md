@@ -36,9 +36,9 @@ fails before publishing anything.
 To preview the notes for a version before tagging:
 
 ```sh
-awk -v ver=X.Y.Z '
-  $0 ~ "^## \\[" ver "\\]" { found = 1; next }
-  found && (/^## \[/ || /^\[[^]]+\]: /) { exit }
+awk -v hdr="## [X.Y.Z]" '
+  index($0, hdr) == 1 { found = 1; next }
+  found && (index($0, "## [") == 1 || /^\[[^]]+\]: /) { exit }
   found { print }
 ' CHANGELOG.md
 ```
