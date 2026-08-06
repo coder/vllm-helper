@@ -12,7 +12,7 @@ the fact.
 ### Added
 
 - macOS (Apple Silicon) support. The server is managed with `launchd`, memory
-  is read from `sysctl`, processes are found with `ps` instead of `/proc`, and
+  is read from `sysctl`, running servers are found without `/proc`, and
   `doctor` checks for the cmake/ninja/clang toolchain with `brew` hints. Linux
   keeps systemd, `/proc`, and apt.
 - `stop`, `restart`, and `logs` commands. `restart` re-applies profile edits
@@ -41,7 +41,8 @@ the fact.
 - `start` exits cleanly when no model is active yet, rather than failing. The
   service unit is installed before the first `switch`, and a non-zero exit sent
   systemd's `Restart=on-failure` (and launchd's `KeepAlive`) into a crash loop
-  with nothing to serve.
+  with nothing to serve. A config that exists but can't be read is still
+  reported as the error it is.
 
 ### Fixed
 
