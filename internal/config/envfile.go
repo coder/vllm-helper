@@ -55,9 +55,15 @@ func unquote(v string) string {
 	if v[0] == '"' && v[len(v)-1] == '"' {
 		// Bash double-quote semantics: \" and \\ are escapes.
 		inner := v[1 : len(v)-1]
-		inner = strings.ReplaceAll(inner, `\\`, "\x00")
-		inner = strings.ReplaceAll(inner, `\"`, `"`)
-		return strings.ReplaceAll(inner, "\x00", `\`)
+		var b strings.Builder
+		b.Grow(len(inner))
+		for i := 0; i < len(inner); i++ {
+			if inner[i] == '\\' && i+1 < len(inner) && (inner[i+1] == '"' || inner[i+1] == '\\') {
+				i++
+			}
+			b.WriteByte(inner[i])
+		}
+		return b.String()
 	}
 	return v
 }
@@ -67,7 +73,8 @@ func unquote(v string) string {
 // word as a command when sourcing, and embedded quotes and backslashes
 // must be escaped (bash treats an unquoted backslash as an escape).
 func Quote(v string) string {
-	if !strings.ContainsAny(v, " \t\"\\'") {
+	// Reading trims whitespace, so anything the trim would eat must be quoted.
+	if v == strings.TrimSpace(v) && !strings.ContainsAny(v, " \t\"\\'") {
 		return v
 	}
 	escaped := strings.ReplaceAll(v, `\`, `\\`)
