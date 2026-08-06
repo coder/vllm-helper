@@ -32,6 +32,23 @@ the fact.
 
 ### Changed
 
+- Commands are built on [cobra](https://github.com/spf13/cobra). `--help` now
+  lists them in groups, each command documents its own flags, and unknown
+  commands and flags are reported in cobra's wording. Exit codes are unchanged:
+  0 on success and for help, 1 for anything else.
+- Long flags must be spelled with two dashes. `--json` always worked and is
+  what the README has always shown, but the old flag parser also accepted
+  `-json`; the new one reads that as a bundle of single-letter flags. Where the
+  letters spell a real flag, the error says which spelling to use. `logs -n`
+  still works, as a genuine shorthand for `--lines`.
+- An argument too many is now rejected instead of dropped, so
+  `vllm-helper status runing` and `vllm-helper switch qwen typo` fail rather
+  than quietly reporting on something else or switching and saying nothing.
+  Commands that legitimately take several, like `search` and `set`, are
+  unaffected.
+- `--help` works on `set`, `edit`, `remove`, and `coder-sync`. Those four took
+  no flags, so the old parser read `--help` as a bad argument and exited 1
+  instead of describing the command.
 - `coder-sync register-all` only backfills entries that are missing, instead of
   rewriting ones that already exist.
 - Non-interactive sessions never prompt, tail, or block on `sudo`. This makes

@@ -3,11 +3,12 @@ package cli
 
 import (
 	"bufio"
-	"errors"
-	"flag"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
+
+	"github.com/spf13/cobra"
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/service"
@@ -16,106 +17,102 @@ import (
 // Version is stamped by goreleaser via ldflags.
 var Version = "dev"
 
-const topHelp = `vllm-helper -- manage a vLLM deployment on this machine (models, switching,
-optional Coder Agents sync). Only one model is loaded at a time.
+// Command groups, so the help stays sorted by what you're trying to do
+// rather than alphabetically.
+const (
+	groupModels  = "models"
+	groupServer  = "server"
+	groupMachine = "machine"
+)
 
-USAGE
-  vllm-helper <command> [args]
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "vllm-helper",
+		Short: "Manage a vLLM deployment on this machine",
+		Long: "vllm-helper -- manage a vLLM deployment on this machine (models, switching,\n" +
+			"optional Coder Agents sync). Only one model is loaded at a time.",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Version:       Version,
+		// The generated shell completions are not wired into packaging, so
+		// advertising them would only produce a command that goes nowhere.
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+	}
+	root.SetVersionTemplate("vllm-helper {{.Version}}\n")
+	root.SetFlagErrorFunc(flagError)
 
-COMMANDS
-  status [--json]          Quick health check: service state, active model,
-                           and whether the endpoint is responding
-  list [--json]            List saved model profiles
-  switch <profile>         Switch to a saved profile (restarts the server;
-                           --wait / --no-follow / --timeout control waiting)
-  new <org/model-name>     Pull a brand-new HuggingFace model, save it as a
-                           profile, and switch to it
-  search <query> [--json]  Search HuggingFace and pick a model to pull and
-                           switch to
-  inspect <org/model>      Show one model's license, weight size vs this
-                           machine's budget, and detected vLLM flags
-  edit <profile>           Open a profile in $EDITOR and validate the result
-  set <profile> K=V ...    Change profile settings from the command line
-  remove <profile>         Delete a profile (and its Coder model entry, if
-                           Coder sync is configured)
-  restart                  Re-apply the active profile and restart the server
-  stop                     Stop the server (profiles and config are kept)
-  logs [-n N] [--no-follow]
-                           Show the server journal (follows by default)
-  adopt                    Detect an already-running vLLM server (host
-                           process, service unit, or container) and save it
-                           as a managed profile
-  doctor [--json] [--yes]  Diagnose this machine: hardware, running servers,
-                           integrations, config drift
-  setup                    First-time setup: detect hardware + existing vLLM,
-                           write config
-  coder-sync <activate|register|remove> <profile>
-                           Manually sync one profile's Coder model entry
-  coder-sync register-all  Backfill (disabled) Coder entries for every profile
-  version                  Print the version
+	root.AddGroup(
+		&cobra.Group{ID: groupModels, Title: "Model profiles:"},
+		&cobra.Group{ID: groupServer, Title: "Running server:"},
+		&cobra.Group{ID: groupMachine, Title: "This machine:"},
+	)
 
-Run 'vllm-helper <command>' with no further arguments for per-command help.
-`
+	root.AddCommand(
+		newListCmd(),
+		newSwitchCmd(),
+		newNewCmd(),
+		newSearchCmd(),
+		newInspectCmd(),
+		newEditCmd(),
+		newSetCmd(),
+		newRemoveCmd(),
+
+		newStatusCmd(),
+		newRestartCmd(),
+		newStopCmd(),
+		newLogsCmd(),
+
+		newSetupCmd(),
+		newDoctorCmd(),
+		newAdoptCmd(),
+		newCoderSyncCmd(),
+
+		newStartCmd(),
+		newVersionCmd(),
+	)
+	return root
+}
 
 // Run dispatches a command line. Returns a process exit code.
 func Run(args []string) int {
+	root := newRootCmd()
 	if len(args) == 0 {
-		fmt.Print(topHelp)
+		// Bare invocation is a usage error, not a success, so scripts that
+		// forget the command notice.
+		_ = root.Help()
 		return 1
 	}
-	cmd, rest := args[0], args[1:]
-	var err error
-	switch cmd {
-	case "status":
-		err = cmdStatus(rest)
-	case "list":
-		err = cmdList(rest)
-	case "switch":
-		err = cmdSwitch(rest)
-	case "new":
-		err = cmdNew(rest)
-	case "remove":
-		err = cmdRemove(rest)
-	case "search":
-		err = cmdSearch(rest)
-	case "inspect":
-		err = cmdInspect(rest)
-	case "edit":
-		err = cmdEdit(rest)
-	case "set":
-		err = cmdSet(rest)
-	case "restart":
-		err = cmdRestart(rest)
-	case "stop":
-		err = cmdStop()
-	case "logs":
-		err = cmdLogs(rest)
-	case "start":
-		err = cmdStart()
-	case "coder-sync":
-		err = cmdCoderSync(rest)
-	case "adopt":
-		err = cmdAdopt()
-	case "doctor":
-		err = cmdDoctor(rest)
-	case "setup":
-		err = cmdSetup()
-	case "version", "--version", "-v":
-		fmt.Println("vllm-helper", Version)
-	case "help", "--help", "-h":
-		fmt.Print(topHelp)
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n%s", cmd, topHelp)
-		return 1
-	}
-	if errors.Is(err, flag.ErrHelp) {
-		return 0 // -h/--help: the flag set already printed its usage
-	}
-	if err != nil {
+	root.SetArgs(args)
+	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "vllm-helper:", err)
 		return 1
 	}
 	return 0
+}
+
+// pflag reads a single-dash long flag as a cluster of shorthands, so the
+// "-json" that stdlib flag used to accept now fails naming a letter nobody
+// typed. Say what to write instead, but only when the letters actually spell
+// a flag this command has -- otherwise pflag's own message is the honest one.
+var shorthandCluster = regexp.MustCompile(`^unknown shorthand flag: '.' in -(\w[\w-]+)$`)
+
+func flagError(c *cobra.Command, err error) error {
+	m := shorthandCluster.FindStringSubmatch(err.Error())
+	if m == nil || c.Flags().Lookup(m[1]) == nil {
+		return err
+	}
+	return fmt.Errorf("%s takes --%s, not -%s", c.Name(), m[1], m[1])
+}
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the version",
+		Args:  cobra.NoArgs,
+		Run: func(*cobra.Command, []string) {
+			fmt.Println("vllm-helper", Version)
+		},
+	}
 }
 
 func loadConfig() (*config.Config, error) {

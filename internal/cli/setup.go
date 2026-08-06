@@ -9,15 +9,27 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/spf13/cobra"
+
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/detect"
 )
 
-// cmdSetup is first-time setup for binary installs: detect hardware and any
+func newSetupCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "setup",
+		Short:   "First-time setup: detect hardware and existing vLLM, write config",
+		GroupID: groupMachine,
+		Args:    cobra.NoArgs,
+		RunE:    func(*cobra.Command, []string) error { return runSetup() },
+	}
+}
+
+// runSetup is first-time setup for binary installs: detect hardware and any
 // existing vLLM, write config + secrets, install the service unit, and
 // offer to adopt a running server. Idempotent; never overwrites existing
 // config and never restarts anything.
-func cmdSetup() error {
+func runSetup() error {
 	dirs := config.ResolveDirs()
 	fmt.Println("== vllm-helper setup ==")
 	fmt.Println()

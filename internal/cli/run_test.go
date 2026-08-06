@@ -115,8 +115,15 @@ func TestRunHelp(t *testing.T) {
 		if code != 0 {
 			t.Errorf("%v exited %d, want 0", args, code)
 		}
-		if !strings.Contains(stdout, "USAGE") {
+		if !strings.Contains(stdout, "Usage:") {
 			t.Errorf("%v printed no usage:\n%s", args, stdout)
+		}
+		// The groups are what keep the command list readable; an ungrouped
+		// command silently lands under "Additional Commands".
+		for _, group := range []string{"Model profiles:", "Running server:", "This machine:"} {
+			if !strings.Contains(stdout, group) {
+				t.Errorf("%v is missing the %q group:\n%s", args, group, stdout)
+			}
 		}
 	}
 }
@@ -128,7 +135,7 @@ func TestRunWithNoArguments(t *testing.T) {
 	if code == 0 {
 		t.Error("exited 0, want non-zero")
 	}
-	if !strings.Contains(stdout, "COMMANDS") {
+	if !strings.Contains(stdout, "Usage:") {
 		t.Errorf("printed no help:\n%s", stdout)
 	}
 }
@@ -139,7 +146,7 @@ func TestRunUnknownCommand(t *testing.T) {
 	if code == 0 {
 		t.Error("exited 0, want non-zero")
 	}
-	if !strings.Contains(stderr, "Unknown command: frobnicate") {
+	if !strings.Contains(stderr, `unknown command "frobnicate"`) {
 		t.Errorf("stderr = %q, want it to name the command", stderr)
 	}
 }
@@ -182,7 +189,7 @@ func TestRunFlagsAreAcceptedAnywhere(t *testing.T) {
 			if !strings.Contains(stderr, "nosuchprofile") {
 				t.Errorf("stderr = %q, want the unknown profile reported", stderr)
 			}
-			if strings.Contains(stderr, "not defined") || strings.Contains(stderr, "invalid value") {
+			if strings.Contains(stderr, "unknown flag") || strings.Contains(stderr, "invalid argument") {
 				t.Errorf("stderr = %q, want the flags accepted rather than rejected", stderr)
 			}
 		})
@@ -197,7 +204,7 @@ func TestRunRejectsABadFlagValue(t *testing.T) {
 	if code == 0 {
 		t.Error("exited 0, want non-zero")
 	}
-	if !strings.Contains(stderr, "invalid value") {
+	if !strings.Contains(stderr, "invalid argument") {
 		t.Errorf("stderr = %q, want the unparseable duration reported", stderr)
 	}
 }
@@ -219,7 +226,7 @@ func TestRunRejectsUnknownFlags(t *testing.T) {
 			if code == 0 {
 				t.Errorf("%v exited 0, want non-zero", tt.args)
 			}
-			if !strings.Contains(stderr, "not defined") {
+			if !strings.Contains(stderr, "unknown flag") {
 				t.Errorf("stderr = %q, want the unknown flag reported", stderr)
 			}
 		})
@@ -231,12 +238,12 @@ func TestRunSubcommandHelp(t *testing.T) {
 	for _, args := range [][]string{{"status", "-h"}, {"list", "--help"}, {"doctor", "-h"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			newTree(t)
-			code, _, stderr := runCLI(t, args...)
+			code, stdout, _ := runCLI(t, args...)
 			if code != 0 {
 				t.Errorf("exited %d, want 0", code)
 			}
-			if !strings.Contains(stderr, "Usage of "+args[0]) {
-				t.Errorf("stderr = %q, want the command's usage", stderr)
+			if !strings.Contains(stdout, "vllm-helper "+args[0]) {
+				t.Errorf("stdout = %q, want the command's usage", stdout)
 			}
 		})
 	}
@@ -533,10 +540,81 @@ func TestRunDispatchesEveryCommand(t *testing.T) {
 			if code == 0 {
 				t.Errorf("exited 0, want a rejected flag to fail")
 			}
-			if strings.Contains(stderr, "Unknown command") {
+			if strings.Contains(stderr, "unknown command") {
 				t.Errorf("%q is not wired into Run: %s", cmd, stderr)
 			}
 		})
+	}
+}
+
+// An operand too many used to be dropped on the floor, so "switch qwen typo"
+// switched to qwen and said nothing about the typo.
+func TestRunRejectsExtraOperands(t *testing.T) {
+	tests := [][]string{
+		{"switch", "qwen", "typo"},
+		{"new", "org/model", "typo"},
+		{"remove", "qwen", "typo"},
+		{"edit", "qwen", "typo"},
+		{"inspect", "org/model", "typo"},
+		{"coder-sync", "register", "qwen", "typo"},
+		{"status", "typo"},
+		{"list", "typo"},
+		{"stop", "typo"},
+		{"logs", "typo"},
+		{"version", "typo"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			newTree(t)
+			code, _, stderr := runCLI(t, args...)
+			if code == 0 {
+				t.Errorf("exited 0, want the stray operand rejected")
+			}
+			// Commands with an operand of their own report a count;
+			// commands with none read the extra word as a subcommand.
+			if !strings.Contains(stderr, "accepts at most") &&
+				!strings.Contains(stderr, `unknown command "typo"`) {
+				t.Errorf("stderr = %q, want the operand rejected by name or count", stderr)
+			}
+		})
+	}
+}
+
+// The operand bound must not swallow the arguments a command legitimately
+// takes more than one of.
+func TestRunKeepsVariadicOperands(t *testing.T) {
+	newTree(t)
+	// search joins its operands into one query.
+	_, _, stderr := runCLI(t, "search", "qwen", "7b", "instruct")
+	if strings.Contains(stderr, "accepts at most") {
+		t.Errorf("search rejected a multi-word query: %s", stderr)
+	}
+	// set takes any number of assignments.
+	code, _, stderr := runCLI(t, "set", "qwen", "MAX_MODEL_LEN=2048", "GPU_MEMORY_UTILIZATION=0.5")
+	if code != 0 {
+		t.Errorf("set rejected two assignments (exit %d): %s", code, stderr)
+	}
+}
+
+// stdlib flag treated -json and --json alike; pflag reads the first as a
+// cluster of shorthands. Anyone upgrading with the old spelling in a script
+// gets told what to write instead of a complaint about a letter they never
+// typed.
+func TestRunRejectsSingleDashLongFlags(t *testing.T) {
+	newTree(t)
+	code, _, stderr := runCLI(t, "list", "-json")
+	if code == 0 {
+		t.Error("exited 0, want non-zero")
+	}
+	if !strings.Contains(stderr, "takes --json, not -json") {
+		t.Errorf("stderr = %q, want the double-dash spelling suggested", stderr)
+	}
+
+	// A flag that isn't ours keeps pflag's own message: we only claim to
+	// know what someone meant when the letters spell a real flag.
+	_, _, stderr = runCLI(t, "list", "-xyz")
+	if !strings.Contains(stderr, "unknown shorthand flag") {
+		t.Errorf("stderr = %q, want pflag's message left alone", stderr)
 	}
 }
 

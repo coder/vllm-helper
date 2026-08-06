@@ -6,12 +6,26 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/spf13/cobra"
+
 	"github.com/coder/vllm-helper/internal/config"
 )
 
-// cmdStart is what the service manager runs: source the generated active.env
+func newStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "start",
+		Short: "Run the active model in the foreground",
+		// The service manager's ExecStart, not something to type: it execs
+		// vLLM over this process and never returns.
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE:   func(*cobra.Command, []string) error { return runStart() },
+	}
+}
+
+// runStart is what the service manager runs: source the generated active.env
 // and exec vllm serve, replacing this process so signals flow straight to vLLM.
-func cmdStart() error {
+func runStart() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err

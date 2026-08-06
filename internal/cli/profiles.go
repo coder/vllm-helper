@@ -2,11 +2,13 @@ package cli
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/hf"
@@ -24,17 +26,25 @@ type profileInfo struct {
 	Active      bool   `json:"active"`
 }
 
-func cmdList(args []string) error {
-	fs := newFlagSet("list")
-	jsonOut := fs.Bool("json", false, "print profiles as JSON")
-	if _, err := parseArgs(fs, args); err != nil {
-		return err
+func newListCmd() *cobra.Command {
+	var jsonOut bool
+	c := &cobra.Command{
+		Use:     "list",
+		Short:   "List saved model profiles",
+		GroupID: groupModels,
+		Args:    cobra.NoArgs,
+		RunE:    func(*cobra.Command, []string) error { return runList(jsonOut) },
 	}
+	c.Flags().BoolVar(&jsonOut, "json", false, "print profiles as JSON")
+	return c
+}
+
+func runList(jsonOut bool) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	if *jsonOut {
+	if jsonOut {
 		profiles, _ := profile.List(cfg.Dirs)
 		active := cfg.ActiveProfile()
 		out := make([]profileInfo, 0, len(profiles))
@@ -72,68 +82,91 @@ func printProfiles(cfg *config.Config) {
 	}
 }
 
-// switchFlags registers the flags shared by switch/new/restart and returns
-// a resolver that turns them into watchOpts.
-func switchFlags(fs *flag.FlagSet) func() watchOpts {
-	noFollow := fs.Bool("no-follow", false, "restart and return immediately instead of watching the boot")
-	wait := fs.Bool("wait", false, "block until the endpoint is healthy, without streaming logs")
-	timeout := fs.Duration("timeout", 0, "give up waiting after this long (default: wait forever)")
-	return func() watchOpts {
-		opts := watchOpts{timeout: *timeout}
-		switch {
-		case *noFollow:
-			// fire-and-forget
-		case *wait:
-			opts.wait = true
-		default:
-			// Interactive terminals get the log stream; pipes and scripts
-			// get quiet blocking (--wait behavior).
-			opts.follow = stdoutIsTTY()
-			opts.wait = true
-		}
-		return opts
-	}
+// waitFlags are shared by switch/new/restart: how long to stay attached
+// while the model loads.
+type waitFlags struct {
+	noFollow bool
+	wait     bool
+	timeout  time.Duration
 }
 
-func cmdSwitch(args []string) error {
-	fs := newFlagSet("switch")
-	opts := switchFlags(fs)
-	pos, err := parseArgs(fs, args)
-	if err != nil {
-		return err
+func (w *waitFlags) register(c *cobra.Command) {
+	c.Flags().BoolVar(&w.noFollow, "no-follow", false, "restart and return immediately instead of watching the boot")
+	c.Flags().BoolVar(&w.wait, "wait", false, "block until the endpoint is healthy, without streaming logs")
+	c.Flags().DurationVar(&w.timeout, "timeout", 0, "give up waiting after this long (default: wait forever)")
+}
+
+func (w *waitFlags) opts() watchOpts {
+	opts := watchOpts{timeout: w.timeout}
+	switch {
+	case w.noFollow:
+		// fire-and-forget
+	case w.wait:
+		opts.wait = true
+	default:
+		// Interactive terminals get the log stream; pipes and scripts
+		// get quiet blocking (--wait behavior).
+		opts.follow = stdoutIsTTY()
+		opts.wait = true
 	}
+	return opts
+}
+
+func newSwitchCmd() *cobra.Command {
+	var w waitFlags
+	c := &cobra.Command{
+		Use:     "switch <profile>",
+		Short:   "Switch to a saved profile, restarting the server",
+		GroupID: groupModels,
+		// Not ExactArgs: with no profile named, runSwitch lists what's
+		// available, which beats cobra's count of missing arguments.
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runSwitch(args, w.opts())
+		},
+	}
+	w.register(c)
+	return c
+}
+
+func runSwitch(args []string, opts watchOpts) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	if len(pos) < 1 {
+	if len(args) < 1 {
 		printProfiles(cfg)
 		fmt.Println("\nusage: vllm-helper switch <profile> [--wait|--no-follow] [--timeout 30m]")
 		return errors.New("missing profile name")
 	}
-	p, err := profile.Load(cfg.Dirs, pos[0])
+	p, err := profile.Load(cfg.Dirs, args[0])
 	if err != nil {
 		printProfiles(cfg)
 		return err
 	}
-	return activateProfile(cfg, p, opts())
+	return activateProfile(cfg, p, opts)
 }
 
-func cmdNew(args []string) error {
-	fs := newFlagSet("new")
-	opts := switchFlags(fs)
-	pos, err := parseArgs(fs, args)
-	if err != nil {
-		return err
+func newNewCmd() *cobra.Command {
+	var w waitFlags
+	c := &cobra.Command{
+		Use:     "new <org/model-repo>",
+		Short:   "Pull a new HuggingFace model, save it as a profile, and switch to it",
+		GroupID: groupModels,
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) < 1 {
+				return errors.New("usage: vllm-helper new <org/model-repo> [--wait|--no-follow] [--timeout 30m]")
+			}
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			return pullAndSwitch(cfg, args[0], w.opts())
+		},
 	}
-	if len(pos) < 1 {
-		return errors.New("usage: vllm-helper new <org/model-repo> [--wait|--no-follow] [--timeout 30m]")
-	}
-	cfg, err := loadConfig()
-	if err != nil {
-		return err
-	}
-	return pullAndSwitch(cfg, pos[0], opts())
+	w.register(c)
+	return c
 }
 
 // pullAndSwitch is `new` minus the flag parsing, so `search` can funnel
@@ -193,7 +226,17 @@ func pullAndSwitch(cfg *config.Config, repo string, opts watchOpts) error {
 	return activateProfile(cfg, p, opts)
 }
 
-func cmdRemove(args []string) error {
+func newRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "remove <profile>",
+		Short:   "Delete a profile, and its Coder model entry when sync is configured",
+		GroupID: groupModels,
+		Args:    cobra.MaximumNArgs(1),
+		RunE:    func(_ *cobra.Command, args []string) error { return runRemove(args) },
+	}
+}
+
+func runRemove(args []string) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -317,18 +360,26 @@ func gatherStatus(cfg *config.Config) statusReport {
 	return r
 }
 
-func cmdStatus(args []string) error {
-	fs := newFlagSet("status")
-	jsonOut := fs.Bool("json", false, "print status as JSON")
-	if _, err := parseArgs(fs, args); err != nil {
-		return err
+func newStatusCmd() *cobra.Command {
+	var jsonOut bool
+	c := &cobra.Command{
+		Use:     "status",
+		Short:   "Service state, active model, and whether the endpoint responds",
+		GroupID: groupServer,
+		Args:    cobra.NoArgs,
+		RunE:    func(*cobra.Command, []string) error { return runStatus(jsonOut) },
 	}
+	c.Flags().BoolVar(&jsonOut, "json", false, "print status as JSON")
+	return c
+}
+
+func runStatus(jsonOut bool) error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
 	r := gatherStatus(cfg)
-	if *jsonOut {
+	if jsonOut {
 		return printJSON(r)
 	}
 	fmt.Printf("%-9s %s\n", config.ServiceManager+":", r.Service)
