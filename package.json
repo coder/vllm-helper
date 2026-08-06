@@ -1,0 +1,11 @@
+{
+  "name": "vllm-helper",
+  "private": true,
+  "scripts": {
+    "fmt": "prettier --write .",
+    "fmt:ci": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "3.9.6"
+  }
+}
