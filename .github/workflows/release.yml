@@ -21,7 +21,7 @@ jobs:
 
       # The release body comes from CHANGELOG.md, so the notes are written and
       # reviewed in the PR that makes the change rather than generated from
-      # commit subjects at tag time. A tag with no section is a mistake worth
+      # commit subjects at tag time. A tag with no entries is a mistake worth
       # failing on: it means the changelog was never updated.
       - name: Extract release notes from CHANGELOG.md
         run: |
@@ -31,8 +31,8 @@ jobs:
             found && (index($0, "## [") == 1 || /^\[[^]]+\]: /) { exit }
             found { print }
           ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
-          if [ ! -s "$RUNNER_TEMP/release-notes.md" ]; then
-            echo "::error::CHANGELOG.md has no '## [$version]' section -- move the Unreleased entries under it before tagging."
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md"; then
+            echo "::error::CHANGELOG.md has no entries under '## [$version]' -- the section is missing or empty. Move the Unreleased entries under it before tagging."
             exit 1
           fi
           cat "$RUNNER_TEMP/release-notes.md"

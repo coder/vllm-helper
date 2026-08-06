@@ -47,7 +47,7 @@ awk -v hdr="## [X.Y.Z]" '
 
 Config, profiles, and state live in XDG directories and outlive the binary, so
 a release has to keep reading what earlier ones wrote. Profiles in the field may
-contain values no current code path produces. Before tagging, check that changes
-to profile parsing, `EXTRA_ARGS` handling, or the service unit still work
-against a profile written by the previous release, and note anything that
+contain values that no current code path produces. Before tagging, check that
+changes to profile parsing, `EXTRA_ARGS` handling, or the service unit still
+work against a profile written by the previous release, and note anything that
 doesn't under `Changed`.
