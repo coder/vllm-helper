@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/hf"
 )
@@ -36,26 +38,32 @@ type modelDetail struct {
 // model: a numbered result list, then a detail view with a live size check
 // against this machine's budget, then pull-and-switch. With --json it
 // prints the results and exits.
-func cmdSearch(args []string) error {
-	fs := newFlagSet("search")
-	jsonOut := fs.Bool("json", false, "print results as JSON and exit (no prompts)")
-	pos, err := parseArgs(fs, args)
-	if err != nil {
-		return err
+func newSearchCmd() *cobra.Command {
+	var jsonOut bool
+	c := &cobra.Command{
+		Use:     "search <search terms>",
+		Short:   "Search HuggingFace and pick a model to pull and switch to",
+		GroupID: groupModels,
+		RunE:    func(_ *cobra.Command, args []string) error { return runSearch(args, jsonOut) },
 	}
-	if len(pos) == 0 {
+	c.Flags().BoolVar(&jsonOut, "json", false, "print results as JSON and exit (no prompts)")
+	return c
+}
+
+func runSearch(args []string, jsonOut bool) error {
+	if len(args) == 0 {
 		return errors.New("usage: vllm-helper search <search terms> [--json]")
 	}
-	query := strings.Join(pos, " ")
+	query := strings.Join(args, " ")
 
-	if !*jsonOut {
+	if !jsonOut {
 		fmt.Printf("Searching HuggingFace for %q...\n", query)
 	}
 	models, err := hf.Search(query, 25)
 	if err != nil {
 		return fmt.Errorf("search request failed (network or rate limit): %w", err)
 	}
-	if *jsonOut {
+	if jsonOut {
 		out := make([]searchResult, 0, len(models))
 		for _, m := range models {
 			out = append(out, toSearchResult(m))
@@ -114,17 +122,23 @@ func cmdSearch(args []string) error {
 
 // cmdInspect shows the detail view for one repo without the search loop:
 // vllm-helper inspect <org/model> [--json]
-func cmdInspect(args []string) error {
-	fs := newFlagSet("inspect")
-	jsonOut := fs.Bool("json", false, "print the details as JSON")
-	pos, err := parseArgs(fs, args)
-	if err != nil {
-		return err
+func newInspectCmd() *cobra.Command {
+	var jsonOut bool
+	c := &cobra.Command{
+		Use:     "inspect <org/model-repo>",
+		Short:   "Show a model's license, weight size against this machine, and detected flags",
+		GroupID: groupModels,
+		RunE:    func(_ *cobra.Command, args []string) error { return runInspect(args, jsonOut) },
 	}
-	if len(pos) < 1 {
+	c.Flags().BoolVar(&jsonOut, "json", false, "print the details as JSON")
+	return c
+}
+
+func runInspect(args []string, jsonOut bool) error {
+	if len(args) < 1 {
 		return errors.New("usage: vllm-helper inspect <org/model-repo> [--json]")
 	}
-	m, err := hf.Lookup(pos[0])
+	m, err := hf.Lookup(args[0])
 	if err != nil {
 		return err
 	}
@@ -134,7 +148,7 @@ func cmdInspect(args []string) error {
 		return err
 	}
 	d := gatherModelDetail(m, cfg)
-	if *jsonOut {
+	if jsonOut {
 		return printJSON(d)
 	}
 	printModelDetail(d)

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
@@ -61,19 +63,27 @@ type hfTokenStatus struct {
 
 // cmdDoctor prints everything we can detect about this machine and flags
 // drift between config and reality.
-func cmdDoctor(args []string) error {
-	fs := newFlagSet("doctor")
-	jsonOut := fs.Bool("json", false, "print the full report as JSON (no prompts)")
-	yes := fs.Bool("yes", false, "install missing toolchain packages without asking")
-	if _, err := parseArgs(fs, args); err != nil {
-		return err
+func newDoctorCmd() *cobra.Command {
+	var jsonOut, yes bool
+	c := &cobra.Command{
+		Use:     "doctor",
+		Short:   "Diagnose hardware, running servers, integrations, and config drift",
+		GroupID: groupMachine,
+		Args:    cobra.NoArgs,
+		RunE:    func(*cobra.Command, []string) error { return runDoctor(jsonOut, yes) },
 	}
+	c.Flags().BoolVar(&jsonOut, "json", false, "print the full report as JSON (no prompts)")
+	c.Flags().BoolVar(&yes, "yes", false, "install missing toolchain packages without asking")
+	return c
+}
+
+func runDoctor(jsonOut, yes bool) error {
 
 	r := gatherDoctor()
-	if *jsonOut {
+	if jsonOut {
 		return printJSON(r)
 	}
-	renderDoctor(r, *yes)
+	renderDoctor(r, yes)
 	return nil
 }
 
@@ -366,7 +376,17 @@ func renderToolchain(checks []toolchainCheck, yes bool) {
 // cmdAdopt detects a running vLLM server and takes it over: saves its
 // command line as a profile, points config at its port/binary/unit, and
 // marks it active -- WITHOUT restarting anything.
-func cmdAdopt() error {
+func newAdoptCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "adopt",
+		Short:   "Detect an already-running vLLM server and save it as a managed profile",
+		GroupID: groupMachine,
+		Args:    cobra.NoArgs,
+		RunE:    func(*cobra.Command, []string) error { return runAdopt() },
+	}
+}
+
+func runAdopt() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		if errors.Is(err, config.ErrNotConfigured) {

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/profile"
 )
@@ -20,9 +22,17 @@ var standardProfileKeys = map[string]bool{
 	"EXTRA_ARGS":             true,
 }
 
-// cmdEdit opens a profile in $VISUAL/$EDITOR and validates the result.
-func cmdEdit(args []string) error {
-	args = dropTerminator(args)
+func newEditCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "edit <profile>",
+		Short:   "Open a profile in $EDITOR and validate the result",
+		GroupID: groupModels,
+		RunE:    func(_ *cobra.Command, args []string) error { return runEdit(args) },
+	}
+}
+
+// runEdit opens a profile in $VISUAL/$EDITOR and validates the result.
+func runEdit(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: vllm-helper edit <profile>")
 	}
@@ -67,9 +77,21 @@ func pickEditor() string {
 	return ""
 }
 
-// cmdSet updates profile keys in place: vllm-helper set <profile> KEY=VALUE...
-func cmdSet(args []string) error {
-	args = dropTerminator(args)
+func newSetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "set <profile> KEY=VALUE [KEY=VALUE ...]",
+		Short:   "Change profile settings from the command line",
+		GroupID: groupModels,
+		// Values that begin with a dash are passed after a "--" terminator,
+		// as in: set qwen EXTRA_ARGS -- --enable-prefix-caching
+		Example: "  vllm-helper set qwen MAX_MODEL_LEN=40960\n" +
+			"  vllm-helper set qwen -- EXTRA_ARGS=--enable-prefix-caching",
+		RunE: func(_ *cobra.Command, args []string) error { return runSet(args) },
+	}
+}
+
+// runSet updates profile keys in place: vllm-helper set <profile> KEY=VALUE...
+func runSet(args []string) error {
 	if len(args) < 2 {
 		return errors.New("usage: vllm-helper set <profile> KEY=VALUE [KEY=VALUE ...]")
 	}

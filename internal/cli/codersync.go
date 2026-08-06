@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/spf13/cobra"
+
 	"github.com/coder/vllm-helper/internal/coder"
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/profile"
@@ -13,7 +15,18 @@ import (
 
 const coderSyncUsage = "usage: vllm-helper coder-sync <activate|register|remove> <profile>  |  coder-sync register-all"
 
-func cmdCoderSync(args []string) error {
+func newCoderSyncCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "coder-sync <activate|register|remove> <profile>",
+		Short:   "Manually sync a profile's Coder model entry",
+		GroupID: groupMachine,
+		Example: "  vllm-helper coder-sync register qwen\n" +
+			"  vllm-helper coder-sync register-all",
+		RunE: func(_ *cobra.Command, args []string) error { return runCoderSync(args) },
+	}
+}
+
+func runCoderSync(args []string) error {
 	if len(args) < 1 {
 		return errors.New(coderSyncUsage)
 	}
