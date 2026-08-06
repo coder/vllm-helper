@@ -41,9 +41,11 @@ the fact.
   `-json`; the new one reads that as a bundle of single-letter flags. Where the
   letters spell a real flag, the error says which spelling to use. `logs -n`
   still works, as a genuine shorthand for `--lines`.
-- Commands that take no arguments now reject them instead of ignoring them, so
-  a typo like `vllm-helper status runing` fails rather than quietly reporting
-  on something else.
+- An argument too many is now rejected instead of dropped, so
+  `vllm-helper status runing` and `vllm-helper switch qwen typo` fail rather
+  than quietly reporting on something else or switching and saying nothing.
+  Commands that legitimately take several, like `search` and `set`, are
+  unaffected.
 - `--help` works on `set`, `edit`, `remove`, and `coder-sync`. Those four took
   no flags, so the old parser read `--help` as a bad argument and exited 1
   instead of describing the command.

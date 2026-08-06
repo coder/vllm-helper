@@ -22,6 +22,7 @@ func newCoderSyncCmd() *cobra.Command {
 		GroupID: groupMachine,
 		Example: "  vllm-helper coder-sync register qwen\n" +
 			"  vllm-helper coder-sync register-all",
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error { return runCoderSync(args) },
 	}
 }

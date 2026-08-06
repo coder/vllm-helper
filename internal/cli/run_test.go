@@ -547,6 +547,55 @@ func TestRunDispatchesEveryCommand(t *testing.T) {
 	}
 }
 
+// An operand too many used to be dropped on the floor, so "switch qwen typo"
+// switched to qwen and said nothing about the typo.
+func TestRunRejectsExtraOperands(t *testing.T) {
+	tests := [][]string{
+		{"switch", "qwen", "typo"},
+		{"new", "org/model", "typo"},
+		{"remove", "qwen", "typo"},
+		{"edit", "qwen", "typo"},
+		{"inspect", "org/model", "typo"},
+		{"coder-sync", "register", "qwen", "typo"},
+		{"status", "typo"},
+		{"list", "typo"},
+		{"stop", "typo"},
+		{"logs", "typo"},
+		{"version", "typo"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			newTree(t)
+			code, _, stderr := runCLI(t, args...)
+			if code == 0 {
+				t.Errorf("exited 0, want the stray operand rejected")
+			}
+			// Commands with an operand of their own report a count;
+			// commands with none read the extra word as a subcommand.
+			if !strings.Contains(stderr, "accepts at most") &&
+				!strings.Contains(stderr, `unknown command "typo"`) {
+				t.Errorf("stderr = %q, want the operand rejected by name or count", stderr)
+			}
+		})
+	}
+}
+
+// The operand bound must not swallow the arguments a command legitimately
+// takes more than one of.
+func TestRunKeepsVariadicOperands(t *testing.T) {
+	newTree(t)
+	// search joins its operands into one query.
+	_, _, stderr := runCLI(t, "search", "qwen", "7b", "instruct")
+	if strings.Contains(stderr, "accepts at most") {
+		t.Errorf("search rejected a multi-word query: %s", stderr)
+	}
+	// set takes any number of assignments.
+	code, _, stderr := runCLI(t, "set", "qwen", "MAX_MODEL_LEN=2048", "GPU_MEMORY_UTILIZATION=0.5")
+	if code != 0 {
+		t.Errorf("set rejected two assignments (exit %d): %s", code, stderr)
+	}
+}
+
 // stdlib flag treated -json and --json alike; pflag reads the first as a
 // cluster of shorthands. Anyone upgrading with the old spelling in a script
 // gets told what to write instead of a complaint about a letter they never

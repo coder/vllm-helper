@@ -128,6 +128,7 @@ func newInspectCmd() *cobra.Command {
 		Use:     "inspect <org/model-repo>",
 		Short:   "Show a model's license, weight size against this machine, and detected flags",
 		GroupID: groupModels,
+		Args:    cobra.MaximumNArgs(1),
 		RunE:    func(_ *cobra.Command, args []string) error { return runInspect(args, jsonOut) },
 	}
 	c.Flags().BoolVar(&jsonOut, "json", false, "print the details as JSON")

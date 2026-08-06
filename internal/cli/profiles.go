@@ -118,6 +118,9 @@ func newSwitchCmd() *cobra.Command {
 		Use:     "switch <profile>",
 		Short:   "Switch to a saved profile, restarting the server",
 		GroupID: groupModels,
+		// Not ExactArgs: with no profile named, runSwitch lists what's
+		// available, which beats cobra's count of missing arguments.
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runSwitch(args, w.opts())
 		},
@@ -150,6 +153,7 @@ func newNewCmd() *cobra.Command {
 		Use:     "new <org/model-repo>",
 		Short:   "Pull a new HuggingFace model, save it as a profile, and switch to it",
 		GroupID: groupModels,
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) < 1 {
 				return errors.New("usage: vllm-helper new <org/model-repo> [--wait|--no-follow] [--timeout 30m]")
@@ -227,6 +231,7 @@ func newRemoveCmd() *cobra.Command {
 		Use:     "remove <profile>",
 		Short:   "Delete a profile, and its Coder model entry when sync is configured",
 		GroupID: groupModels,
+		Args:    cobra.MaximumNArgs(1),
 		RunE:    func(_ *cobra.Command, args []string) error { return runRemove(args) },
 	}
 }

@@ -27,6 +27,7 @@ func newEditCmd() *cobra.Command {
 		Use:     "edit <profile>",
 		Short:   "Open a profile in $EDITOR and validate the result",
 		GroupID: groupModels,
+		Args:    cobra.MaximumNArgs(1),
 		RunE:    func(_ *cobra.Command, args []string) error { return runEdit(args) },
 	}
 }
@@ -82,8 +83,6 @@ func newSetCmd() *cobra.Command {
 		Use:     "set <profile> KEY=VALUE [KEY=VALUE ...]",
 		Short:   "Change profile settings from the command line",
 		GroupID: groupModels,
-		// Values that begin with a dash are passed after a "--" terminator,
-		// as in: set qwen EXTRA_ARGS -- --enable-prefix-caching
 		Example: "  vllm-helper set qwen MAX_MODEL_LEN=40960\n" +
 			"  vllm-helper set qwen -- EXTRA_ARGS=--enable-prefix-caching",
 		RunE: func(_ *cobra.Command, args []string) error { return runSet(args) },
