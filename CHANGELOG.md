@@ -64,6 +64,11 @@ the fact.
 
 ### Fixed
 
+- Redirecting output to `/dev/null` no longer looks like a terminal. Terminal
+  detection read the file mode, and `/dev/null` is a character device like a
+  terminal is, so `vllm-helper logs > /dev/null` followed the log forever
+  instead of printing it and exiting, and `sudo` was left prompting with
+  nothing able to answer. The check now asks the kernel.
 - A profile value that started or ended with an unusual whitespace character
   (a vertical tab, a form feed, a non-breaking space) was written unquoted and
   read back as empty, silently emptying the setting. Reading trims all
