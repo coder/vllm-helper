@@ -27,7 +27,8 @@ the fact.
 - `doctor` verifies Coder sync credentials against the API, and reports whether
   a HuggingFace token is present and whether the Hub accepts it. Search and
   public models never need one; it matters only for gated or private repos.
-- CI runs on macOS as well as Linux.
+- CI runs on macOS as well as Linux, and runs the tests with the race
+  detector.
 
 ### Changed
 
@@ -46,6 +47,11 @@ the fact.
 
 ### Fixed
 
+- A profile value that started or ended with an unusual whitespace character
+  (a vertical tab, a form feed, a non-breaking space) was written unquoted and
+  read back as empty, silently emptying the setting. Reading trims all
+  whitespace, so writing now quotes anything the trim would eat.
+- A value containing a NUL byte came back with a backslash in its place.
 - `adopt` saved a lossy copy of the server it claimed to take over. Only three
   boolean and four valued flags were recognized and the rest were dropped, so a
   server running with `--tensor-parallel-size`, `--dtype`, or

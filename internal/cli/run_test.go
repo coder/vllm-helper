@@ -516,6 +516,129 @@ func TestRunRestartWithoutAnActiveProfile(t *testing.T) {
 	}
 }
 
+func TestRunDoctor(t *testing.T) {
+	newTree(t)
+	code, stdout, stderr := runCLI(t, "doctor")
+	if code != 0 {
+		t.Fatalf("exited %d (%s), want 0", code, stderr)
+	}
+	for _, want := range []string{"HARDWARE", "CONFIG", "RUNNING SERVERS", "ENDPOINTS", "INTEGRATIONS", "BUILD TOOLCHAIN"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("doctor printed no %s section:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestRunDoctorJSON(t *testing.T) {
+	newTree(t)
+	code, stdout, stderr := runCLI(t, "doctor", "--json")
+	if code != 0 {
+		t.Fatalf("exited %d (%s), want 0", code, stderr)
+	}
+	var got struct {
+		Hardware struct {
+			TotalMemGB   int    `json:"total_mem_gb"`
+			BudgetReason string `json:"budget_reason"`
+		} `json:"hardware"`
+		Config *struct {
+			Path string `json:"path"`
+			Port string `json:"port"`
+		} `json:"config"`
+		Servers   []map[string]any `json:"servers"`
+		Endpoints []map[string]any `json:"endpoints"`
+		Toolchain []struct {
+			Name string `json:"name"`
+		} `json:"toolchain"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("doctor --json isn't JSON: %v\n%s", err, stdout)
+	}
+	if got.Config == nil {
+		t.Fatal("config section is null with a config present")
+	}
+	if got.Hardware.BudgetReason == "" {
+		t.Error("hardware.budget_reason should explain the budget")
+	}
+	// Cmdline is withheld from JSON because it can carry --api-key values.
+	for _, s := range got.Servers {
+		if _, ok := s["cmdline"]; ok {
+			t.Errorf("a server's raw command line reached JSON: %v", s)
+		}
+	}
+}
+
+// Coder sync writes one entry per profile and remembers its id, so the next
+// switch updates rather than duplicating it.
+func TestRunCoderSync(t *testing.T) {
+	var created int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			created++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"mc-1"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(srv.Close)
+
+	configDir, _ := newTree(t)
+	config := "PORT=" + closedPort(t) + "\nSERVICE_NAME=vllm-test\nSERVICE_SCOPE=user\n" +
+		"CODER_URL=" + srv.URL + "\nCODER_API_TOKEN=tok\nCODER_AI_PROVIDER_ID=prov\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.env"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(filepath.Dir(configDir), "state")
+
+	code, stdout, stderr := runCLI(t, "coder-sync", "register", "qwen")
+	if code != 0 {
+		t.Fatalf("exited %d (%s), want 0", code, stderr)
+	}
+	if !strings.Contains(stdout, "registering") {
+		t.Errorf("stdout = %q, want it to report the registration", stdout)
+	}
+	ids, err := os.ReadFile(filepath.Join(stateDir, "coder-ids.env"))
+	if err != nil {
+		t.Fatalf("no id state written: %v", err)
+	}
+	if !strings.Contains(string(ids), "qwen=mc-1") {
+		t.Errorf("id state = %q, want the profile mapped to its Coder entry", ids)
+	}
+
+	code, stdout, _ = runCLI(t, "coder-sync", "register", "qwen")
+	if code != 0 {
+		t.Fatalf("second register exited %d, want 0", code)
+	}
+	if !strings.Contains(stdout, "already has") {
+		t.Errorf("stdout = %q, want the existing entry left alone", stdout)
+	}
+	if created != 1 {
+		t.Errorf("the deployment saw %d creates, want 1", created)
+	}
+}
+
+func TestRunCoderSyncWithoutCoderConfigured(t *testing.T) {
+	newTree(t)
+	code, stdout, stderr := runCLI(t, "coder-sync", "register-all")
+	if code == 0 {
+		t.Errorf("exited 0 (%s / %s), want non-zero", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "not configured") {
+		t.Errorf("stderr = %q, want it to say Coder sync isn't configured", stderr)
+	}
+}
+
+func TestRunCoderSyncRejectsAnUnknownOperation(t *testing.T) {
+	newTree(t)
+	code, _, stderr := runCLI(t, "coder-sync", "frobnicate", "qwen")
+	if code == 0 {
+		t.Error("exited 0, want non-zero")
+	}
+	if !strings.Contains(stderr, "usage") {
+		t.Errorf("stderr = %q, want a usage line", stderr)
+	}
+}
+
 // main hands Run's return value to os.Exit, so the shell sees the same code
 // the tests above assert on.
 func TestBinaryExitCodes(t *testing.T) {

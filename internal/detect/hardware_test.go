@@ -37,7 +37,8 @@ func TestAvailableMemMB(t *testing.T) {
 	if avail <= 0 {
 		t.Errorf("AvailableMemMB = %d, want the memory that's actually free", avail)
 	}
-	if total := detect.Probe().TotalMemGB * 1024; avail > total {
-		t.Errorf("AvailableMemMB = %d, more than the %d MB the machine has", avail, total)
+	// TotalMemGB is whole gigabytes, so allow one for the truncation.
+	if ceiling := (detect.Probe().TotalMemGB + 1) * 1024; avail > ceiling {
+		t.Errorf("AvailableMemMB = %d, more than the %d MB the machine has", avail, ceiling)
 	}
 }
