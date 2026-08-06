@@ -18,11 +18,18 @@ func newFlagSet(name string) *flag.FlagSet {
 
 // parseArgs parses fs against args with flags allowed anywhere on the
 // command line (stdlib flag stops at the first positional, which makes
-// "vllm-helper switch qwen --wait" fail). Returns the positional args.
+// "vllm-helper switch qwen --wait" fail). A "--" terminator ends flag
+// parsing so values that begin with a dash can be passed through, as in
+// 'vllm-helper set EXTRA_ARGS -- --enable-prefix-caching'. Returns the
+// positional args.
 func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 	var flags, pos []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if a == "--" {
+			pos = append(pos, args[i+1:]...)
+			break
+		}
 		if !strings.HasPrefix(a, "-") || a == "-" {
 			pos = append(pos, a)
 			continue
