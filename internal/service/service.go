@@ -20,13 +20,24 @@ type Service struct {
 
 func (s Service) userScope() bool { return s.Scope == "user" }
 
-// run executes a command, streaming any sudo password prompt to the terminal.
-// out may be nil to discard output.
+// sudo builds a privileged invocation. Without a terminal to answer a
+// password prompt, fail fast rather than block on one forever.
+func (s Service) sudo(args ...string) (string, []string) {
+	if s.NonInteractive {
+		return "sudo", append([]string{"-n"}, args...)
+	}
+	return "sudo", args
+}
+
+// run executes a command. Stderr always reaches the terminal: that is where
+// sudo writes its password prompt and where anything that went wrong shows
+// up, and swallowing either turns a failure into an unexplained hang. out
+// may be nil to discard ordinary output.
 func run(out *os.File, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
-	cmd.Stdin = os.Stdin
+	cmd.Stdin, cmd.Stderr = os.Stdin, os.Stderr
 	if out != nil {
-		cmd.Stdout, cmd.Stderr = out, out
+		cmd.Stdout = out
 	}
 	return cmd.Run()
 }

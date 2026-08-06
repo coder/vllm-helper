@@ -228,18 +228,34 @@ func (s Service) Install(self string) (string, error) {
 			return "", err
 		}
 		tmp.Close()
-		run(nil, "sudo", "mkdir", "-p", s.logDir())
-		if err := run(os.Stdout, "sudo", "cp", tmp.Name(), path); err != nil {
-			return "", fmt.Errorf("installing plist (needs sudo): %w", err)
+		// launchd refuses to load a daemon plist that isn't root-owned and
+		// non-writable by anyone else, and it can't spawn the job at all if
+		// the log directory is missing. Letting any of these fail quietly
+		// produces a service that installs "successfully" and then never
+		// runs, so treat every one as fatal.
+		steps := [][]string{
+			{"mkdir", "-p", s.logDir()},
+			{"cp", tmp.Name(), path},
+			{"chown", "root:wheel", path},
+			{"chmod", "644", path},
 		}
-		run(nil, "sudo", "chown", "root:wheel", path)
-		run(nil, "sudo", "chmod", "644", path)
+		for _, step := range steps {
+			bin, args := s.sudo(step...)
+			if err := run(os.Stdout, bin, args...); err != nil {
+				return "", fmt.Errorf("installing plist -- 'sudo %s' failed (needs root): %w",
+					strings.Join(step, " "), err)
+			}
+		}
 	}
 
 	// Replace any previous registration so a re-install picks up edits.
-	bin, args := s.launchctl("bootout", s.target())
-	run(nil, bin, args...)
-	bin, args = s.launchctl("bootstrap", s.domain(), path)
+	// Only when there is one: booting out a job that was never loaded is an
+	// error, and reporting it would be noise during a first install.
+	if s.loaded() {
+		bin, args := s.launchctl("bootout", s.target())
+		run(nil, bin, args...)
+	}
+	bin, args := s.launchctl("bootstrap", s.domain(), path)
 	if err := run(os.Stdout, bin, args...); err != nil {
 		return "", fmt.Errorf("bootstrapping %s: %w", s.Name, err)
 	}

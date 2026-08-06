@@ -7,9 +7,15 @@ import (
 	"strings"
 )
 
-// listProcesses shells out to ps, since macOS has no /proc. -ww stops ps from
-// truncating long command lines, which vLLM's always are. Argv boundaries are
-// lost to whitespace splitting, but no vLLM flag or model id contains a space.
+// listProcesses shells out to ps to enumerate the machine, since macOS has no
+// /proc. -ww stops ps from truncating long command lines, which vLLM's always
+// are.
+//
+// ps joins argv with spaces, so an argument that contains one can't be
+// recovered from it -- and profiles legitimately hold such values, like a
+// --chat-template path under a directory with a space in the name. For the
+// processes that matter we re-read argv from the kernel, which keeps the
+// boundaries intact; ps's split stands in when that isn't permitted.
 func listProcesses() []rawProc {
 	out, err := exec.Command("ps", "-Awwo", "pid=,command=").Output()
 	if err != nil {
@@ -25,7 +31,16 @@ func listProcesses() []rawProc {
 		if err != nil {
 			continue
 		}
-		procs = append(procs, rawProc{PID: pid, Args: fields[1:]})
+		args := fields[1:]
+		// Joining argv with spaces doesn't change whether "vllm serve"
+		// appears in it, so this filter is safe to apply to the lossy form,
+		// and it keeps the syscall off every other process on the machine.
+		if looksLikeVLLM(args) {
+			if exact, err := procArgs(pid); err == nil {
+				args = exact
+			}
+		}
+		procs = append(procs, rawProc{PID: pid, Args: args})
 	}
 	return procs
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -16,13 +17,17 @@ func cmdStart() error {
 		return err
 	}
 	active, err := config.ParseEnvFile(cfg.Dirs.ActiveEnvFile())
-	if err != nil {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		// Exit cleanly instead of failing. The unit gets installed before the
 		// first switch, and a non-zero exit here would send systemd's
 		// Restart=on-failure -- or launchd's KeepAlive -- into a crash loop
-		// with no model to serve.
+		// with no model to serve. Only a missing file means "not set up yet";
+		// anything else is a fault worth reporting.
 		fmt.Println("No active model yet -- run 'vllm-helper switch <profile>' to load one.")
 		return nil
+	case err != nil:
+		return fmt.Errorf("reading the active model config at %s: %w", cfg.Dirs.ActiveEnvFile(), err)
 	}
 
 	bin := active.Get("VLLM_BIN")

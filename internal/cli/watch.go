@@ -42,7 +42,7 @@ func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
 		fmt.Println("Watching boot log -- Ctrl+C to stop watching (the service keeps running):")
 		cmd, err := s.StartTail(10)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "couldn't follow the journal (continuing to wait):", err)
+			fmt.Fprintln(os.Stderr, "couldn't follow the service log (continuing to wait):", err)
 		} else {
 			tail = cmd.Process
 			defer func() {
