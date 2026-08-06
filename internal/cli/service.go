@@ -97,7 +97,7 @@ func cmdLogs(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Ctrl+C interrupts journalctl too -- that's the normal way to leave,
+	// Ctrl+C interrupts the log reader too -- that's the normal way to leave,
 	// not an error worth reporting.
 	_ = cmd.Wait()
 	return nil

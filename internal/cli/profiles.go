@@ -331,7 +331,7 @@ func cmdStatus(args []string) error {
 	if *jsonOut {
 		return printJSON(r)
 	}
-	fmt.Printf("systemd:  %s\n", r.Service)
+	fmt.Printf("%-9s %s\n", config.ServiceManager+":", r.Service)
 	fmt.Printf("profile:  %s\n", r.Profile)
 	fmt.Printf("model:    %s\n", r.Model)
 	if r.Healthy {

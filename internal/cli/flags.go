@@ -57,6 +57,20 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 	return pos, nil
 }
 
+// dropTerminator removes the first standalone "--" from args. Commands that
+// take no flags never reach parseArgs, but users still type the terminator
+// out of habit; it is never a meaningful operand for them.
+func dropTerminator(args []string) []string {
+	for i, a := range args {
+		if a == "--" {
+			out := make([]string, 0, len(args)-1)
+			out = append(out, args[:i]...)
+			return append(out, args[i+1:]...)
+		}
+	}
+	return args
+}
+
 // stdoutIsTTY reports whether stdout is a terminal. When it isn't (pipes,
 // cron, a UI backend), commands default to non-interactive behavior.
 func stdoutIsTTY() bool {

@@ -22,6 +22,7 @@ var standardProfileKeys = map[string]bool{
 
 // cmdEdit opens a profile in $VISUAL/$EDITOR and validates the result.
 func cmdEdit(args []string) error {
+	args = dropTerminator(args)
 	if len(args) < 1 {
 		return errors.New("usage: vllm-helper edit <profile>")
 	}
@@ -68,6 +69,7 @@ func pickEditor() string {
 
 // cmdSet updates profile keys in place: vllm-helper set <profile> KEY=VALUE...
 func cmdSet(args []string) error {
+	args = dropTerminator(args)
 	if len(args) < 2 {
 		return errors.New("usage: vllm-helper set <profile> KEY=VALUE [KEY=VALUE ...]")
 	}
@@ -89,7 +91,7 @@ func cmdSet(args []string) error {
 	for _, pair := range args[1:] {
 		key, val, ok := strings.Cut(pair, "=")
 		if !ok || key == "" || strings.ContainsAny(key, " \t") {
-			return fmt.Errorf("%q is not KEY=VALUE -- nothing was written", pair)
+			return fmt.Errorf("%q is not KEY=VALUE (nothing was written)", pair)
 		}
 		pairs = append(pairs, assignment{key, val})
 	}
@@ -97,7 +99,7 @@ func cmdSet(args []string) error {
 		p.File.Set(a.key, a.val)
 	}
 	if err := validateProfile(p, name); err != nil {
-		return fmt.Errorf("%w -- nothing was written", err)
+		return fmt.Errorf("%w (nothing was written)", err)
 	}
 
 	if err := p.File.Write(cfg.Dirs.ProfileFile(name), 0o644); err != nil {
