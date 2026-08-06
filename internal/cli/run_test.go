@@ -83,8 +83,8 @@ func closedPort(t *testing.T) string {
 	return port
 }
 
-// newTree gives the CLI a config tree of its own, one saved profile, and no
-// route to the network.
+// newTree gives the CLI a config tree of its own and one saved profile. The
+// network is closed off for the whole package in TestMain.
 func newTree(t *testing.T) (configDir, profilePath string) {
 	t.Helper()
 	root := t.TempDir()
@@ -92,13 +92,6 @@ func newTree(t *testing.T) (configDir, profilePath string) {
 	t.Setenv("VLLM_HELPER_CONFIG_DIR", configDir)
 	t.Setenv("VLLM_HELPER_STATE_DIR", filepath.Join(root, "state"))
 	t.Setenv("VLLM_HELPER_DATA_DIR", filepath.Join(root, "data"))
-
-	dead := "http://127.0.0.1:" + closedPort(t)
-	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"} {
-		t.Setenv(k, "")
-	}
-	t.Setenv("HTTP_PROXY", dead)
-	t.Setenv("HTTPS_PROXY", dead)
 
 	profiles := filepath.Join(configDir, "models")
 	if err := os.MkdirAll(profiles, 0o755); err != nil {

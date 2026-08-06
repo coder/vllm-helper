@@ -29,7 +29,32 @@ func TestMain(m *testing.M) {
 		time.Sleep(2 * time.Minute)
 		os.Exit(0)
 	}
+	goOffline()
 	os.Exit(m.Run())
+}
+
+// goOffline routes outbound HTTP at a port nothing listens on, so no test
+// depends on huggingface.co being reachable. net/http resolves the proxy
+// environment once per process and caches it, so setting this per-test would
+// only take effect for whichever test happened to run first -- and a later
+// test that made a request without setting it would put the whole package back
+// on the real network. Port 1 needs root to bind and is outside the ephemeral
+// range, so it cannot collide with a test server. Loopback is exempt from
+// proxying, which is what lets the httptest servers here still work.
+func goOffline() {
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"} {
+		os.Unsetenv(k)
+	}
+	os.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+	os.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+
+	req, err := http.NewRequest("GET", "https://huggingface.co", nil)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := http.ProxyFromEnvironment(req); err != nil {
+		panic(err)
+	}
 }
 
 // newTree points the CLI at a temp config/state/data tree and keeps it off
@@ -40,7 +65,6 @@ func newTree(t *testing.T) config.Dirs {
 	t.Setenv("VLLM_HELPER_CONFIG_DIR", filepath.Join(root, "config"))
 	t.Setenv("VLLM_HELPER_STATE_DIR", filepath.Join(root, "state"))
 	t.Setenv("VLLM_HELPER_DATA_DIR", filepath.Join(root, "data"))
-	offline(t)
 
 	dirs := config.ResolveDirs()
 	if err := os.MkdirAll(dirs.Profiles, 0o755); err != nil {
@@ -49,15 +73,32 @@ func newTree(t *testing.T) config.Dirs {
 	return dirs
 }
 
-// offline routes outbound HTTP at a port nothing is listening on.
-func offline(t *testing.T) {
-	t.Helper()
-	dead := "http://127.0.0.1:" + closedPort(t)
-	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"} {
-		t.Setenv(k, "")
+// TestTheHubIsUnreachable guards the isolation itself. Without it, a change
+// that resolved the proxy environment before TestMain set it would put every
+// Hub call in this package on the real network, and the tests that assert a
+// lookup fails would start failing for a reason nothing points at.
+func TestTheHubIsUnreachable(t *testing.T) {
+	hub, err := http.NewRequest("GET", "https://huggingface.co/api/models/x", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Setenv("HTTP_PROXY", dead)
-	t.Setenv("HTTPS_PROXY", dead)
+	proxy, err := http.ProxyFromEnvironment(hub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proxy == nil {
+		t.Error("hub requests are going to the real network, not the dead proxy")
+	}
+
+	local, err := http.NewRequest("GET", "http://127.0.0.1:8080/v1/models", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proxy, err := http.ProxyFromEnvironment(local); err != nil {
+		t.Fatal(err)
+	} else if proxy != nil {
+		t.Errorf("loopback is being proxied through %s, so the test servers are unreachable", proxy)
+	}
 }
 
 func closedPort(t *testing.T) string {
