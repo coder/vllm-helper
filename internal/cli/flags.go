@@ -10,17 +10,16 @@ import (
 
 // stdoutIsTTY reports whether stdout is a terminal. When it isn't (pipes,
 // cron, a UI backend), commands default to non-interactive behavior.
-//
-// This asks the kernel rather than reading the file mode: /dev/null is a
-// character device too, so a mode check calls it a terminal and sends
-// 'logs > /dev/null' into a tail that never returns.
-func stdoutIsTTY() bool {
-	return term.IsTerminal(int(os.Stdout.Fd()))
-}
+func stdoutIsTTY() bool { return isTerminal(os.Stdout) }
 
 // stdinIsTTY reports whether stdin can actually answer a prompt.
-func stdinIsTTY() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
+func stdinIsTTY() bool { return isTerminal(os.Stdin) }
+
+// isTerminal asks the kernel instead of reading the file mode. /dev/null is a
+// character device just as a terminal is, so a mode check calls it one and
+// sends 'logs > /dev/null' into a tail that never returns.
+func isTerminal(f *os.File) bool {
+	return term.IsTerminal(int(f.Fd()))
 }
 
 // printJSON renders v as indented JSON on stdout.
