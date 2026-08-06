@@ -24,8 +24,9 @@ the fact.
   `inspect` command.
 - `edit` (opens `$EDITOR`) and `set KEY=VALUE` for changing profiles, both
   validated before they take effect.
-- `doctor` verifies Coder sync credentials against the API and warns when no
-  HuggingFace token is configured, which gated models need.
+- `doctor` verifies Coder sync credentials against the API, and reports whether
+  a HuggingFace token is present and whether the Hub accepts it. Search and
+  public models never need one; it matters only for gated or private repos.
 - CI runs on macOS as well as Linux.
 
 ### Changed
