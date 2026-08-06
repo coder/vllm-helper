@@ -128,6 +128,54 @@ func TestLastExitStatus(t *testing.T) {
 	}
 }
 
+// A user-scope install needs no root, so the plist it writes is checkable for
+// real. With no launchctl on PATH the bootstrap at the end fails, which is
+// where this stops: registering the job with the running launchd session is
+// left to the machine. The file itself, and the directories launchd needs to
+// exist before it will spawn anything, are asserted here.
+func TestInstallUserScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", t.TempDir())
+
+	s := Service{Name: "com.coder.vllm-test", Scope: "user"}
+	if s.Installed() {
+		t.Fatal("Installed() should be false before Install")
+	}
+
+	_, err := s.Install("/opt/homebrew/bin/vllm-helper")
+	if err == nil {
+		t.Fatal("Install should report the failure to bootstrap when launchctl is absent")
+	}
+	if !strings.Contains(err.Error(), "bootstrapping") {
+		t.Errorf("error should name the step that failed, got %v", err)
+	}
+
+	// Install writes the plist before it bootstraps, so a failed bootstrap
+	// still leaves the file behind and Installed() reads true. Anything that
+	// treats Installed() as "the job is running" is wrong.
+	if !s.Installed() {
+		t.Error("the plist should be on disk even though bootstrap failed")
+	}
+	raw, err := os.ReadFile(s.plistPath())
+	if err != nil {
+		t.Fatalf("Install should have written %s: %v", s.plistPath(), err)
+	}
+	p := parsePlist(t, raw)
+	wantArgs := []string{"/opt/homebrew/bin/vllm-helper", "start"}
+	if strings.Join(p.Dict.Array.Strings, " ") != strings.Join(wantArgs, " ") {
+		t.Errorf("ProgramArguments = %v, want %v", p.Dict.Array.Strings, wantArgs)
+	}
+
+	// launchd will not spawn a job whose StandardOutPath directory is
+	// missing, and it fails silently when it happens.
+	if fi, err := os.Stat(s.logDir()); err != nil {
+		t.Errorf("Install should create the log directory: %v", err)
+	} else if !fi.IsDir() {
+		t.Errorf("%s should be a directory", s.logDir())
+	}
+}
+
 // These paths belong to installs that already exist, so they are pinned.
 func TestPathLayout(t *testing.T) {
 	home := t.TempDir()
