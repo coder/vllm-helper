@@ -103,6 +103,10 @@ If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm
 
 Run `vllm-helper doctor` first. It checks the build toolchain vLLM needs, inventories running servers, and warns when config has drifted from reality. For crash loops, read the actual traceback: `journalctl -u vllm.service -n 100` on Linux, or `tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log` on macOS. `vllm-helper status` prints the right command for your platform when the endpoint isn't responding.
 
+## Changelog
+
+Notable changes are in [CHANGELOG.md](CHANGELOG.md). Maintainers cutting a release should follow [RELEASING.md](RELEASING.md).
+
 ## License
 
 [Apache-2.0](LICENSE)

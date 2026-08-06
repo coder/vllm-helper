@@ -18,10 +18,29 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+
+      # The release body comes from CHANGELOG.md, so the notes are written and
+      # reviewed in the PR that makes the change rather than generated from
+      # commit subjects at tag time. A tag with no entries is a mistake worth
+      # failing on: it means the changelog was never updated.
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v hdr="## [$version]" '
+            index($0, hdr) == 1 { found = 1; next }
+            found && (index($0, "## [") == 1 || /^\[[^]]+\]: /) { exit }
+            found { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md"; then
+            echo "::error::CHANGELOG.md has no entries under '## [$version]' -- the section is missing or empty. Move the Unreleased entries under it before tagging."
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/release-notes.md"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
