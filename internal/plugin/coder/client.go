@@ -2,6 +2,11 @@
 // profiles: each profile gets one persistent model-config entry, and
 // switching flips enabled/is_default so only the loaded model is selectable.
 // Sync failures never block local operations.
+//
+// The endpoint is Coder's undocumented experimental chats API, which has
+// changed shape more than once (the provider moved from a name to a UUID),
+// and a TODO in Coder's own router says it should move again. Keeping it
+// behind the plugin seam means that churn lands in this package alone.
 package coder
 
 import (

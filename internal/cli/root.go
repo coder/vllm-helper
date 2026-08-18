@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/service"
 )
 
@@ -65,11 +66,18 @@ func newRootCmd() *cobra.Command {
 		newSetupCmd(),
 		newDoctorCmd(),
 		newAdoptCmd(),
-		newCoderSyncCmd(),
 
 		newStartCmd(),
 		newVersionCmd(),
 	)
+	// Integrations contribute their own commands, so the set of them is a
+	// property of what's registered rather than a list maintained here.
+	// Core assigns the help group: where a command is listed is a decision
+	// about this CLI's shape, not something a plugin should have to know.
+	for _, c := range plugin.Commands() {
+		c.GroupID = groupMachine
+		root.AddCommand(c)
+	}
 	return root
 }
 

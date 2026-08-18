@@ -47,6 +47,12 @@ func (d Dirs) SecretsFile() string       { return filepath.Join(d.Config, "secre
 func (d Dirs) ActiveEnvFile() string     { return filepath.Join(d.State, "active.env") }
 func (d Dirs) ActiveProfileFile() string { return filepath.Join(d.State, "active-profile") }
 func (d Dirs) CoderIDsFile() string      { return filepath.Join(d.State, "coder-ids.env") }
+
+// PluginStateFile is where an integration keeps its own state, namespaced by
+// plugin name so two of them can't collide.
+func (d Dirs) PluginStateFile(plugin string) string {
+	return filepath.Join(d.State, plugin+"-ids.env")
+}
 func (d Dirs) ProfileFile(name string) string {
 	return filepath.Join(d.Profiles, name+".env")
 }
@@ -102,6 +108,24 @@ func (c *Config) APIKey() string        { return c.get("VLLM_API_KEY", "") }
 // HFToken returns a HuggingFace token from config/secrets ("" if unset).
 // Needed only for gated or private models.
 func (c *Config) HFToken() string { return c.get("HF_TOKEN", "") }
+
+// Lookup returns any configuration key, from secrets.env or config.env
+// (secrets win), or def when it is unset. Plugins use this for their own
+// keys: the typed accessors below cover vllm-helper's own settings, and an
+// integration shouldn't need a method here to read its credentials.
+func (c *Config) Lookup(key, def string) string { return c.get(key, def) }
+
+// HasAll reports whether every named key has a non-empty value. Integrations
+// are configured all-or-nothing -- a URL without a token is not usable -- so
+// this is how a plugin decides whether it is set up.
+func (c *Config) HasAll(keys ...string) bool {
+	for _, k := range keys {
+		if c.get(k, "") == "" {
+			return false
+		}
+	}
+	return len(keys) > 0
+}
 
 func (c *Config) CoderURL() string        { return c.get("CODER_URL", "") }
 func (c *Config) CoderToken() string      { return c.get("CODER_API_TOKEN", "") }
