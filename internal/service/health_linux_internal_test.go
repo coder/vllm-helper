@@ -33,14 +33,12 @@ func TestHealthFromProperties(t *testing.T) {
 		state    string
 		restarts int
 		crashed  bool
-		loading  bool
 	}{
 		{
 			name:     "serving",
 			props:    map[string]string{"ActiveState": "active", "SubState": "running", "Result": "success", "NRestarts": "0"},
 			state:    "active",
 			restarts: 0,
-			loading:  true,
 		},
 		{
 			// The case issue #13 is about: a long model load looks like
@@ -49,7 +47,6 @@ func TestHealthFromProperties(t *testing.T) {
 			props:    map[string]string{"ActiveState": "activating", "SubState": "start", "Result": "success", "NRestarts": "0"},
 			state:    "activating",
 			restarts: 0,
-			loading:  true,
 		},
 		{
 			// ...and so does this, which is a crash loop.
@@ -73,7 +70,6 @@ func TestHealthFromProperties(t *testing.T) {
 			props:    map[string]string{"ActiveState": "activating", "SubState": "start", "Result": "exit-code", "NRestarts": "2"},
 			state:    "activating",
 			restarts: 2,
-			loading:  true,
 		},
 		{
 			name:     "stopped cleanly",
@@ -92,7 +88,6 @@ func TestHealthFromProperties(t *testing.T) {
 			props:    map[string]string{"ActiveState": "active", "NRestarts": "[not set]"},
 			state:    "active",
 			restarts: -1,
-			loading:  true,
 		},
 	}
 	for _, tt := range tests {
@@ -107,9 +102,6 @@ func TestHealthFromProperties(t *testing.T) {
 			}
 			if h.Crashed != tt.crashed {
 				t.Errorf("Crashed = %v, want %v", h.Crashed, tt.crashed)
-			}
-			if got := h.Loading(); got != tt.loading {
-				t.Errorf("Loading() = %v, want %v", got, tt.loading)
 			}
 		})
 	}

@@ -13,14 +13,12 @@ func TestHealthFromPrint(t *testing.T) {
 		state    string
 		restarts int
 		crashed  bool
-		loading  bool
 	}{
 		{
 			name:     "serving",
 			text:     "state = running\nruns = 1\nlast exit code = 0\n",
 			state:    "active",
 			restarts: 1,
-			loading:  true,
 		},
 		{
 			// launchd throttles a job that keeps dying, so it sits in
@@ -56,9 +54,6 @@ func TestHealthFromPrint(t *testing.T) {
 			}
 			if h.Crashed != tt.crashed {
 				t.Errorf("Crashed = %v, want %v", h.Crashed, tt.crashed)
-			}
-			if got := h.Loading(); got != tt.loading {
-				t.Errorf("Loading() = %v, want %v", got, tt.loading)
 			}
 		})
 	}

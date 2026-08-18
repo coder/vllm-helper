@@ -31,12 +31,6 @@ type Health struct {
 	Crashed   bool   `json:"crashed"`   // the unit failed or is restarting after a failure
 }
 
-// Loading reports whether the unit looks like it is still coming up, as
-// opposed to running, stopped, or crashing.
-func (h Health) Loading() bool {
-	return !h.Crashed && (h.State == "activating" || h.State == "active")
-}
-
 func (s Service) userScope() bool { return s.Scope == "user" }
 
 // sudo builds a privileged invocation. Without a terminal to answer a
