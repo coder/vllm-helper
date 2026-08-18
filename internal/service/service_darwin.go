@@ -88,7 +88,12 @@ func (s Service) NRestarts() int {
 	if err != nil {
 		return -1
 	}
-	for line := range strings.SplitSeq(string(out), "\n") {
+	return runCount(string(out))
+}
+
+// runCount pulls "runs = N" out of `launchctl print` output, or -1.
+func runCount(text string) int {
+	for line := range strings.SplitSeq(text, "\n") {
 		_, v, ok := strings.Cut(strings.TrimSpace(line), "runs = ")
 		if !ok {
 			continue
@@ -98,6 +103,47 @@ func (s Service) NRestarts() int {
 		}
 	}
 	return -1
+}
+
+// Health maps launchd's job state onto the same shape systemd reports, so
+// callers can tell a slow boot from a crash loop without caring which init
+// system answered.
+func (s Service) Health() Health {
+	bin, args := s.launchctl("print", s.target())
+	out, err := exec.Command(bin, args...).CombinedOutput()
+	if err != nil {
+		// print fails when the job isn't loaded at all.
+		return Health{State: "inactive", NRestarts: -1}
+	}
+	return healthFromPrint(string(out))
+}
+
+// healthFromPrint is the pure half of Health.
+func healthFromPrint(text string) Health {
+	h := Health{NRestarts: -1}
+	if n := runCount(text); n >= 0 {
+		h.NRestarts = n
+	}
+	exit := lastExitStatus(text)
+	if exit != 0 {
+		h.Result = fmt.Sprintf("exit-code %d", exit)
+	}
+	switch {
+	case strings.Contains(text, "state = running"):
+		h.State, h.SubState = "active", "running"
+	case strings.Contains(text, "state = waiting"):
+		// Loaded but not running. launchd throttles a job that keeps
+		// dying, so a non-zero last exit here is the crash loop.
+		h.SubState = "waiting"
+		if exit != 0 {
+			h.State, h.Crashed = "failed", true
+		} else {
+			h.State = "inactive"
+		}
+	default:
+		h.State = "unknown"
+	}
+	return h
 }
 
 // Restart reloads the model. kickstart -k kills the running job and starts

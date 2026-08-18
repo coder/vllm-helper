@@ -29,6 +29,15 @@ func probeHealth(port string) (int, bool) {
 	return resp.StatusCode, resp.StatusCode == http.StatusOK
 }
 
+// crashReason describes a restart loop, counting from the baseline taken
+// before the switch when we have one.
+func crashReason(now, baseline int) string {
+	if baseline >= 0 && now > baseline {
+		return fmt.Sprintf("the service is crash-looping (%d restarts since the switch)", now-baseline)
+	}
+	return "the service is crash-looping"
+}
+
 // watchBoot waits for the restarted server to come up: optionally streams
 // the journal, polls /health until it answers, and detects failed units
 // and crash loops instead of letting the user stare at a stalled log.
@@ -39,7 +48,11 @@ func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
 
 	var tail interface{ Kill() error }
 	if opts.follow {
-		fmt.Println("Watching boot log -- Ctrl+C to stop watching (the service keeps running):")
+		// Spell out that Ctrl+C only detaches. People assume it kills the
+		// server, especially on a first run where the model download makes
+		// this sit here for a long time.
+		fmt.Println("Watching boot log. Ctrl+C stops watching only -- the server keeps loading in the background.")
+		fmt.Println("Check on it later with 'vllm-helper status', or skip this wait next time with --no-follow.")
 		cmd, err := s.StartTail(10)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "couldn't follow the service log (continuing to wait):", err)
@@ -75,18 +88,23 @@ func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
 				checkmark(), cfg.Port(), elapsed, label)
 			return nil
 		}
-		switch s.IsActive() {
-		case "failed":
+		h := s.Health()
+		switch {
+		case h.State == "failed":
 			return fail("the service entered a failed state")
-		case "inactive", "deactivating":
+		case h.State == "inactive", h.State == "deactivating":
 			// The unit is started before we get here, so a stopped unit
 			// means the server exited on its own (or something else
 			// stopped it). Waiting for a health check it will never answer
 			// would hang forever with the default timeout.
 			return fail("the service stopped instead of coming up")
+		case h.Crashed:
+			// Caught while the init system sleeps between restarts, which
+			// otherwise reads as "activating" and looks like a slow boot.
+			return fail(crashReason(h.NRestarts, baseline))
 		}
-		if n := s.NRestarts(); baseline >= 0 && n > baseline+1 {
-			return fail(fmt.Sprintf("the service is crash-looping (%d restarts since the switch)", n-baseline))
+		if baseline >= 0 && h.NRestarts > baseline+1 {
+			return fail(crashReason(h.NRestarts, baseline))
 		}
 		if opts.timeout > 0 && time.Since(start) > opts.timeout {
 			return fail(fmt.Sprintf("gave up after %s (the model may still be downloading)", opts.timeout))

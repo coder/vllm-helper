@@ -246,7 +246,30 @@ func TestDetectFlags(t *testing.T) {
 	}
 }
 
-func TestDetectFlagsWithoutASnippet(t *testing.T) {
+// A card with no snippet still has to pick up the model's real context
+// limit. Skipping the clamp here is what let facebook/opt-125m be created
+// with the generic 131072 default, which vLLM refuses to start against
+// (max_position_embeddings=2048). See issue #13.
+func TestDetectFlagsWithoutASnippetStillClampsContext(t *testing.T) {
+	serveTestdata(t, map[string]string{
+		"/" + repo + "/raw/main/README.md":   "README_no_snippet.md",
+		"/" + repo + "/raw/main/config.json": "config_small_context.json",
+	})
+	d, err := DetectFlags(repo)
+	if err != nil {
+		t.Fatalf("DetectFlags: %v", err)
+	}
+	if d.ExtraArgs != "" {
+		t.Errorf("ExtraArgs = %q, want empty: there is no snippet to adopt flags from", d.ExtraArgs)
+	}
+	if d.MaxModelLen != "2048" {
+		t.Errorf("MaxModelLen = %q, want the model's own 2048", d.MaxModelLen)
+	}
+}
+
+// Without a readable config.json there is no ceiling to clamp to, so the
+// value stays empty and profile.Create's default applies.
+func TestDetectFlagsWithoutASnippetOrConfig(t *testing.T) {
 	newHub(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("# A model card with no serving instructions.\n"))
 	}))

@@ -174,42 +174,43 @@ func DetectFlags(repo string) (DetectedFlags, error) {
 		return d, err
 	}
 
-	// Match "vllm serve ..." including backslash-continued lines.
+	// Match "vllm serve ..." including backslash-continued lines. A card
+	// without a snippet is common (facebook/opt-125m has none); it just
+	// means there are no flags to adopt, not that we should skip the
+	// context clamp below -- those models are exactly the ones whose real
+	// context is far under the generic default.
 	snippetRe := regexp.MustCompile(`vllm serve(?:.*\\\n)*.*`)
-	snippet := snippetRe.FindString(string(body))
-	if snippet == "" {
-		return d, nil
-	}
-
-	var flags []string
-	addBool := func(flag string) {
-		if strings.Contains(snippet, flag) {
-			flags = append(flags, flag)
+	if snippet := snippetRe.FindString(string(body)); snippet != "" {
+		var flags []string
+		addBool := func(flag string) {
+			if strings.Contains(snippet, flag) {
+				flags = append(flags, flag)
+			}
 		}
-	}
-	addValued := func(flag string) {
-		re := regexp.MustCompile(regexp.QuoteMeta(flag) + `\s+(\S+)`)
-		if m := re.FindStringSubmatch(snippet); m != nil {
-			flags = append(flags, flag+" "+m[1])
+		addValued := func(flag string) {
+			re := regexp.MustCompile(regexp.QuoteMeta(flag) + `\s+(\S+)`)
+			if m := re.FindStringSubmatch(snippet); m != nil {
+				flags = append(flags, flag+" "+m[1])
+			}
 		}
-	}
-	addBool("--enable-auto-tool-choice")
-	addValued("--tool-call-parser")
-	addValued("--reasoning-parser")
-	addBool("--enable-prefix-caching")
-	addBool("--trust-remote-code")
+		addBool("--enable-auto-tool-choice")
+		addValued("--tool-call-parser")
+		addValued("--reasoning-parser")
+		addBool("--enable-prefix-caching")
+		addBool("--trust-remote-code")
 
-	// deepseek_v3 and poolside_v1 use vLLM's raw DeepSeekV3ReasoningParser,
-	// which defaults thinking=false per request; when false, vLLM silently
-	// swaps in a no-op parser and raw <think> tags leak into content. No
-	// model card documents this, so default it here.
-	if m := regexp.MustCompile(`--reasoning-parser\s+(deepseek_v3|poolside_v1)\b`).FindStringSubmatch(snippet); m != nil {
-		flags = append(flags, `--default-chat-template-kwargs {"thinking":true}`)
-	}
-	d.ExtraArgs = strings.Join(flags, " ")
+		// deepseek_v3 and poolside_v1 use vLLM's raw DeepSeekV3ReasoningParser,
+		// which defaults thinking=false per request; when false, vLLM silently
+		// swaps in a no-op parser and raw <think> tags leak into content. No
+		// model card documents this, so default it here.
+		if m := regexp.MustCompile(`--reasoning-parser\s+(deepseek_v3|poolside_v1)\b`).FindStringSubmatch(snippet); m != nil {
+			flags = append(flags, `--default-chat-template-kwargs {"thinking":true}`)
+		}
+		d.ExtraArgs = strings.Join(flags, " ")
 
-	if m := regexp.MustCompile(`--max-model-len\s+(\d+)`).FindStringSubmatch(snippet); m != nil {
-		d.MaxModelLen = m[1]
+		if m := regexp.MustCompile(`--max-model-len\s+(\d+)`).FindStringSubmatch(snippet); m != nil {
+			d.MaxModelLen = m[1]
+		}
 	}
 
 	// Model cards routinely paste a snippet from a bigger sibling model, so

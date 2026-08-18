@@ -1,8 +1,7 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package cli
 
-// fitMemUtilization is a no-op wherever vLLM has a real GPU backend:
-// --gpu-memory-utilization refers to VRAM, which nothing else on the machine
-// is competing for.
+// fitMemUtilization is a no-op wherever we can't tell what the machine has:
+// with no memory probe there is nothing to clamp against.
 func fitMemUtilization(want string) string { return want }

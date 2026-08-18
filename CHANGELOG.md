@@ -49,6 +49,11 @@ the fact.
 - `--help` works on `set`, `edit`, `remove`, and `coder-sync`. Those four took
   no flags, so the old parser read `--help` as a bad argument and exited 1
   instead of describing the command.
+- The boot log banner says plainly that Ctrl+C stops watching and leaves the
+  server loading, points at `status` for checking back, and mentions
+  `--no-follow`. On a first run the model download keeps that log on screen for
+  a long time, and people were interrupting it believing they had killed the
+  server.
 - `coder-sync register-all` only backfills entries that are missing, instead of
   rewriting ones that already exist.
 - Non-interactive sessions never prompt, tail, or block on `sudo`. This makes
@@ -64,6 +69,22 @@ the fact.
 
 ### Fixed
 
+- `new` no longer writes a context length the model can't support when its
+  README has no `vllm serve` snippet. The clamp to the model's real
+  `max_position_embeddings` sat behind an early return taken on exactly those
+  cards, so a model like `facebook/opt-125m` (2048) got the generic 131072
+  default and vLLM refused to start. Cards with no snippet are the ones that
+  need the clamp most.
+- `--gpu-memory-utilization` is clamped to what's actually free on Linux hosts
+  with no NVIDIA GPU. There the flag reserves a fraction of _system_ RAM rather
+  than VRAM, so the 0.85 default asked for 85% of the machine and aborted
+  startup. Hosts with a GPU are untouched, and macOS already did this.
+- `status` distinguishes a service that is failing to start from one that is
+  still loading. Both leave the endpoint unresponsive, and reporting a
+  crash-looping unit as "still loading" sent people off to wait for a server
+  that was never coming up. `status` and `doctor` now read the init system's
+  restart counter and sub-state, and `status` shows the last log line, which is
+  usually the exception that killed it.
 - Redirecting output to `/dev/null` no longer looks like a terminal. Terminal
   detection read the file mode, and `/dev/null` is a character device like a
   terminal is, so `vllm-helper logs > /dev/null` followed the log forever

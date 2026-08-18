@@ -13,6 +13,8 @@ func (s Service) IsActive() string { return "unknown" }
 
 func (s Service) NRestarts() int { return -1 }
 
+func (s Service) Health() Health { return Health{State: "unknown", NRestarts: -1} }
+
 func (s Service) Restart() error { return errUnsupported }
 
 func (s Service) Stop() error { return errUnsupported }
