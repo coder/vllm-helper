@@ -52,6 +52,72 @@ func (s Service) NRestarts() int {
 	return n
 }
 
+// healthProperties are the unit properties that, together, say whether the
+// service is coming up or falling over.
+var healthProperties = []string{"ActiveState", "SubState", "Result", "NRestarts"}
+
+// Health asks systemd for the properties that distinguish "still loading"
+// from "crash-looping".
+func (s Service) Health() Health {
+	args := []string{"show"}
+	for _, p := range healthProperties {
+		args = append(args, "-p", p)
+	}
+	args = append(args, s.Name)
+	if s.userScope() {
+		args = append([]string{"--user"}, args...)
+	}
+	out, err := exec.Command("systemctl", args...).Output()
+	if err != nil {
+		return Health{State: "unknown", NRestarts: -1}
+	}
+	return healthFromProperties(parseShowProperties(string(out)))
+}
+
+// parseShowProperties turns `systemctl show` KEY=VALUE lines into a map.
+// --value would be terser but ties us to systemd emitting the properties in
+// the order we asked for, which it does not promise.
+func parseShowProperties(out string) map[string]string {
+	props := make(map[string]string)
+	for line := range strings.SplitSeq(out, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && k != "" {
+			props[k] = v
+		}
+	}
+	return props
+}
+
+// healthFromProperties is the pure half of Health.
+func healthFromProperties(props map[string]string) Health {
+	h := Health{
+		State:     props["ActiveState"],
+		SubState:  props["SubState"],
+		Result:    props["Result"],
+		NRestarts: -1,
+	}
+	if h.State == "" {
+		h.State = "unknown"
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(props["NRestarts"])); err == nil {
+		h.NRestarts = n
+	}
+	// Only unambiguous signals count. Result alone does not: it still holds
+	// the previous run's verdict while a freshly restarted unit is
+	// activating, which would flag every normal switch as a crash.
+	switch {
+	case h.State == "failed":
+		// Gave up: hit the start limit, or a one-shot failure.
+		h.Crashed = true
+	case h.SubState == "auto-restart":
+		// Sleeping between attempts of a restart loop. ActiveState reads
+		// "activating" here, which is exactly what makes a crash loop
+		// look like a slow boot.
+		h.Crashed = true
+	}
+	return h
+}
+
 // Restart restarts the unit, streaming any sudo prompt to the terminal.
 func (s Service) Restart() error { return s.runPrivileged("restart") }
 

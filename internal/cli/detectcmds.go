@@ -37,6 +37,8 @@ type doctorConfig struct {
 	Service         string `json:"service"`
 	Scope           string `json:"scope"`
 	ServiceState    string `json:"service_state"`
+	ServiceCrashed  bool   `json:"service_crashed"`
+	ServiceRestarts int    `json:"service_restarts"`
 	CoderConfigured bool   `json:"coder_sync_configured"`
 }
 
@@ -102,6 +104,7 @@ func gatherDoctor() doctorReport {
 				binOK = true
 			}
 		}
+		health := svc(cfg).Health()
 		r.Config = &doctorConfig{
 			Path:            cfg.Dirs.ConfigFile(),
 			Port:            cfg.Port(),
@@ -109,7 +112,9 @@ func gatherDoctor() doctorReport {
 			VLLMBinOK:       binOK,
 			Service:         cfg.ServiceName(),
 			Scope:           cfg.ServiceScope(),
-			ServiceState:    svc(cfg).IsActive(),
+			ServiceState:    health.State,
+			ServiceCrashed:  health.Crashed,
+			ServiceRestarts: health.NRestarts,
 			CoderConfigured: cfg.CoderConfigured(),
 		}
 	}
@@ -230,7 +235,14 @@ func renderDoctor(r doctorReport, yes bool) {
 		default:
 			fmt.Printf("  vllm bin:   %s\n", c.VLLMBin)
 		}
-		fmt.Printf("  service:    %s (%s scope) -- %s\n", c.Service, c.Scope, c.ServiceState)
+		state := c.ServiceState
+		if c.ServiceCrashed {
+			state += ", failing to start"
+			if c.ServiceRestarts > 0 {
+				state += fmt.Sprintf(" (%d restarts)", c.ServiceRestarts)
+			}
+		}
+		fmt.Printf("  service:    %s (%s scope) -- %s\n", c.Service, c.Scope, state)
 		fmt.Println()
 	}
 

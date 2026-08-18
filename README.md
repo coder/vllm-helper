@@ -101,7 +101,9 @@ If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm
 
 ## Troubleshooting
 
-Run `vllm-helper doctor` first. It checks the build toolchain vLLM needs, inventories running servers, and warns when config has drifted from reality. For crash loops, read the actual traceback: `journalctl -u vllm.service -n 100` on Linux, or `tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log` on macOS. `vllm-helper status` prints the right command for your platform when the endpoint isn't responding.
+Run `vllm-helper doctor` first. It checks the build toolchain vLLM needs, inventories running servers, and warns when config has drifted from reality. For crash loops, read the actual traceback: `journalctl -u vllm.service -n 100` on Linux, or `tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log` on macOS. `vllm-helper status` prints the right command for your platform when the endpoint isn't responding, and says whether the service is still loading or failing to start — a large model can take many minutes to load, so the two look identical from the outside.
+
+A first `switch` or `new` downloads the weights, which can keep the boot log on screen for a long time. Ctrl+C there only stops watching; the server keeps loading in the background, and `vllm-helper status` will tell you when it's up. Use `--no-follow` to skip the wait entirely.
 
 ## Development
 

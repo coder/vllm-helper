@@ -339,14 +339,22 @@ type statusReport struct {
 	Port       string `json:"port"`
 	Healthy    bool   `json:"endpoint_healthy"`
 	HTTPStatus int    `json:"http_status"`
+	Crashed    bool   `json:"crashed"`
+	Restarts   int    `json:"restarts"`
+	FailReason string `json:"fail_reason,omitempty"`
+	LastLog    string `json:"last_log,omitempty"`
 }
 
 func gatherStatus(cfg *config.Config) statusReport {
+	health := svc(cfg).Health()
 	r := statusReport{
-		Service: svc(cfg).IsActive(),
-		Profile: cfg.ActiveProfile(),
-		Model:   "unknown",
-		Port:    cfg.Port(),
+		Service:    health.State,
+		Profile:    cfg.ActiveProfile(),
+		Model:      "unknown",
+		Port:       cfg.Port(),
+		Crashed:    health.Crashed,
+		Restarts:   health.NRestarts,
+		FailReason: health.Result,
 	}
 	if r.Profile == "" {
 		r.Profile = "unknown"
@@ -357,7 +365,24 @@ func gatherStatus(cfg *config.Config) statusReport {
 		}
 	}
 	r.HTTPStatus, r.Healthy = probeHealth(cfg.Port())
+	if r.Crashed {
+		// Only worth the journalctl call when there's a failure to explain.
+		r.LastLog = lastMeaningfulLine(svc(cfg).LastLogs(40))
+	}
 	return r
+}
+
+// lastMeaningfulLine picks the line most likely to say why the server died.
+// A Python traceback ends with the exception, and vLLM's fatal startup
+// errors are one-liners, so the last non-blank line is nearly always it.
+func lastMeaningfulLine(logs string) string {
+	lines := strings.Split(logs, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func newStatusCmd() *cobra.Command {
@@ -387,11 +412,30 @@ func runStatus(jsonOut bool) error {
 	fmt.Printf("model:    %s\n", r.Model)
 	if r.Healthy {
 		fmt.Printf("endpoint: healthy (http %d on port %s)\n", r.HTTPStatus, r.Port)
+		return nil
+	}
+
+	// An unresponsive endpoint means one of two very different things, and
+	// telling someone to wait for a server that keeps dying wastes their
+	// afternoon. Say which one it is.
+	if r.Crashed {
+		fmt.Printf("endpoint: not responding (http %03d on port %s) -- the service is failing to start, not loading\n", r.HTTPStatus, r.Port)
+		detail := r.FailReason
+		if r.Restarts > 0 {
+			detail = fmt.Sprintf("%s, %d restarts", detail, r.Restarts)
+			detail = strings.TrimPrefix(detail, ", ")
+		}
+		if detail != "" {
+			fmt.Printf("failure:  %s\n", detail)
+		}
+		if r.LastLog != "" {
+			fmt.Printf("last log: %s\n", r.LastLog)
+		}
 	} else {
 		fmt.Printf("endpoint: not responding (http %03d on port %s) -- still loading, or check the service logs\n", r.HTTPStatus, r.Port)
-		if hint := svc(cfg).LogHint(); hint != "" {
-			fmt.Printf("logs:     %s\n", hint)
-		}
+	}
+	if hint := svc(cfg).LogHint(); hint != "" {
+		fmt.Printf("logs:     %s\n", hint)
 	}
 	return nil
 }
