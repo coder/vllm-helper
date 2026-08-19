@@ -51,6 +51,10 @@ func (p Plugin) Handle(_ context.Context, e plugin.Event, s plugin.State) error 
 		activate(s.Config, s.Profile)
 	case plugin.EventRemoved:
 		remove(s.Config, s.Name)
+	default:
+		// Only reachable if Events above grows an entry this switch
+		// doesn't, which would otherwise be a silent no-op.
+		return fmt.Errorf("no handler for event %q", e)
 	}
 	// Every failure inside is already reported where it happens, with the
 	// context needed to act on it; returning it too would print it twice.

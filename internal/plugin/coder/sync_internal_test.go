@@ -1,11 +1,13 @@
 package coder
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -66,5 +68,21 @@ func TestModelConfigRejectsAContextLimitCoderWouldRefuse(t *testing.T) {
 				t.Errorf("MAX_MODEL_LEN=%q was accepted, want an error naming the setting", length)
 			}
 		})
+	}
+}
+
+// Opting into an event without handling it would be a silent no-op, so every
+// event this plugin advertises has to reach a real branch. An unconfigured
+// Config means the handlers bail immediately, which is enough to tell "no
+// handler" apart from "handled, then declined to do anything".
+func TestEveryAdvertisedEventIsHandled(t *testing.T) {
+	p := Plugin{}
+	for _, e := range p.Events() {
+		if err := p.Handle(context.Background(), e, plugin.State{Config: &config.Config{File: &config.EnvFile{}}}); err != nil {
+			t.Errorf("Events() advertises %q but Handle rejected it: %v", e, err)
+		}
+	}
+	if err := p.Handle(context.Background(), plugin.Event("invented"), plugin.State{}); err == nil {
+		t.Error("an event with no handler was accepted, which would be a silent no-op")
 	}
 }

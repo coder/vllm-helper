@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"slices"
 
 	"github.com/spf13/cobra"
@@ -36,16 +37,36 @@ func Commands() []*cobra.Command {
 // Failures are reported to w and otherwise ignored: an integration being
 // down must not stop a model from loading. Plugins that did not ask for the
 // event, or aren't configured, are never called -- so an unused integration
-// cannot slow down a switch.
+// cannot slow down a switch. A nil w discards the warnings.
 func Dispatch(ctx context.Context, w io.Writer, e Event, s State) {
+	if w == nil {
+		w = io.Discard
+	}
 	for _, p := range registered {
 		if !slices.Contains(p.Events(), e) || !p.Configured(s.Config) {
 			continue
 		}
-		if err := p.Handle(ctx, e, s); err != nil {
+		if err := handle(ctx, p, e, s); err != nil {
 			fmt.Fprintf(w, "%s: %v\n", p.Name(), err)
 		}
 	}
+}
+
+// handle calls one plugin, turning a panic into an ordinary error.
+//
+// Plugins are compiled in, so a panic here is a bug in this repository
+// rather than third-party misbehaviour. It still must not escape: activating
+// a profile dispatches before the service restarts, so an unrecovered panic
+// would stop the model from loading -- the one thing an integration is never
+// allowed to do. Reporting it with a stack keeps that promise and still
+// makes the bug obvious.
+func handle(ctx context.Context, p Plugin, e Event, s State) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panicked handling %q: %v\n%s", e, r, debug.Stack())
+		}
+	}()
+	return p.Handle(ctx, e, s)
 }
 
 // Configured returns the plugins the user has set up.

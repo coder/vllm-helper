@@ -16,6 +16,7 @@ type fake struct {
 	configured bool
 	events     []Event
 	err        error
+	panics     bool
 	got        []Event
 }
 
@@ -27,6 +28,9 @@ func (f *fake) Check(context.Context, *config.Config) error { return nil }
 
 func (f *fake) Handle(_ context.Context, e Event, _ State) error {
 	f.got = append(f.got, e)
+	if f.panics {
+		panic("held together with tape")
+	}
 	return f.err
 }
 
@@ -91,5 +95,41 @@ func TestConfiguredFiltersTheRegistry(t *testing.T) {
 	got := Configured(nil)
 	if len(got) != 1 || got[0].Name() != "on" {
 		t.Errorf("Configured() = %v, want only the configured plugin", got)
+	}
+}
+
+// A panic is a bug in this repo rather than third-party misbehaviour, but it
+// still must not escape: activating dispatches before the service restarts,
+// so letting one through would stop the model from loading.
+func TestDispatchSurvivesAPanickingPlugin(t *testing.T) {
+	after := &fake{name: "after", configured: true, events: []Event{EventActivating}}
+	withRegistry(t,
+		&fake{name: "panicky", configured: true, events: []Event{EventActivating}, panics: true},
+		after,
+	)
+
+	var out strings.Builder
+	Dispatch(context.Background(), &out, EventActivating, State{})
+
+	if len(after.got) != 1 {
+		t.Error("a plugin registered after a panicking one was skipped")
+	}
+	msg := out.String()
+	if !strings.Contains(msg, "panicky") || !strings.Contains(msg, "held together with tape") {
+		t.Errorf("output = %q, want the plugin name and what it panicked with", msg)
+	}
+	if !strings.Contains(msg, "registry_internal_test.go") {
+		t.Errorf("output = %q, want a stack pointing at the bug", msg)
+	}
+}
+
+// Warnings have nowhere to go in a caller that doesn't want them, and that
+// must not be a crash.
+func TestDispatchToleratesANilWriter(t *testing.T) {
+	p := &fake{name: "broken", configured: true, events: []Event{EventActivating}, err: errors.New("nope")}
+	withRegistry(t, p)
+	Dispatch(context.Background(), nil, EventActivating, State{})
+	if len(p.got) != 1 {
+		t.Error("the plugin was not called when the writer was nil")
 	}
 }
