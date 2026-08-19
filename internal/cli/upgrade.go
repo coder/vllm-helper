@@ -129,10 +129,11 @@ func runUpgrade(channelFlag string, checkOnly bool) error {
 	return nil
 }
 
-// githubToken finds a token for reading releases, following the same order
-// as the HuggingFace one: config first, then the environment, so a shell can
-// override a stored value without editing files. Empty is fine for a public
-// repository.
+// githubToken finds a token for reading releases: config and secrets first,
+// then the environment, matching how the HuggingFace token is resolved. A
+// stored token therefore wins over one in the environment, so a value someone
+// deliberately saved isn't quietly displaced by an inherited variable. Empty
+// is fine for a public repository.
 func githubToken(cfg *config.Config) string {
 	if cfg != nil && cfg.GitHubToken() != "" {
 		return cfg.GitHubToken()
@@ -246,7 +247,7 @@ func recordInstalledVersion(cfg *config.Config, version string) string {
 	if b, err := os.ReadFile(path); err == nil {
 		previous = strings.TrimSpace(string(b))
 	}
-	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
+	if err := os.MkdirAll(dirs.State, 0o755); err != nil {
 		return previous
 	}
 	// Best effort: failing to record it must not make a good upgrade look

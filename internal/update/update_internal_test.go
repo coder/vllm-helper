@@ -311,7 +311,9 @@ func TestReplaceKeepsTheModeAndSwapsContent(t *testing.T) {
 	if len(entries) != 1 {
 		t.Errorf("directory holds %d files, want just the binary", len(entries))
 	}
-} // A symlinked install (say a name on PATH pointing at a versioned path)
+}
+
+// A symlinked install (say a name on PATH pointing at a versioned path)
 // should have its target replaced, not be turned into a regular file.
 func TestReplaceFollowsASymlink(t *testing.T) {
 	t.Parallel()
