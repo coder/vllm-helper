@@ -43,6 +43,23 @@ awk -v hdr="## [X.Y.Z]" '
 ' CHANGELOG.md
 ```
 
+## The dev channel
+
+`dev-build` republishes `main` as a single prerelease tagged `dev`, so people
+can run unreleased work without waiting for a tag. It runs after `ci` succeeds
+rather than on the push, so a commit whose tests fail is never handed to
+anyone, and it replaces the release each time rather than adding to it —
+asset names carry the version, so uploading would pile up one set per commit.
+
+Dev builds are GoReleaser snapshots: the same archives and checksums as a
+release, versioned `X.Y.Z-dev.<short-sha>` from the _next_ patch number. That
+string sorts below the release it follows under semver, which is why
+`upgrade` compares the commit rather than the version on that channel. CI
+writes the commit into the release body, because a tag that moves can't
+identify what is inside it.
+
+Nothing about tagging changes: `release` still fires only on `v*`.
+
 ## Upgrade safety
 
 Config, profiles, and state live in XDG directories and outlive the binary, so
@@ -51,3 +68,11 @@ contain values that no current code path produces. Before tagging, check that
 changes to profile parsing, `EXTRA_ARGS` handling, or the service unit still
 work against a profile written by the previous release, and note anything that
 doesn't under `Changed`.
+
+`upgrade` records what it installed in `state/installed-version`, so a release
+that does need to change something on disk can tell where the user is coming
+from. There is no migration machinery yet, and deliberately so: the first
+change that needs one should add exactly what it needs, in `runUpgrade` between
+replacing the binary and recording the new version. Anything written there has
+to cope with the file being absent, which is the case for every install that
+predates it and for anyone who replaced the binary by hand.

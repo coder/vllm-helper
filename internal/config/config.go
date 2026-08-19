@@ -53,6 +53,11 @@ func (d Dirs) CoderIDsFile() string      { return filepath.Join(d.State, "coder-
 func (d Dirs) PluginStateFile(plugin string) string {
 	return filepath.Join(d.State, plugin+"-ids.env")
 }
+
+// InstalledVersionFile records the version of the binary that last upgraded
+// itself. Config and profiles outlive any one binary, so this is how a future
+// release can tell what wrote what is already on disk.
+func (d Dirs) InstalledVersionFile() string { return filepath.Join(d.State, "installed-version") }
 func (d Dirs) ProfileFile(name string) string {
 	return filepath.Join(d.Profiles, name+".env")
 }
@@ -104,6 +109,14 @@ func (c *Config) ServiceName() string   { return c.get("SERVICE_NAME", DefaultSe
 func (c *Config) ServiceScope() string  { return c.get("SERVICE_SCOPE", DefaultServiceScope) }
 func (c *Config) ModelBudgetGB() string { return c.get("MODEL_BUDGET_GB", "90") }
 func (c *Config) APIKey() string        { return c.get("VLLM_API_KEY", "") }
+
+// UpdateChannel is where 'upgrade' looks for new builds: "stable" for tagged
+// releases, "dev" for the build CI publishes from every commit on main.
+func (c *Config) UpdateChannel() string { return c.get("UPDATE_CHANNEL", "stable") }
+
+// GitHubToken is a token for reading releases. Only needed while the
+// repository is private; public releases download without credentials.
+func (c *Config) GitHubToken() string { return c.get("GITHUB_TOKEN", "") }
 
 // HFToken returns a HuggingFace token from config/secrets ("" if unset).
 // Needed only for gated or private models.

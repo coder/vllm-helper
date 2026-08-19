@@ -18,6 +18,11 @@ import (
 // Version is stamped by goreleaser via ldflags.
 var Version = "dev"
 
+// Commit is the git commit this binary was built from, stamped via ldflags.
+// It is what identifies a dev build: those all share one moving release tag,
+// so the version string alone can't tell two of them apart.
+var Commit = ""
+
 // Command groups, so the help stays sorted by what you're trying to do
 // rather than alphabetically.
 const (
@@ -66,6 +71,7 @@ func newRootCmd() *cobra.Command {
 		newSetupCmd(),
 		newDoctorCmd(),
 		newAdoptCmd(),
+		newUpgradeCmd(),
 
 		newStartCmd(),
 		newVersionCmd(),
@@ -118,7 +124,7 @@ func newVersionCmd() *cobra.Command {
 		Short: "Print the version",
 		Args:  cobra.NoArgs,
 		Run: func(*cobra.Command, []string) {
-			fmt.Println("vllm-helper", Version)
+			fmt.Println("vllm-helper", describeBuild())
 		},
 	}
 }

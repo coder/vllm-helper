@@ -15,7 +15,7 @@ func TestTheCommandSetIsPinned(t *testing.T) {
 	want := []string{
 		"adopt", "coder-sync", "doctor", "edit", "inspect", "list", "logs",
 		"new", "remove", "restart", "search", "set", "setup", "start",
-		"status", "stop", "switch", "version",
+		"status", "stop", "switch", "upgrade", "version",
 	}
 
 	var got []string

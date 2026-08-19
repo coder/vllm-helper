@@ -11,6 +11,15 @@ the fact.
 
 ### Added
 
+- `vllm-helper upgrade` replaces the binary from a published release, checking
+  the download against the release's checksum before writing it. `--check`
+  reports what's available without installing it.
+- A dev channel. `upgrade --channel dev` follows a build of `main` that CI
+  republishes on every commit that passes its tests, for running a fix before
+  it's released; `--channel stable` goes back to tagged releases. The choice is
+  remembered. Tagging a release is unchanged.
+- `version` now also prints the commit the binary was built from, which is what
+  distinguishes two dev builds: they share one moving release tag.
 - macOS (Apple Silicon) support. The server is managed with `launchd`, memory
   is read from `sysctl`, running servers are found without `/proc`, and
   `doctor` checks for the cmake/ninja/clang toolchain with `brew` hints. Linux
