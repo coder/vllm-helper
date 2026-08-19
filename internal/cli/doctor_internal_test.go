@@ -533,32 +533,3 @@ func TestFitMemUtilizationStaysInRange(t *testing.T) {
 		}
 	}
 }
-
-func TestModelConfigFromProfile(t *testing.T) {
-	dirs := newTree(t)
-	if err := os.WriteFile(dirs.ProfileFile("ornith"),
-		[]byte("MODEL=deepreinforce-ai/Ornith-1.0-35B-FP8\nMAX_MODEL_LEN=65536\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	p, err := profile.Load(dirs, "ornith")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	enabled := modelConfig(p, true)
-	if enabled.Model != "deepreinforce-ai/Ornith-1.0-35B-FP8" {
-		t.Errorf("Model = %q", enabled.Model)
-	}
-	if enabled.DisplayName != "Ornith 1.0 35B FP8" {
-		t.Errorf("DisplayName = %q", enabled.DisplayName)
-	}
-	if enabled.ContextLimit != 65536 {
-		t.Errorf("ContextLimit = %d, want 65536", enabled.ContextLimit)
-	}
-	if !enabled.Enabled || !enabled.IsDefault {
-		t.Error("the active model should be both enabled and the default")
-	}
-	if disabled := modelConfig(p, false); disabled.Enabled || disabled.IsDefault {
-		t.Error("a backfilled entry should be neither enabled nor the default")
-	}
-}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
+	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -162,18 +164,34 @@ func gatherDoctor() doctorReport {
 // switch.
 func gatherCoderStatus(cfg *config.Config) coderStatus {
 	st := coderStatus{}
-	if cfg == nil || !cfg.CoderConfigured() {
+	if cfg == nil {
+		return st
+	}
+	// Asking the registry rather than the Coder package keeps doctor from
+	// importing an integration directly. The URL still comes from config:
+	// it's what the user would need to fix, and only doctor reports it.
+	p := pluginNamed("coder")
+	if p == nil || !p.Configured(cfg) {
 		return st
 	}
 	st.Configured = true
 	st.URL = cfg.CoderURL()
-	client := coderClient(cfg)
-	if err := client.Check(); err != nil {
+	if err := p.Check(context.Background(), cfg); err != nil {
 		st.Error = err.Error()
 	} else {
 		st.Reachable = true
 	}
 	return st
+}
+
+// pluginNamed finds a registered integration, or nil when it isn't built in.
+func pluginNamed(name string) plugin.Plugin {
+	for _, p := range plugin.All() {
+		if p.Name() == name {
+			return p
+		}
+	}
+	return nil
 }
 
 // gatherHFToken reports whether a HuggingFace token is available (gated

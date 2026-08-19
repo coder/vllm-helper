@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/coder/vllm-helper/internal/coder"
+	"github.com/coder/vllm-helper/internal/plugin/coder"
 )
 
 const modelConfigPath = "/api/experimental/chats/model-configs"

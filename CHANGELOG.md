@@ -32,6 +32,16 @@ the fact.
 
 ### Changed
 
+- Coder sync is now a plugin (`internal/plugin/coder`) behind a small
+  interface, rather than being wired through the CLI by hand. An integration
+  declares its own configuration, contributes its own commands, and opts into
+  the lifecycle events it cares about; anything it doesn't ask for is never
+  delivered, so an integration nobody uses can't slow down a switch or break
+  one when it's down. Nothing changes for users: `coder-sync` takes the same
+  verbs, reads the same `CODER_URL`/`CODER_API_TOKEN`/`CODER_AI_PROVIDER_ID`,
+  and keeps its state in the same file. The motivation is that Coder's
+  model-config endpoint is an undocumented experimental API that has already
+  changed shape once, and this keeps that churn in one package.
 - Commands are built on [cobra](https://github.com/spf13/cobra). `--help` now
   lists them in groups, each command documents its own flags, and unknown
   commands and flags are reported in cobra's wording. Exit codes are unchanged:
@@ -85,6 +95,10 @@ the fact.
   that was never coming up. `status` and `doctor` now read the init system's
   restart counter and sub-state, and `status` shows the last log line, which is
   usually the exception that killed it.
+- A profile whose `MAX_MODEL_LEN` isn't a positive number is reported before
+  it reaches Coder. It was parsed with the error discarded, so a bad value
+  became a context limit of 0, which Coder rejects with an HTTP 400 that says
+  nothing about which local setting was at fault.
 - Redirecting output to `/dev/null` no longer looks like a terminal. Terminal
   detection read the file mode, and `/dev/null` is a character device like a
   terminal is, so `vllm-helper logs > /dev/null` followed the log forever

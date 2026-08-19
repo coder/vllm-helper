@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/hf"
+	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -252,7 +254,11 @@ func runRemove(args []string) error {
 	if name == cfg.ActiveProfile() {
 		return fmt.Errorf("'%s' is the currently active model -- switch to something else first", name)
 	}
-	coderRemove(cfg, name)
+	plugin.Dispatch(context.Background(), os.Stderr, plugin.EventRemoved, plugin.State{
+		Config:  cfg,
+		Name:    name,
+		BaseURL: localBaseURL(cfg),
+	})
 	if err := profile.Remove(cfg.Dirs, name); err != nil {
 		return err
 	}
@@ -278,7 +284,12 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	}
 
 	fmt.Println()
-	coderActivate(cfg, p)
+	plugin.Dispatch(context.Background(), os.Stderr, plugin.EventActivating, plugin.State{
+		Config:  cfg,
+		Name:    p.Name,
+		Profile: p,
+		BaseURL: localBaseURL(cfg),
+	})
 
 	fmt.Println()
 	fmt.Printf("Restarting %s (this reloads the model -- can take several minutes,\n", cfg.ServiceName())
