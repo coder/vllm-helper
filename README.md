@@ -18,6 +18,18 @@ Setup detects your hardware and any existing vLLM install, generates an API key,
 
 Requires a vLLM install (usually in a venv). If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.env`.
 
+### Updating
+
+```bash
+vllm-helper upgrade --check          # what's available, without installing
+vllm-helper upgrade                  # replace this binary
+vllm-helper upgrade --channel dev    # follow main instead of releases
+```
+
+There are two channels. `stable` is the tagged releases. `dev` is rebuilt from `main` on every commit that passes CI, so it carries work that hasn't been released yet — useful for trying a fix before it ships. The channel you pass is remembered, so later `vllm-helper upgrade` runs stay on it; switch back with `--channel stable`.
+
+Upgrading replaces the binary only. A running server was started by the old one and keeps serving until `vllm-helper restart`. If the binary lives somewhere only root can write, run the upgrade with `sudo`. While this repository is private, reading releases needs a token: set `GITHUB_TOKEN` in the environment or in `config.env`.
+
 | Platform               | Service manager | vLLM backend                             |
 | ---------------------- | --------------- | ---------------------------------------- |
 | Linux + NVIDIA GPU     | systemd         | CUDA — the setup this tool was built for |

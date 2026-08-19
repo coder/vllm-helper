@@ -1,6 +1,14 @@
 version: 2
 project_name: vllm-helper
 
+# The dev channel publishes under a tag named "dev" that moves with every
+# build. Left visible, it becomes the nearest tag and GoReleaser rejects it as
+# not semver, so every dev build after the first would fail to derive a
+# version. Ignoring it keeps versions coming from the last real release.
+git:
+  ignore_tags:
+    - dev
+
 builds:
   - main: .
     binary: vllm-helper
@@ -17,7 +25,11 @@ builds:
       - goos: darwin
         goarch: amd64
     ldflags:
-      - -s -w -X github.com/coder/vllm-helper/internal/cli.Version={{.Version}}
+      # Commit is what identifies a dev build: they all share one moving
+      # release tag, so the version string can't tell two of them apart.
+      - -s -w
+        -X github.com/coder/vllm-helper/internal/cli.Version={{.Version}}
+        -X github.com/coder/vllm-helper/internal/cli.Commit={{.FullCommit}}
 
 archives:
   - formats: [tar.gz]
@@ -28,6 +40,12 @@ archives:
 
 checksum:
   name_template: checksums.txt
+
+# Dev builds are snapshots: the same archives and checksums as a release, but
+# versioned from the commit rather than a tag, because the "dev" release tag
+# moves with every build. Marked so a dev build never looks like a release.
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev.{{ .ShortCommit }}"
 
 # Release notes come from CHANGELOG.md via --release-notes; don't also
 # generate a list of commit subjects.

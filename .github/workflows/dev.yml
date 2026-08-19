@@ -1,0 +1,76 @@
+name: dev-build
+
+# Dev builds exist because a release is only cut by tagging, which can be a
+# while: this republishes main so a fix can be tried on a real machine before
+# it ships. It runs after ci succeeds rather than on the push itself, so a
+# commit that fails its tests is never handed to anyone.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Queue rather than cancel: a cancelled run could delete the dev release and
+# stop before publishing the replacement.
+concurrency:
+  group: dev-build
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # workflow_run starts from the default branch, so name the commit
+          # that was actually tested. Tags come with the full history and
+          # goreleaser needs them to derive a version.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # --snapshot builds the same archives and checksums a release would,
+      # without publishing: the upgrade command then has one code path for
+      # both channels.
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean
+
+      - name: Publish the dev release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sha="${{ github.event.workflow_run.head_sha || github.sha }}"
+          {
+            echo "Built from main, unreleased. Install it with:"
+            echo
+            echo '```sh'
+            echo "vllm-helper upgrade --channel dev"
+            echo '```'
+            echo
+            # The upgrade command reads this line to tell whether the
+            # running binary is this build: a moving tag can't say.
+            echo "commit: $sha"
+            echo
+            echo "$(git log -1 --pretty='%s' "$sha")"
+          } > "$RUNNER_TEMP/dev-notes.md"
+
+          # Replace rather than add to it: asset names carry the version, so
+          # uploading would pile up one set per commit.
+          gh release delete dev --yes --cleanup-tag || true
+          gh release create dev \
+            --prerelease \
+            --target "$sha" \
+            --title "dev (main)" \
+            --notes-file "$RUNNER_TEMP/dev-notes.md" \
+            dist/*.tar.gz dist/checksums.txt
