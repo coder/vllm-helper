@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/hf"
+	"github.com/coder/vllm-helper/internal/vllm"
 )
 
 // searchResult is the machine-readable shape of one search hit.
@@ -32,6 +33,10 @@ type modelDetail struct {
 	FitsBudget    *bool   `json:"fits_budget,omitempty"` // absent when either side is unknown
 	DetectedFlags string  `json:"detected_flags"`
 	MaxModelLen   string  `json:"detected_max_model_len,omitempty"`
+	// DroppedFlags explains anything the card asked for that the installed
+	// vLLM won't take, so it's visible before pulling rather than as a
+	// crash loop afterwards.
+	DroppedFlags []string `json:"dropped_flags,omitempty"`
 }
 
 // cmdSearch searches HuggingFace and walks the user through picking a
@@ -183,7 +188,9 @@ func gatherModelDetail(m hf.Model, cfg *config.Config) modelDetail {
 		}
 	}
 	if flags, err := hf.DetectFlags(m.ID); err == nil {
-		d.DetectedFlags = flags.ExtraArgs
+		// Validate here too: seeing that a card's parser won't work on this
+		// machine is most useful before pulling tens of gigabytes.
+		d.DetectedFlags, d.DroppedFlags = vllm.Check(flags.ExtraArgs, vllmCaps(cfg))
 		d.MaxModelLen = flags.MaxModelLen
 	}
 	return d
@@ -213,5 +220,8 @@ func printModelDetail(d modelDetail) {
 		fmt.Printf("  vllm flags: %s (auto-detected, will be pre-filled)\n", d.DetectedFlags)
 	} else {
 		fmt.Println("  vllm flags: no vllm serve snippet in README -- set flags by hand after pulling")
+	}
+	for _, w := range d.DroppedFlags {
+		fmt.Printf("  dropped:    %s\n", w)
 	}
 }
