@@ -104,6 +104,25 @@ the fact.
   that was never coming up. `status` and `doctor` now read the init system's
   restart counter and sub-state, and `status` shows the last log line, which is
   usually the exception that killed it.
+- Flags taken from a model card are checked against the vLLM installed here
+  before they reach a profile. A card is written for whatever vLLM its author
+  ran, and anything it asks for that this build won't accept — a parser that
+  isn't registered, a flag that has since been removed — used to be copied
+  verbatim and only surface as a crash loop on the next switch. NVIDIA's
+  Nemotron-3-Nano is the case that prompted this: its card prescribes a parser
+  supplied as a plugin file, which ships with the model rather than with your
+  machine. Such flags are now dropped with an explanation, and when the
+  installed build has a plausible alternative the message names it. Nothing is
+  substituted automatically: parsers one character apart are different parsers,
+  and a wrong guess changes reasoning output silently. `new` and `inspect`
+  clean before writing; `switch` and `restart` only warn, since a profile
+  someone explicitly asked for is theirs to serve.
+- More of a model card's `vllm serve` flags are adopted. Only five were
+  recognised, so anything else — including memory-shaping settings like
+  `--max-num-seqs` — was dropped without a word, and the served configuration
+  quietly differed from what the model's authors prescribed. Flags vllm-helper
+  sets itself, flags describing someone else's GPU topology, and anything that
+  looks like a credential are still left out.
 - `set` and `edit` refuse a `MAX_MODEL_LEN` that isn't a positive number
   instead of writing it. It reached vLLM's command line verbatim and killed
   the server on startup, and the only check for it was on the Coder sync path,
