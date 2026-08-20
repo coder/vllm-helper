@@ -11,6 +11,43 @@ var caps0271 = Caps{
 	Version:          "0.27.1",
 	ToolParsers:      []string{"hermes", "qwen3_coder", "mistral", "deepseek_v3"},
 	ReasoningParsers: []string{"deepseek_r1", "deepseek_v3", "nemotron_v3", "qwen3", "olmo3"},
+	// Note the absence of --enable-reasoning: it was a real flag once and
+	// vLLM 0.27.1 exits on it.
+	Flags: []string{
+		"--enable-auto-tool-choice", "--enable-prefix-caching", "--enforce-eager",
+		"--max-num-seqs", "--reasoning-parser", "--reasoning-parser-plugin",
+		"--seed", "--tool-call-parser", "--trust-remote-code", "--chat-template",
+	},
+}
+
+// Carrying a card's flags over verbatim means carrying flags that a newer
+// vLLM has dropped. Qwen3-8B-FP8's card still prescribes --enable-reasoning,
+// which 0.27.1 rejects outright with "unrecognized arguments" -- before it
+// looks at any other flag, so one stale name takes the whole server down.
+func TestCheckDropsAFlagThatNoLongerExists(t *testing.T) {
+	t.Parallel()
+	got, warnings := Check("--enable-reasoning --reasoning-parser qwen3", caps0271)
+	if strings.Contains(got, "--enable-reasoning") {
+		t.Errorf("cleaned = %q, want the removed flag gone", got)
+	}
+	if !strings.Contains(got, "--reasoning-parser qwen3") {
+		t.Errorf("cleaned = %q, want the valid flag kept", got)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "no such flag") {
+		t.Errorf("warnings = %v, want one explaining the flag doesn't exist", warnings)
+	}
+}
+
+// Flag checking has to be independently skippable: reading the argument
+// parser can fail while the registries load fine, and vice versa.
+func TestCheckSkipsFlagCheckWhenFlagsAreUnknown(t *testing.T) {
+	t.Parallel()
+	parsersOnly := Caps{Version: "x", ReasoningParsers: []string{"qwen3"}}
+	in := "--some-flag-we-cannot-verify --reasoning-parser qwen3"
+	got, warnings := Check(in, parsersOnly)
+	if got != in || len(warnings) != 0 {
+		t.Errorf("Check = (%q, %v), want the input untouched when the flag list is unavailable", got, warnings)
+	}
 }
 
 // The failure that started this: a card prescribes a parser supplied by a

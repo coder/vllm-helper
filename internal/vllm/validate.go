@@ -73,6 +73,17 @@ func Check(extraArgs string, caps Caps) (cleaned string, warnings []string) {
 			continue
 		}
 
+		// A flag that no longer exists is fatal in a different way to a bad
+		// value: vLLM exits on "unrecognized arguments" before it reads any
+		// of them. Cards outlive the flags they were written for, and
+		// --enable-reasoning is the live example -- real once, gone now.
+		if caps.KnowsFlags() && !caps.HasFlag(flag) {
+			warnings = append(warnings, fmt.Sprintf(
+				"dropped %s: vLLM %s has no such flag (it may have been renamed or removed since the model card was written)",
+				flag, caps.Version))
+			continue
+		}
+
 		if known, isParser := parserFlags[flag]; isParser && value != "" {
 			if !known(caps, value) {
 				warnings = append(warnings, unknownParserMessage(flag, value, plugins[flag], caps))

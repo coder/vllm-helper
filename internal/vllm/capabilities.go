@@ -26,18 +26,33 @@ type Caps struct {
 	Version          string   `json:"version"`
 	ToolParsers      []string `json:"tool_parsers"`
 	ReasoningParsers []string `json:"reasoning_parsers"`
+	// Flags is every option string 'vllm serve' accepts. Cards outlive the
+	// flags they were written for -- --enable-reasoning was real once and
+	// is now an immediate "unrecognized arguments" exit -- so a name that
+	// no longer exists has to be caught alongside a value that doesn't.
+	Flags []string `json:"flags"`
 }
 
 // Known reports whether introspection actually produced a registry. An empty
 // Caps means "we couldn't ask", which must be treated as "don't validate",
 // never as "nothing is valid".
-func (c Caps) Known() bool { return len(c.ToolParsers) > 0 || len(c.ReasoningParsers) > 0 }
+func (c Caps) Known() bool {
+	return len(c.ToolParsers) > 0 || len(c.ReasoningParsers) > 0 || len(c.Flags) > 0
+}
 
 // HasToolParser reports whether the installed vLLM registers this parser.
 func (c Caps) HasToolParser(name string) bool { return contains(c.ToolParsers, name) }
 
 // HasReasoningParser reports whether the installed vLLM registers this parser.
 func (c Caps) HasReasoningParser(name string) bool { return contains(c.ReasoningParsers, name) }
+
+// KnowsFlags reports whether the flag list was readable. Separate from
+// Known() because the parser registries and the argument parser are read
+// independently and either can fail on its own.
+func (c Caps) KnowsFlags() bool { return len(c.Flags) > 0 }
+
+// HasFlag reports whether 'vllm serve' accepts this option string.
+func (c Caps) HasFlag(flag string) bool { return contains(c.Flags, flag) }
 
 func contains(haystack []string, needle string) bool {
 	for _, s := range haystack {
@@ -55,7 +70,7 @@ func contains(haystack []string, needle string) bool {
 // is the accessor that forces and returns the real set.
 const introspect = `
 import json
-out = {"tool_parsers": [], "reasoning_parsers": []}
+out = {"tool_parsers": [], "reasoning_parsers": [], "flags": []}
 try:
     from vllm.tool_parsers import ToolParserManager
     out["tool_parsers"] = sorted(ToolParserManager.list_registered())
@@ -64,6 +79,18 @@ except Exception:
 try:
     from vllm.reasoning import ReasoningParserManager
     out["reasoning_parsers"] = sorted(ReasoningParserManager.list_registered())
+except Exception:
+    pass
+try:
+    from vllm.entrypoints.openai.cli_args import make_arg_parser
+    try:
+        from vllm.utils.argparse_utils import FlexibleArgumentParser
+    except Exception:
+        from vllm.utils import FlexibleArgumentParser
+    flags = set()
+    for a in make_arg_parser(FlexibleArgumentParser())._actions:
+        flags.update(a.option_strings)
+    out["flags"] = sorted(flags)
 except Exception:
     pass
 print(json.dumps(out))
