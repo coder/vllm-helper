@@ -39,7 +39,10 @@ func newRootCmd() *cobra.Command {
 			"optional Coder Agents sync). Only one model is loaded at a time.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Version:       Version,
+		// describeBuild, not Version: on the dev channel every build shares
+		// one release tag, so the commit is the only thing that identifies
+		// which one this is. --version and 'version' must not disagree.
+		Version: describeBuild(),
 		// The generated shell completions are not wired into packaging, so
 		// advertising them would only produce a command that goes nowhere.
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},

@@ -104,6 +104,19 @@ the fact.
   that was never coming up. `status` and `doctor` now read the init system's
   restart counter and sub-state, and `status` shows the last log line, which is
   usually the exception that killed it.
+- `set` and `edit` refuse a `MAX_MODEL_LEN` that isn't a positive number
+  instead of writing it. It reached vLLM's command line verbatim and killed
+  the server on startup, and the only check for it was on the Coder sync path,
+  so a machine without Coder configured got no warning at all.
+- `upgrade --check --channel <c>` no longer reports a difference when the
+  running build is already what that channel points at. The up-to-date check
+  was skipped whenever a channel was named, so checking the channel you were
+  already on always claimed an update was available.
+- `upgrade --check` no longer writes `UPDATE_CHANNEL` to `config.env`. Passing
+  `--channel` to a command documented as reporting "without installing it"
+  quietly changed the stored preference.
+- `--version` prints the commit, matching `version`. The commit is what tells
+  two dev builds apart, so the flag was the less useful of the two spellings.
 - A profile whose `MAX_MODEL_LEN` isn't a positive number is reported before
   it reaches Coder. It was parsed with the error discarded, so a bad value
   became a context limit of 0, which Coder rejects with an HTTP 400 that says
