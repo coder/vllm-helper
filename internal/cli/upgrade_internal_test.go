@@ -51,7 +51,7 @@ func TestResolveChannelPersistsAnExplicitChoice(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ch, switched, err := resolveChannel(cfg, "dev")
+	ch, switched, err := resolveChannel(cfg, "dev", true)
 	if err != nil {
 		t.Fatalf("resolveChannel: %v", err)
 	}
@@ -72,11 +72,47 @@ func TestResolveChannelPersistsAnExplicitChoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ch, switched, _ := resolveChannel(reloaded, "dev"); ch != update.Dev || switched {
+	if ch, switched, _ := resolveChannel(reloaded, "dev", true); ch != update.Dev || switched {
 		t.Errorf("got (%q, switched=%v), want dev with no switch", ch, switched)
 	}
-	if ch, switched, _ := resolveChannel(reloaded, ""); ch != update.Dev || switched {
+	if ch, switched, _ := resolveChannel(reloaded, "", true); ch != update.Dev || switched {
 		t.Errorf("with no flag: got (%q, switched=%v), want the remembered dev channel", ch, switched)
+	}
+}
+
+// 'upgrade --check' reports; it decides nothing. Passing --channel to it must
+// not leave the stored channel changed behind it, but the run still has to
+// act on the channel asked about.
+func TestResolveChannelWithoutPersistLeavesConfigAlone(t *testing.T) {
+	dirs := newTree(t)
+	writeConfig(t, dirs, "PORT=8001\n")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(dirs.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ch, switched, err := resolveChannel(cfg, "dev", false)
+	if err != nil {
+		t.Fatalf("resolveChannel: %v", err)
+	}
+	if ch != update.Dev {
+		t.Errorf("channel = %q, want the one asked for", ch)
+	}
+	// Still a switch as far as the caller is concerned: it decides whether
+	// the suggested install command has to repeat --channel.
+	if !switched {
+		t.Error("switched = false, want the difference from config reported")
+	}
+	after, err := os.ReadFile(dirs.ConfigFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("config.env was modified by a check:\nbefore %q\nafter  %q", before, after)
 	}
 }
 
@@ -84,13 +120,13 @@ func TestResolveChannelPersistsAnExplicitChoice(t *testing.T) {
 // on the command line still has to apply to this run.
 func TestResolveChannelWithoutConfig(t *testing.T) {
 	newTree(t)
-	if ch, switched, err := resolveChannel(nil, ""); ch != update.Stable || switched || err != nil {
+	if ch, switched, err := resolveChannel(nil, "", true); ch != update.Stable || switched || err != nil {
 		t.Errorf("got (%q, %v, %v), want stable with no switch", ch, switched, err)
 	}
-	if ch, switched, err := resolveChannel(nil, "dev"); ch != update.Dev || switched || err != nil {
+	if ch, switched, err := resolveChannel(nil, "dev", true); ch != update.Dev || switched || err != nil {
 		t.Errorf("got (%q, %v, %v), want dev with nothing persisted", ch, switched, err)
 	}
-	if _, _, err := resolveChannel(nil, "nightly"); err == nil {
+	if _, _, err := resolveChannel(nil, "nightly", true); err == nil {
 		t.Error("an unknown channel was accepted")
 	}
 }
@@ -142,5 +178,106 @@ func TestGitHubTokenPrefersConfigOverEnvironment(t *testing.T) {
 	t.Setenv("GH_TOKEN", "from-gh")
 	if got := githubToken(nil); got != "from-gh" {
 		t.Errorf("githubToken(nil) = %q, want GH_TOKEN", got)
+	}
+}
+
+// The changelog leans on the commit to tell two dev builds apart, so the two
+// spellings of "what am I running" must not disagree: `--version` used to
+// print a bare version while `version` included the commit.
+func TestVersionFlagAndSubcommandAgree(t *testing.T) {
+	oldV, oldC := Version, Commit
+	t.Cleanup(func() { Version, Commit = oldV, oldC })
+	Version, Commit = "0.3.2-dev.354d6d9", "354d6d904fed0000"
+
+	if got := newRootCmd().Version; got != describeBuild() {
+		t.Errorf("--version reports %q, want %q from 'version'", got, describeBuild())
+	}
+	if !strings.Contains(newRootCmd().Version, "354d6d9") {
+		t.Errorf("--version = %q, want it to name the commit", newRootCmd().Version)
+	}
+}
+
+// A suggested command has to land on the channel that was just reported on.
+// The trap is that "did --channel differ from config" is not the same
+// question: a check deliberately doesn't persist, and with no config there is
+// nowhere to persist to, so in both cases a bare 'upgrade' quietly falls back
+// to stable while the suggestion omits the flag.
+func TestChannelArgRepeatsTheFlagWhenABareUpgradeWouldDiffer(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		ch, bare update.Channel
+		want     string
+	}{
+		{"bare run already lands there", update.Dev, update.Dev, ""},
+		{"stored preference differs", update.Dev, update.Stable, " --channel dev"},
+		{"going back to stable from a dev box", update.Stable, update.Dev, " --channel stable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := channelArg(tt.ch, tt.bare); got != tt.want {
+				t.Errorf("channelArg(%q, %q) = %q, want %q", tt.ch, tt.bare, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBareChannel(t *testing.T) {
+	// No config: every run falls back to stable, whatever was asked for.
+	if got := bareChannel(nil); got != update.Stable {
+		t.Errorf("bareChannel(nil) = %q, want stable", got)
+	}
+
+	dirs := newTree(t)
+	writeConfig(t, dirs, "PORT=8001\nUPDATE_CHANNEL=dev\n")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bareChannel(cfg); got != update.Dev {
+		t.Errorf("bareChannel = %q, want the stored dev", got)
+	}
+	// A stored value we can't parse must not be reported as usable; a bare
+	// run would fall back to stable, so the suggestion has to say so.
+	writeConfig(t, dirs, "PORT=8001\nUPDATE_CHANNEL=nightly\n")
+	broken, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bareChannel(broken); got != update.Stable {
+		t.Errorf("bareChannel with an unparseable value = %q, want stable", got)
+	}
+}
+
+// The case the reviewer caught: on a machine that has never run setup,
+// 'upgrade --check --channel dev' has nowhere to record the choice, so the
+// install command it suggests must carry the flag or it installs stable.
+func TestSuggestionKeepsTheChannelWithoutConfig(t *testing.T) {
+	newTree(t)
+	ch, _, err := resolveChannel(nil, "dev", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := channelArg(ch, bareChannel(nil)); got != " --channel dev" {
+		t.Errorf("suggestion = %q, want it to repeat --channel dev", got)
+	}
+}
+
+// After an install that recorded the channel, a bare upgrade already lands
+// there, so the sudo-retry hint shouldn't be noisier than it needs to be.
+func TestSuggestionOmitsTheFlagOncePersisted(t *testing.T) {
+	dirs := newTree(t)
+	writeConfig(t, dirs, "PORT=8001\n")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, _, err := resolveChannel(cfg, "dev", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := channelArg(ch, bareChannel(cfg)); got != "" {
+		t.Errorf("suggestion = %q, want no flag once the choice is stored", got)
 	}
 }

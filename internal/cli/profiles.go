@@ -186,7 +186,10 @@ func pullAndSwitch(cfg *config.Config, repo string, opts watchOpts) error {
 	fmt.Println("Pulling new model:", repo)
 	fmt.Println("Checking the model's README for known vLLM serving flags...")
 	detected, _ := hf.DetectFlags(repo)
-	extraArgs := detected.ExtraArgs
+	// A card prescribes flags for whatever vLLM its author ran. Drop the
+	// ones this build won't accept before they reach a profile, or the
+	// first switch is a crash loop.
+	extraArgs := checkExtraArgs(detected.ExtraArgs, vllmCaps(cfg))
 
 	fmt.Println("Checking the model's chat template for known crash patterns...")
 	patchedTemplate, needsPatch, err := hf.DetectChatTemplatePatch(repo)
@@ -273,6 +276,10 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	if err := writeActiveEnv(cfg, p); err != nil {
 		return err
 	}
+	// Warn, never refuse: profiles get hand-edited and vLLM gets upgraded
+	// underneath one that used to work, but the user asked for this model
+	// and it is not this command's place to overrule that.
+	warnExtraArgs(p, vllmCaps(cfg))
 
 	fmt.Println("Switched to profile:", p.Name)
 	fmt.Println()

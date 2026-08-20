@@ -52,7 +52,9 @@ func runUpgrade(channelFlag string, checkOnly bool) error {
 		return err
 	}
 
-	ch, switched, err := resolveChannel(cfg, channelFlag)
+	// A check reports; it doesn't decide anything, so it must not leave the
+	// channel changed behind it.
+	ch, switched, err := resolveChannel(cfg, channelFlag, !checkOnly)
 	if err != nil {
 		return err
 	}
@@ -68,21 +70,34 @@ func runUpgrade(channelFlag string, checkOnly bool) error {
 	fmt.Printf("running:  %s\n", describeBuild())
 	fmt.Printf("available: %s\n", target)
 
-	// A channel switch is a move to a different build even when the version
-	// string happens to match, so it always installs.
-	if !switched && isCurrent(rel, ch) {
-		fmt.Println()
-		fmt.Println("Already up to date.")
-		return nil
-	}
+	current := isCurrent(rel, ch)
+
+	// A check answers one question -- is this build what the channel points
+	// at -- and that answer doesn't depend on whether --channel happened to
+	// differ from the stored preference. Reporting a difference between two
+	// identical commits, which is what it did whenever --channel was passed,
+	// is simply wrong.
 	if checkOnly {
 		fmt.Println()
+		if current {
+			fmt.Println("Already up to date.")
+			return nil
+		}
 		// Deliberately not "an update is available". A dev build is ahead
 		// of the newest stable release, so on that channel this is a move
 		// back to what's released -- calling it an update would mislead in
 		// exactly the case someone is checking carefully.
 		fmt.Printf("This differs from what's running. Install it with 'vllm-helper upgrade%s'.\n",
-			channelArg(ch, switched))
+			channelArg(ch, bareChannel(cfg)))
+		return nil
+	}
+
+	// Installing is a different question. Changing channel is a move to a
+	// different build even when the commit happens to match, and it is also
+	// what records the choice, so a switch always goes through.
+	if !switched && current {
+		fmt.Println()
+		fmt.Println("Already up to date.")
 		return nil
 	}
 
@@ -100,7 +115,7 @@ func runUpgrade(channelFlag string, checkOnly bool) error {
 	if err := update.Replace(self, binary); err != nil {
 		if errors.Is(err, os.ErrPermission) {
 			return fmt.Errorf("%w\n\n%s is not writable by this user -- re-run with sudo:\n  sudo vllm-helper upgrade%s",
-				err, self, channelArg(ch, switched))
+				err, self, channelArg(ch, bareChannel(cfg)))
 		}
 		return err
 	}
@@ -146,9 +161,10 @@ func githubToken(cfg *config.Config) string {
 	return ""
 }
 
-// resolveChannel decides which channel to use, and persists an explicit
-// choice. Reports whether this is a change from what was configured.
-func resolveChannel(cfg *config.Config, flag string) (update.Channel, bool, error) {
+// resolveChannel decides which channel to use and reports whether that is a
+// change from what was configured. An explicit choice is written to config
+// only when persist is set: a read-only command has no business editing it.
+func resolveChannel(cfg *config.Config, flag string, persist bool) (update.Channel, bool, error) {
 	if cfg == nil {
 		// Nothing to read a preference from or write one to; a channel
 		// given on the command line still applies to this run.
@@ -176,6 +192,11 @@ func resolveChannel(cfg *config.Config, flag string) (update.Channel, bool, erro
 	}
 	if ch == current {
 		return ch, false, nil
+	}
+	// Still report the switch either way: it decides whether an install can
+	// be skipped, and whether a suggested command needs to repeat --channel.
+	if !persist {
+		return ch, true, nil
 	}
 	cfg.File.Set(updateChannelKey, string(ch))
 	if err := cfg.File.Write(cfg.Dirs.ConfigFile(), 0o644); err != nil {
@@ -209,13 +230,34 @@ func releaseVersion(rel *update.Release, ch update.Channel) string {
 	return rel.TagName
 }
 
-// channelArg repeats --channel in a suggested command, so following the
-// suggestion after a switch doesn't silently act on the old channel.
-func channelArg(ch update.Channel, switched bool) string {
-	if switched {
-		return " --channel " + string(ch)
+// channelArg repeats --channel in a suggested command when a bare 'upgrade'
+// would resolve to something else, so following the suggestion can't quietly
+// act on a different channel than the one just reported on.
+//
+// The test is what a plain run would do now, not whether --channel differed
+// from config. Those come apart in two ways: a check deliberately doesn't
+// persist, so the stored preference is still the old one; and with no config
+// at all there is nowhere to persist to, so every run falls back to stable no
+// matter what was asked for.
+func channelArg(ch, bare update.Channel) string {
+	if ch == bare {
+		return ""
 	}
-	return ""
+	return " --channel " + string(ch)
+}
+
+// bareChannel is the channel a plain 'vllm-helper upgrade' would pick right
+// now. Call it after resolveChannel: a persisted choice is already reflected
+// in cfg, so an install that recorded the channel needs no flag repeated.
+func bareChannel(cfg *config.Config) update.Channel {
+	if cfg == nil {
+		return update.Stable
+	}
+	ch, err := update.ParseChannel(cfg.UpdateChannel())
+	if err != nil {
+		return update.Stable
+	}
+	return ch
 }
 
 // describeBuild names the running binary the way its channel identifies it.

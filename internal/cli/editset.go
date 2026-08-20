@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -160,6 +161,16 @@ func validateProfile(p *profile.Profile, name string) error {
 	if extra := p.ExtraArgs(); extra != "" {
 		if _, err := config.SplitArgs(extra); err != nil {
 			return fmt.Errorf("profile '%s' EXTRA_ARGS won't parse: %w", name, err)
+		}
+	}
+	// A context length that isn't a positive number reaches vLLM's command
+	// line verbatim and kills the server on startup. Catching it here means
+	// the complaint names the setting, instead of arriving minutes later as
+	// a traceback in the journal. Only checked when set: an empty value is
+	// how a profile asks for the default.
+	if v := p.MaxModelLen(); v != "" {
+		if n, err := strconv.Atoi(v); err != nil || n <= 0 {
+			return fmt.Errorf("profile '%s' MAX_MODEL_LEN is %q -- it must be a positive number of tokens", name, v)
 		}
 	}
 	return nil

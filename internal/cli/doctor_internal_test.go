@@ -484,6 +484,29 @@ func TestValidateProfile(t *testing.T) {
 	}, {
 		name:    "empty extra args is fine",
 		content: "MODEL=org/model\nEXTRA_ARGS=\n",
+	}, {
+		// A context length vLLM can't use reaches its command line
+		// verbatim and kills the server on startup, so it has to be
+		// refused at the point someone writes it.
+		name:    "negative context length",
+		content: "MODEL=org/model\nMAX_MODEL_LEN=-5\n",
+		wantErr: "MAX_MODEL_LEN",
+	}, {
+		name:    "zero context length",
+		content: "MODEL=org/model\nMAX_MODEL_LEN=0\n",
+		wantErr: "MAX_MODEL_LEN",
+	}, {
+		name:    "non-numeric context length",
+		content: "MODEL=org/model\nMAX_MODEL_LEN=lots\n",
+		wantErr: "MAX_MODEL_LEN",
+	}, {
+		name:    "a real context length is fine",
+		content: "MODEL=org/model\nMAX_MODEL_LEN=262144\n",
+	}, {
+		// Unset is how a profile asks for the default, so it must stay
+		// valid -- profiles in the field predate this check.
+		name:    "unset context length is fine",
+		content: "MODEL=org/model\n",
 	}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
