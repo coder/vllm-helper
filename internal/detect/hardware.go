@@ -1,11 +1,27 @@
 package detect
 
 import (
+	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 )
+
+// hasNVIDIADevice reports whether this machine has a GPU we could actually
+// serve from, for the case where nvidia-smi told us nothing.
+//
+// The control device is the signal rather than /proc/driver/nvidia/version,
+// because the version file outlives a usable GPU: it is still there after a
+// driver upgrade without a reboot (nvidia-smi then fails on a library version
+// mismatch), and it is visible inside a container started without --gpus. Both
+// are ordinary CPU-backend situations, and treating them as GPU boxes would
+// skip the clamp that issue #13 needs.
+func hasNVIDIADevice() bool {
+	_, err := os.Stat("/dev/nvidiactl")
+	return err == nil
+}
 
 // Hardware describes what we can serve models with on this machine.
 type Hardware struct {
@@ -15,6 +31,32 @@ type Hardware struct {
 	Unified      bool   `json:"unified"`       // GPU shares system memory (DGX Spark / GB10 / Grace)
 	BudgetGB     int    `json:"budget_gb"`     // recommended max GB of model weights on disk
 	BudgetReason string `json:"budget_reason"` // one-liner explaining the budget for the user
+}
+
+// unifiedNames are GPUs whose memory is the system's memory: Grace-Blackwell
+// (GB10 in the DGX Spark, GB200, GB300), Grace-Hopper, and the integrated
+// Jetson/Thor parts. Naming them individually beats inferring it, because
+// nvidia-smi reports "[N/A]" for memory.total on GB10 and so tells us nothing.
+var unifiedNames = regexp.MustCompile(`(?i)GB10|GB200|GB300|GH200|Grace|Orin|Thor|Tegra`)
+
+// isUnified decides whether the GPU shares one memory pool with the CPU. It is
+// the pure half of Probe, so the cases below can be tested without the machine.
+//
+// The last case is the one to be careful with. An NVIDIA device node with no
+// usable nvidia-smi says "there is a GPU here we could not describe", which is
+// evidence of a GPU but none at all about its memory topology. Architecture
+// settles it: every NVIDIA part on arm64 is integrated (Grace, Jetson, Thor),
+// while an undescribed x86 GPU is discrete and keeps the discrete treatment.
+func isUnified(gpuName string, gpuMemGB, totalMemGB int, nvidiaDevice bool) bool {
+	switch {
+	case gpuName != "" && unifiedNames.MatchString(gpuName):
+		return true
+	case gpuMemGB > 0 && totalMemGB > 0 && float64(gpuMemGB) > 0.9*float64(totalMemGB):
+		return true
+	case gpuName == "" && nvidiaDevice && runtime.GOARCH == "arm64":
+		return true
+	}
+	return false
 }
 
 // Probe inspects system memory and nvidia-smi (if present). Never fails --
@@ -36,16 +78,7 @@ func Probe() Hardware {
 		}
 	}
 
-	// Unified-memory heuristic: the GPU either reports no discrete pool or a
-	// pool within ~90% of system RAM (Grace-Blackwell reports the shared
-	// pool), or the GPU name is a known unified part.
-	unifiedNames := regexp.MustCompile(`(?i)GB10|GB200|GH200|Grace`)
-	switch {
-	case hw.GPUName != "" && unifiedNames.MatchString(hw.GPUName):
-		hw.Unified = true
-	case hw.GPUMemGB > 0 && hw.TotalMemGB > 0 && float64(hw.GPUMemGB) > 0.9*float64(hw.TotalMemGB):
-		hw.Unified = true
-	}
+	hw.Unified = isUnified(hw.GPUName, hw.GPUMemGB, hw.TotalMemGB, hasNVIDIADevice())
 
 	// No NVIDIA GPU, but the platform may still have an accelerator worth
 	// naming (Apple Silicon shares one memory pool with the CPU).

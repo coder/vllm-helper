@@ -28,7 +28,12 @@ type searchResult struct {
 // can learn about serving one model on this machine.
 type modelDetail struct {
 	searchResult
-	SizeGB        float64 `json:"size_gb"`               // 0 = unknown
+	SizeGB float64 `json:"size_gb"` // 0 = unknown
+	// Variants is how many complete copies of the model the repo holds, so
+	// 1 means SizeGB is the whole story and more means it is the smallest of
+	// them. Absent when SizeGB is unknown, since then there was nothing to
+	// count.
+	Variants      int     `json:"variants,omitempty"`
 	BudgetGB      float64 `json:"budget_gb"`             // 0 = unknown (no config)
 	FitsBudget    *bool   `json:"fits_budget,omitempty"` // absent when either side is unknown
 	DetectedFlags string  `json:"detected_flags"`
@@ -180,10 +185,11 @@ func gatherModelDetail(m hf.Model, cfg *config.Config) modelDetail {
 	if cfg != nil {
 		d.BudgetGB, _ = strconv.ParseFloat(cfg.ModelBudgetGB(), 64)
 	}
-	if size, err := hf.WeightsSizeGB(m.ID); err == nil && size > 0 {
-		d.SizeGB = size
+	if w, err := hf.WeightsSize(m.ID); err == nil && w.SizeGB > 0 {
+		d.SizeGB = w.SizeGB
+		d.Variants = w.Variants
 		if d.BudgetGB > 0 {
-			fits := size <= d.BudgetGB
+			fits := w.SizeGB <= d.BudgetGB
 			d.FitsBudget = &fits
 		}
 	}
@@ -206,15 +212,24 @@ func printModelDetail(d modelDetail) {
 	} else {
 		fmt.Println("  quant:      none detected in tags -- check the model card")
 	}
+	// Repos that ship several quants side by side get measured at their
+	// smallest, so say so rather than letting the number look definitive.
+	var of string
+	if d.Variants > 1 {
+		of = fmt.Sprintf(", smallest of %d quants in this repo", d.Variants)
+	}
 	switch {
 	case d.SizeGB == 0:
-		fmt.Println("  size:       unknown (no weight files at repo root -- check the model card)")
+		// Distinct from "we could not measure it": adapters and vision
+		// projectors are weight files, they are just not a model you can
+		// serve, and saying none were found would be the opposite of true.
+		fmt.Println("  size:       unknown (no servable weights found -- an adapter or projector-only repo, or check the model card)")
 	case d.FitsBudget == nil:
-		fmt.Printf("  size:       %.1f GB  (no budget configured -- run 'vllm-helper setup')\n", d.SizeGB)
+		fmt.Printf("  size:       %.1f GB  (no budget configured -- run 'vllm-helper setup'%s)\n", d.SizeGB, of)
 	case *d.FitsBudget:
-		fmt.Printf("  size:       %.1f GB  (fits under the ~%.0fGB budget)\n", d.SizeGB, d.BudgetGB)
+		fmt.Printf("  size:       %.1f GB  (fits under the ~%.0fGB budget%s)\n", d.SizeGB, d.BudgetGB, of)
 	default:
-		fmt.Printf("  size:       %.1f GB  (TOO BIG for this machine -- look for a smaller quant)\n", d.SizeGB)
+		fmt.Printf("  size:       %.1f GB  (TOO BIG for this machine -- look for a smaller quant%s)\n", d.SizeGB, of)
 	}
 	if d.DetectedFlags != "" {
 		fmt.Printf("  vllm flags: %s (auto-detected, will be pre-filled)\n", d.DetectedFlags)
