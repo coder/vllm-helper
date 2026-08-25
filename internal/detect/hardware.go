@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 )
@@ -42,21 +41,23 @@ var unifiedNames = regexp.MustCompile(`(?i)GB10|GB200|GB300|GH200|Grace|Orin|Tho
 // isUnified decides whether the GPU shares one memory pool with the CPU. It is
 // the pure half of Probe, so the cases below can be tested without the machine.
 //
-// The last case is the one to be careful with. An NVIDIA device node with no
-// usable nvidia-smi says "there is a GPU here we could not describe", which is
-// evidence of a GPU but none at all about its memory topology. Architecture
-// settles it: every NVIDIA part on arm64 is integrated (Grace, Jetson, Thor),
-// while an undescribed x86 GPU is discrete and keeps the discrete treatment.
+// Only positive evidence counts. A GPU we could not describe is left alone: an
+// NVIDIA device node says a GPU exists but nothing about its memory, and there
+// is no cheap signal that would say more. Architecture looked like one, but a
+// GB10 presents as an ordinary PCI display controller, so it cannot separate
+// integrated from discrete on arm64 either. Guessing unified there would hand
+// the 0.85 cap to a machine whose real need is the CPU backend's live clamp,
+// which is the regression issue #13 describes.
 func isUnified(gpuName string, gpuMemGB, totalMemGB int, nvidiaDevice bool) bool {
-	switch {
-	case gpuName != "" && unifiedNames.MatchString(gpuName):
-		return true
-	case gpuMemGB > 0 && totalMemGB > 0 && float64(gpuMemGB) > 0.9*float64(totalMemGB):
-		return true
-	case gpuName == "" && nvidiaDevice && runtime.GOARCH == "arm64":
+	if gpuName != "" && unifiedNames.MatchString(gpuName) {
 		return true
 	}
-	return false
+	// A pool the size of system memory is a shared pool -- but only when it
+	// does not exceed it, since an 80 GB card in a 64 GB host is plainly
+	// discrete memory rather than a share of the host's.
+	return gpuMemGB > 0 && totalMemGB > 0 &&
+		gpuMemGB <= totalMemGB &&
+		float64(gpuMemGB) > 0.9*float64(totalMemGB)
 }
 
 // Probe inspects system memory and nvidia-smi (if present). Never fails --

@@ -29,6 +29,9 @@ type searchResult struct {
 type modelDetail struct {
 	searchResult
 	SizeGB float64 `json:"size_gb"` // 0 = unknown
+	// SizeError says why the size is missing when the Hub could not be read,
+	// as opposed to a repo that simply has no servable weights.
+	SizeError string `json:"size_error,omitempty"`
 	// Variants is how many complete copies of the model the repo holds, so
 	// 1 means SizeGB is the whole story and more means it is the smallest of
 	// them. Absent when SizeGB is unknown, since then there was nothing to
@@ -180,12 +183,20 @@ func toSearchResult(m hf.Model) searchResult {
 
 // gatherModelDetail runs the live checks (weight size vs budget, flag
 // detection) for one model. cfg may be nil.
+//
+// A model whose size could not be read keeps FitsBudget unset rather than
+// guessing, so nothing downstream claims it fits.
 func gatherModelDetail(m hf.Model, cfg *config.Config) modelDetail {
 	d := modelDetail{searchResult: toSearchResult(m)}
 	if cfg != nil {
 		d.BudgetGB, _ = strconv.ParseFloat(cfg.ModelBudgetGB(), 64)
 	}
-	if w, err := hf.WeightsSize(m.ID); err == nil && w.SizeGB > 0 {
+	// A failed measurement is not the same as a repo with nothing to measure:
+	// the pagination guards report an error precisely so a short listing is
+	// not mistaken for a small model, and swallowing it here would undo that.
+	if w, err := hf.WeightsSize(m.ID); err != nil {
+		d.SizeError = err.Error()
+	} else if w.SizeGB > 0 {
 		d.SizeGB = w.SizeGB
 		d.Variants = w.Variants
 		if d.BudgetGB > 0 {
@@ -219,6 +230,8 @@ func printModelDetail(d modelDetail) {
 		of = fmt.Sprintf(", smallest of %d quants in this repo", d.Variants)
 	}
 	switch {
+	case d.SizeError != "":
+		fmt.Printf("  size:       could not be measured: %s\n", d.SizeError)
 	case d.SizeGB == 0:
 		// Distinct from "we could not measure it": adapters and vision
 		// projectors are weight files, they are just not a model you can

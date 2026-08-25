@@ -340,6 +340,26 @@ func TestWeightsSizeSumsComponentFolders(t *testing.T) {
 	}
 }
 
+// Extensions are matched case-insensitively, so the shard suffix has to be
+// too: otherwise each piece of an uppercase split GGUF becomes its own
+// candidate and only the smallest piece gets reported.
+func TestWeightsSizeSumsUppercaseGGUFShards(t *testing.T) {
+	serveTree(t, `[
+		{"type":"file","path":"MODEL-00001-OF-00002.GGUF","size":4000000000},
+		{"type":"file","path":"MODEL-00002-OF-00002.GGUF","size":2500000000}
+	]`)
+	got, err := WeightsSize(repo)
+	if err != nil {
+		t.Fatalf("WeightsSize: %v", err)
+	}
+	if want := 6.5; got.SizeGB != want {
+		t.Errorf("SizeGB = %v, want %v (both shards)", got.SizeGB, want)
+	}
+	if got.Variants != 1 {
+		t.Errorf("Variants = %d, want 1: one model in two pieces", got.Variants)
+	}
+}
+
 // A root-level layout wins outright: original/ ships the same weights in
 // another format, so counting it too would double the answer.
 func TestWeightsSizeIgnoresDuplicateFormatFolder(t *testing.T) {
@@ -530,8 +550,12 @@ func TestNextPageURL(t *testing.T) {
 			want:   "https://hub/n",
 		},
 		{name: "unbracketed is ignored", header: `https://hub/n; rel="next"`, want: ""},
-		// A response does not get to send us somewhere else.
+		// A response does not get to send us somewhere else. The last three
+		// all start with the Hub's URL as text and none of them is the Hub.
 		{name: "off-host target is refused", header: `<https://evil.example/n>; rel="next"`, want: ""},
+		{name: "suffixed host is refused", header: `<https://hub.evil.example/n>; rel="next"`, want: ""},
+		{name: "userinfo host is refused", header: `<https://hub@evil.example/n>; rel="next"`, want: ""},
+		{name: "scheme downgrade is refused", header: `<http://hub/n>; rel="next"`, want: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

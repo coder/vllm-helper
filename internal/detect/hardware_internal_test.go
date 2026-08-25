@@ -1,9 +1,6 @@
 package detect
 
-import (
-	"runtime"
-	"testing"
-)
+import "testing"
 
 // Which machines share one memory pool with the CPU. This decides whether
 // --gpu-memory-utilization gets capped, so a wrong answer either leaves a
@@ -37,16 +34,27 @@ func TestIsUnified(t *testing.T) {
 			gpuName: "NVIDIA RTX A6000", gpuMemGB: 48, totalMemGB: 256, want: false,
 		},
 		{
+			// A share of the host's memory cannot be bigger than the host's
+			// memory, so this is a discrete card in a small box. Reading it
+			// as unified would cap a request that has no reason to be capped.
+			name:    "VRAM larger than system RAM is discrete",
+			gpuName: "NVIDIA A100 80GB", gpuMemGB: 80, totalMemGB: 64, want: false,
+		},
+		{
 			name:    "consumer Blackwell is discrete",
 			gpuName: "NVIDIA GeForce RTX 5090", gpuMemGB: 32, totalMemGB: 128, want: false,
 		},
 		{name: "no GPU at all", totalMemGB: 15, want: false},
 		{
-			// The version file outlives a working GPU -- a driver upgrade
-			// without a reboot, or a container started without --gpus -- and
-			// claiming unified there would skip the clamp issue #13 needs.
-			name: "device node absent means CPU backend", gpuName: "", totalMemGB: 15,
+			name: "no GPU and no device node", gpuName: "", totalMemGB: 15,
 			nvidiaDevice: false, want: false,
+		},
+		{
+			// A device node says a GPU is here, not that its memory is
+			// shared. Claiming unified would swap the CPU backend's live
+			// clamp for a static cap, which is the issue #13 regression.
+			name:    "undescribed GPU is not evidence of unified memory",
+			gpuName: "", totalMemGB: 121, nvidiaDevice: true, want: false,
 		},
 	}
 	for _, tt := range tests {
@@ -58,19 +66,5 @@ func TestIsUnified(t *testing.T) {
 					tt.gpuName, tt.gpuMemGB, tt.totalMemGB, tt.nvidiaDevice, got, tt.want)
 			}
 		})
-	}
-}
-
-// An NVIDIA device we could not describe says a GPU is present but nothing
-// about its memory. Architecture settles it: every NVIDIA part on arm64 is
-// integrated, while an undescribed x86 GPU is discrete and keeps the discrete
-// treatment.
-func TestIsUnifiedUndescribedGPUFollowsArch(t *testing.T) {
-	t.Parallel()
-
-	got := isUnified("", 0, 121, true)
-	if want := runtime.GOARCH == "arm64"; got != want {
-		t.Errorf("isUnified with an undescribed NVIDIA device = %v, want %v on %s",
-			got, want, runtime.GOARCH)
 	}
 }

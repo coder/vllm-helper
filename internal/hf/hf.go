@@ -144,7 +144,7 @@ type treeEntry struct {
 
 // ggufShard matches the "-00001-of-00003" that marks one piece of a split
 // GGUF, so the pieces can be added back together.
-var ggufShard = regexp.MustCompile(`-\d+-of-\d+\.gguf$`)
+var ggufShard = regexp.MustCompile(`(?i)-\d+-of-\d+\.gguf$`)
 
 // quantFolder matches directory names that name a precision rather than a part
 // of the model -- Q4_K_M, UD-IQ1_S, BF16, NVFP4. Sub-folders like these are
@@ -263,8 +263,10 @@ func WeightsSize(repo string) (Weights, error) {
 				alternatives[dir] = true
 			}
 		case isGGUF(f.Path):
-			// Root GGUFs are one quant per name, minus any shard suffix.
-			candidates[ggufShard.ReplaceAllString(f.Path, ".gguf")] += f.Size
+			// Root GGUFs are one quant per name, minus any shard suffix. The
+			// name is lowered so a repo shipping .GGUF still groups its shards.
+			key := strings.ToLower(f.Path)
+			candidates[ggufShard.ReplaceAllString(key, ".gguf")] += f.Size
 		default:
 			rootTensors = append(rootTensors, f)
 		}
@@ -385,8 +387,15 @@ func treePage(u string) ([]treeEntry, string, error) {
 // which is how the Hub hands back the cursor for the following page.
 //
 // The target has to stay on the host we asked, since otherwise a response gets
-// to redirect the next request anywhere it likes.
-func nextPageURL(header, wantPrefix string) string {
+// to redirect the next request anywhere it likes. That is a parsed comparison
+// of scheme and host rather than a string prefix, because prefixes are not
+// host checks: https://huggingface.co.evil/ and https://huggingface.co@evil/
+// both start with the Hub's URL and neither is the Hub.
+func nextPageURL(header, want string) string {
+	base, err := url.Parse(want)
+	if err != nil {
+		return ""
+	}
 	for _, link := range strings.Split(header, ",") {
 		target, rest, ok := strings.Cut(strings.TrimSpace(link), ";")
 		if !ok || !strings.Contains(rest, `rel="next"`) {
@@ -396,8 +405,12 @@ func nextPageURL(header, wantPrefix string) string {
 		if !strings.HasPrefix(target, "<") || !strings.HasSuffix(target, ">") {
 			continue
 		}
-		if u := target[1 : len(target)-1]; strings.HasPrefix(u, wantPrefix) {
-			return u
+		u, err := url.Parse(target[1 : len(target)-1])
+		if err != nil || u.User != nil {
+			continue
+		}
+		if u.Scheme == base.Scheme && u.Host == base.Host {
+			return u.String()
 		}
 	}
 	return ""
