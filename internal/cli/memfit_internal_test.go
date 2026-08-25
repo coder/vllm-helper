@@ -3,6 +3,8 @@ package cli
 import (
 	"strconv"
 	"testing"
+
+	"github.com/coder/vllm-helper/internal/detect"
 )
 
 func TestClampMemUtilization(t *testing.T) {
@@ -32,6 +34,96 @@ func TestClampMemUtilization(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			value, msg := clampMemUtilization(tt.want, tt.totalMB, tt.availMB)
+			if value != tt.value {
+				t.Errorf("value = %q, want %q", value, tt.value)
+			}
+			if (msg != "") != tt.msg {
+				t.Errorf("msg = %q, want a message: %v", msg, tt.msg)
+			}
+		})
+	}
+}
+
+func TestCapMemUtilization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		want  string
+		value string
+		msg   bool
+	}{
+		// The DGX Spark default, and what vLLM's own guidance recommends.
+		{"the recommended value is left alone", "0.85", "0.85", false},
+		{"below the cap passes through", "0.70", "0.70", false},
+		// A number copied from a discrete-GPU recipe.
+		{"above the cap comes down", "0.95", "0.85", true},
+		{"unparseable passes through", "lots", "lots", false},
+		{"zero passes through", "0", "0", false},
+		{"negative passes through", "-1", "-1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			value, msg := capMemUtilization(tt.want, maxUnifiedMemUtilization)
+			if value != tt.value {
+				t.Errorf("value = %q, want %q", value, tt.value)
+			}
+			if (msg != "") != tt.msg {
+				t.Errorf("msg = %q, want a message: %v", msg, tt.msg)
+			}
+		})
+	}
+}
+
+// Which rule each kind of machine gets. The unified rows are the regression
+// that matters: an earlier version clamped them against free memory, and on a
+// DGX Spark serving a 68 GB model that turned 0.85 into 0.06 -- a KV cache far
+// too small to run. availMB is deliberately tiny in those rows, so anything
+// that starts consulting it again fails here.
+func TestPickMemFit(t *testing.T) {
+	t.Parallel()
+
+	const gb = 1024
+	spark := detect.Hardware{TotalMemGB: 121, GPUName: "NVIDIA GB10", Unified: true}
+	tests := []struct {
+		name    string
+		hw      detect.Hardware
+		availMB int
+		want    string
+		value   string
+		msg     bool
+	}{
+		{"spark keeps the recommended value", spark, 10 * gb, "0.85", "0.85", false},
+		{"spark keeps a lower value", spark, 500, "0.70", "0.70", false},
+		{"spark caps a discrete-GPU recipe", spark, 10 * gb, "0.95", "0.85", true},
+		{
+			name: "unified wins over the GPU name",
+			// Both branches match; taking the discrete one would leave the
+			// request unbounded on the hardware that most needs a bound.
+			hw: spark, availMB: 100, want: "0.95", value: "0.85", msg: true,
+		},
+		{
+			name:  "discrete VRAM is left alone",
+			hw:    detect.Hardware{TotalMemGB: 64, GPUName: "NVIDIA RTX A6000", GPUMemGB: 48},
+			want:  "0.95",
+			value: "0.95",
+		},
+		{
+			// Issue #13: no GPU means the CPU backend, where the flag really
+			// does reserve system RAM and startup aborts without it.
+			name:    "cpu backend still clamps to what is free",
+			hw:      detect.Hardware{TotalMemGB: 15},
+			availMB: 8 * gb,
+			want:    "0.85",
+			value:   "0.45",
+			msg:     true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			value, msg := pickMemFit(tt.hw, tt.availMB, tt.want)
 			if value != tt.value {
 				t.Errorf("value = %q, want %q", value, tt.value)
 			}

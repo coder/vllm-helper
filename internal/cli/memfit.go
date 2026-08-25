@@ -4,11 +4,56 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+
+	"github.com/coder/vllm-helper/internal/detect"
 )
 
 // memHeadroom leaves a margin below what's free: vLLM samples available memory
 // at startup, and the figure keeps drifting while the engine boots.
 const memHeadroom = 0.85
+
+// maxUnifiedMemUtilization is the most of a shared CPU/GPU pool we will ask
+// vLLM for. On unified memory the flag is a slice of the whole machine, so the
+// remainder is all the OS, the page cache and the runtime get. Both vLLM's own
+// DGX Spark guidance and sparkrun's GB10 platform default land on 0.85, so
+// anything above it is a recipe copied from a discrete-GPU machine.
+const maxUnifiedMemUtilization = 0.85
+
+// capMemUtilization limits --gpu-memory-utilization to ceiling, returning the
+// value to use plus a line for the user ("" when the request was already fine).
+//
+// This deliberately ignores how much memory is free right now. On a unified
+// machine the reading is dominated by whichever model is loaded, and the next
+// model only starts once that one has exited -- so sampling it during a restart
+// measures the outgoing server and would size the incoming one to nothing.
+// Measured on a DGX Spark serving a 68 GB model: 0.85 became 0.06.
+func capMemUtilization(want string, ceiling float64) (value, msg string) {
+	f, err := strconv.ParseFloat(want, 64)
+	if err != nil || f <= 0 || f <= ceiling {
+		return want, ""
+	}
+	return strconv.FormatFloat(ceiling, 'f', 2, 64), fmt.Sprintf(
+		"Lowering --gpu-memory-utilization %s -> %.2f: this GPU shares one memory pool with the OS, so the rest of the machine has to fit in what's left.\n",
+		want, ceiling)
+}
+
+// pickMemFit chooses how to treat --gpu-memory-utilization for this machine.
+// It is the pure half of fitMemUtilization: everything that decides *which*
+// rule applies, with the probing left to the caller so it can be tested.
+//
+// The order matters. Unified is checked first because such a machine also
+// reports a GPU name, and reaching the discrete case would leave the request
+// unbounded on exactly the hardware that most needs a bound.
+func pickMemFit(hw detect.Hardware, availMB int, want string) (value, msg string) {
+	switch {
+	case hw.Unified:
+		return capMemUtilization(want, maxUnifiedMemUtilization)
+	case hw.GPUName != "" || hw.GPUMemGB > 0:
+		return want, "" // discrete VRAM: nothing else competes for it
+	default:
+		return clampMemUtilization(want, hw.TotalMemGB*1024, availMB)
+	}
+}
 
 // clampMemUtilization is the pure (no I/O) half of fitMemUtilization. It caps
 // --gpu-memory-utilization at what this machine can actually satisfy right now
