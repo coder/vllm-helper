@@ -161,6 +161,7 @@ func printModelDetail(d catalog.Detail) {
 	if d.Variants > 1 {
 		of = fmt.Sprintf(", smallest of %d quants in this repo", d.Variants)
 	}
+	defer printVariants(d)
 	switch {
 	case d.SizeError != "":
 		fmt.Printf("  size:       could not be measured: %s\n", d.SizeError)
@@ -184,4 +185,41 @@ func printModelDetail(d catalog.Detail) {
 	for _, w := range d.DroppedFlags {
 		fmt.Printf("  dropped:    %s\n", w)
 	}
+}
+
+// printVariants lists the other copies of a model in a repo.
+//
+// Worth the space because the size above is the smallest, which is the safe
+// answer to "could anything here run" and simultaneously the worst thing to
+// actually serve: bartowski/Qwen_Qwen3-32B-GGUF measures 9.0 GB at IQ2_XXS
+// while its Q8_0 is 34.8 GB and fits an 84 GB budget nearly twice over. A
+// reader who only sees the smallest will write the repo off, or run a 2-bit
+// quant without ever knowing there was a choice.
+func printVariants(d catalog.Detail) {
+	if len(d.All) < 2 {
+		return
+	}
+	fmt.Println()
+	fmt.Printf("  %d quants in this repo:\n", len(d.All))
+	for _, v := range d.All {
+		mark := "   "
+		switch {
+		case d.Best != nil && v.Name == d.Best.Name:
+			mark = "  >"
+		case d.BudgetGB > 0 && v.SizeGB > d.BudgetGB:
+			mark = "  x"
+		}
+		fmt.Printf("%s %-14s %6.1f GB\n", mark, v.Label, v.SizeGB)
+	}
+	if d.Best != nil {
+		fmt.Printf("    > = biggest that fits your ~%.0fGB budget", d.BudgetGB)
+		if d.BudgetGB > 0 {
+			fmt.Print(";  x = too big")
+		}
+		fmt.Println()
+	}
+	// Saying which one gets served matters more than the list itself: a
+	// profile records the repo, so what runs is whatever vLLM resolves --
+	// not necessarily the one measured above.
+	fmt.Println("    Pulling this repo does not pick one of these -- see issue #25.")
 }

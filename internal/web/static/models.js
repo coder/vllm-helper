@@ -24,6 +24,9 @@ const el = {
   body: $("[data-detail-body]"),
   verdict: $("[data-verdict]"),
   facts: $("[data-facts]"),
+  quants: $("[data-quants]"),
+  quantsCount: $("[data-quants-count]"),
+  quantList: $("[data-quant-list]"),
   flags: $("[data-flags]"),
   dropped: $("[data-dropped]"),
   detailError: $("[data-detail-error]"),
@@ -160,17 +163,59 @@ function renderVerdict(d) {
       `No budget configured on this machine, so there is nothing to compare it against${of}.`,
     );
   } else if (d.fits_budget) {
-    set(
-      "yes",
-      `Fits — ${d.size_gb.toFixed(1)} GB`,
-      `Under this machine's ~${Math.round(d.budget_gb)} GB budget${of}.`,
-    );
+    // When a repo holds several quants, the headline should be the best one
+    // that fits rather than the smallest -- the smallest is the safe answer
+    // to "could anything here run" and the worst thing to actually serve.
+    if (d.best_variant) {
+      set(
+        "yes",
+        `Fits — ${d.best_variant.size_gb.toFixed(1)} GB at ${d.best_variant.label}`,
+        `The largest of ${d.variants} quants that fits this machine's ~${Math.round(d.budget_gb)} GB budget. The smallest is ${d.size_gb.toFixed(1)} GB.`,
+      );
+    } else {
+      set(
+        "yes",
+        `Fits — ${d.size_gb.toFixed(1)} GB`,
+        `Under this machine's ~${Math.round(d.budget_gb)} GB budget${of}.`,
+      );
+    }
   } else {
     set(
       "no",
       `Too big — ${d.size_gb.toFixed(1)} GB`,
       `Over this machine's ~${Math.round(d.budget_gb)} GB budget${of}. You can still pull it, but expect it not to load.`,
     );
+  }
+}
+
+// The quants a repo holds, so the choice is visible instead of being made
+// silently at the smallest. Marked against the budget, because "which of
+// these can this machine run" is the only reason to show a list of sizes.
+function renderQuants(d) {
+  el.quantList.innerHTML = "";
+  if (!d.all_variants || d.all_variants.length < 2) {
+    el.quants.hidden = true;
+    return;
+  }
+  el.quants.hidden = false;
+  el.quantsCount.textContent = `(${d.all_variants.length})`;
+  for (const v of d.all_variants) {
+    const li = document.createElement("li");
+    if (d.best_variant && v.name === d.best_variant.name) {
+      li.dataset.pick = "best";
+      li.title = "The largest that fits this machine";
+    } else if (d.budget_gb > 0 && v.size_gb > d.budget_gb) {
+      li.dataset.pick = "toobig";
+      li.title = "Larger than this machine's budget";
+    }
+    const label = document.createElement("span");
+    label.className = "quant-label";
+    label.textContent = v.label;
+    const size = document.createElement("span");
+    size.className = "quant-size";
+    size.textContent = `${v.size_gb.toFixed(1)} GB`;
+    li.append(label, size);
+    el.quantList.append(li);
   }
 }
 
@@ -203,6 +248,8 @@ async function inspect(repo) {
     if (d.detected_max_model_len) {
       fact("context", Number(d.detected_max_model_len).toLocaleString());
     }
+
+    renderQuants(d);
 
     el.flags.hidden = !d.detected_flags;
     if (d.detected_flags) {

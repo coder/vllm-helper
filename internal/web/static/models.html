@@ -77,6 +77,16 @@
             <div data-detail-body hidden>
               <div class="verdict" data-verdict></div>
               <dl class="facts" data-facts></dl>
+              <div class="quants" data-quants hidden>
+                <h4 class="quants-title">
+                  Quants in this repo <span data-quants-count></span>
+                </h4>
+                <ul class="quant-list" data-quant-list></ul>
+                <p class="quants-note">
+                  Pulling saves the repo, not one of these &mdash; what gets
+                  served is whatever vLLM resolves.
+                </p>
+              </div>
               <div class="notice" data-flags hidden></div>
               <div class="notice notice-warn" data-dropped hidden></div>
             </div>

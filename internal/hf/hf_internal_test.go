@@ -868,3 +868,94 @@ func TestModelLicenseAndQuantTags(t *testing.T) {
 		})
 	}
 }
+
+// The size that answers "does anything here fit" is the smallest, but it is
+// the worst possible thing to actually serve when the machine has room for
+// more. bartowski/Qwen_Qwen3-32B-GGUF on an 84 GB budget reported 9.0 GB --
+// its 2-bit IQ2_XXS -- while its Q8_0 at 34.8 GB fits nearly twice over. So
+// the alternatives have to survive the measurement, not just their count.
+func TestWeightsSizeListsEveryVariant(t *testing.T) {
+	serveTree(t, `[
+		{"type":"file","path":"Qwen_Qwen3-32B-IQ2_XXS.gguf","size":9000000000},
+		{"type":"file","path":"Qwen_Qwen3-32B-Q4_K_M.gguf","size":20000000000},
+		{"type":"file","path":"Qwen_Qwen3-32B-Q8_0.gguf","size":34000000000}
+	]`)
+	got, err := WeightsSize(repo)
+	if err != nil {
+		t.Fatalf("WeightsSize: %v", err)
+	}
+	if len(got.All) != 3 {
+		t.Fatalf("All has %d variants, want 3", len(got.All))
+	}
+	// Largest first: the best quality that fits is what a reader wants.
+	if got.All[0].SizeGB != 34.0 || got.All[2].SizeGB != 9.0 {
+		t.Errorf("All not ordered largest-first: %v", got.All)
+	}
+	// The label is what makes a list readable. Every file here shares the
+	// model-name prefix, so showing it would be three identical rows.
+	wantLabels := []string{"Q8_0", "Q4_K_M", "IQ2_XXS"}
+	for i, want := range wantLabels {
+		if got.All[i].Label != want {
+			t.Errorf("All[%d].Label = %q, want %q", i, got.All[i].Label, want)
+		}
+	}
+	// Name has to stay usable for actually selecting the thing.
+	if got.All[0].Name != "Qwen_Qwen3-32B-Q8_0.gguf" {
+		t.Errorf("All[0].Name = %q, want the filename", got.All[0].Name)
+	}
+	// And the conservative answer is unchanged, since the fit check still
+	// asks whether anything here could run.
+	if got.SizeGB != 9.0 {
+		t.Errorf("SizeGB = %v, want 9 (smallest) for the fit check", got.SizeGB)
+	}
+}
+
+// Choosing what to serve is the opposite question from choosing what to
+// measure: take the best quality the machine can hold, not the least bad.
+func TestBestFit(t *testing.T) {
+	w := Weights{All: []Variant{
+		{Label: "bf16", SizeGB: 64},
+		{Label: "Q8_0", SizeGB: 34},
+		{Label: "Q4_K_M", SizeGB: 20},
+		{Label: "IQ2_XXS", SizeGB: 9},
+	}}
+
+	if v, ok := w.BestFit(84); !ok || v.Label != "bf16" {
+		t.Errorf("BestFit(84) = %v/%v, want bf16: it fits, so nothing worse should be chosen", v.Label, ok)
+	}
+	if v, ok := w.BestFit(40); !ok || v.Label != "Q8_0" {
+		t.Errorf("BestFit(40) = %v/%v, want Q8_0", v.Label, ok)
+	}
+	if v, ok := w.BestFit(10); !ok || v.Label != "IQ2_XXS" {
+		t.Errorf("BestFit(10) = %v/%v, want IQ2_XXS", v.Label, ok)
+	}
+	// Nothing fits is a fact the caller has to present, not one to paper
+	// over by handing back the smallest anyway.
+	if v, ok := w.BestFit(5); ok {
+		t.Errorf("BestFit(5) = %v, want no fit: the smallest is still too big", v.Label)
+	}
+	// No budget means nothing to check against, so the safe pick is the
+	// smallest rather than the largest.
+	if v, ok := w.BestFit(0); !ok || v.Label != "IQ2_XXS" {
+		t.Errorf("BestFit(0) = %v/%v, want the smallest when the budget is unknown", v.Label, ok)
+	}
+	if _, ok := (Weights{}).BestFit(84); ok {
+		t.Error("BestFit on a repo with no variants should report no fit")
+	}
+}
+
+// Labels come off real publisher conventions, which disagree with each other.
+func TestQuantLabel(t *testing.T) {
+	for _, c := range []struct{ name, repo, want string }{
+		{"Qwen_Qwen3-32B-Q8_0.gguf", "bartowski/Qwen_Qwen3-32B-GGUF", "Q8_0"},
+		{"Qwen_Qwen3-32B-IQ2_XXS.gguf", "bartowski/Qwen_Qwen3-32B-GGUF", "IQ2_XXS"},
+		{"UD-Q2_K_XL", "unsloth/GLM-5.2-GGUF", "UD-Q2_K_XL"},
+		{"BF16", "unsloth/GLM-5.2-GGUF", "BF16"},
+		{"", "Qwen/Qwen3-0.6B", "default"},
+		{".", "some/pipeline", "default"},
+	} {
+		if got := quantLabel(c.name, c.repo); got != c.want {
+			t.Errorf("quantLabel(%q, %q) = %q, want %q", c.name, c.repo, got, c.want)
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -122,13 +123,69 @@ func Search(query string, limit int) ([]Model, error) {
 	return models, nil
 }
 
+// Variant is one complete copy of a model within a repo -- typically one
+// quantization, since publishers ship a dozen of them side by side.
+type Variant struct {
+	// Name is how the repo distinguishes this copy: a GGUF filename, a
+	// quant subfolder, or "" for weights sitting at the repo root.
+	Name string `json:"name"`
+	// Label is Name reduced to the part worth reading, so a list of them
+	// can be scanned: "Q8_0" rather than "Qwen_Qwen3-32B-Q8_0.gguf".
+	Label  string  `json:"label"`
+	SizeGB float64 `json:"size_gb"`
+}
+
 // Weights describes the weight files found in a model repo.
 type Weights struct {
 	SizeGB float64 // 0 when the repo has no weight files we recognise
 	// Variants is how many independent weight groupings the repo holds.
 	// >1 means SizeGB is the smallest of them; 1 means it is the whole story.
 	Variants int
+	// All lists those groupings, largest first.
+	//
+	// Kept rather than reduced to the winner because "which of these should
+	// I run" is a question only the user can answer: the smallest is the
+	// safe answer to "does anything here fit", and simultaneously the worst
+	// thing to actually serve when the machine has room for more. A 32B repo
+	// whose smallest is a 2-bit quant will happily run its 8-bit one.
+	All []Variant `json:"all,omitempty"`
 }
+
+// quantLabel pulls the part of a variant name worth showing. GGUF publishers
+// prefix every file with the model name, which is the same for all of them and
+// so carries no information in a list of alternatives.
+func quantLabel(name, repo string) string {
+	if name == "" || name == "." {
+		return "default"
+	}
+	label := strings.TrimSuffix(strings.TrimSuffix(name, ".gguf"), ".GGUF")
+	if i := strings.LastIndex(label, "/"); i >= 0 {
+		label = label[i+1:]
+	}
+	// Strip the repeated model-name prefix: everything up to the last dash
+	// that precedes something quant-shaped.
+	if m := quantSuffix.FindString(label); m != "" {
+		return strings.TrimPrefix(m, "-")
+	}
+
+	if _, model, ok := strings.Cut(repo, "/"); ok {
+		trimmed := strings.TrimPrefix(label, model)
+		if t := strings.Trim(trimmed, "-_."); t != "" {
+			return t
+		}
+	}
+	return label
+}
+
+// quantSuffix matches the precision marker at the end of a variant name --
+// Q4_K_M, IQ2_XXS, UD-Q2_K_XL, bf16, fp8. Anchored to the end so the model's
+// own name cannot match it, and the leading dash is optional so a folder that
+// is nothing but the quant matches as a whole.
+//
+// The UD- prefix is part of the name, not noise: unsloth's UD-Q2_K_XL is a
+// different quantization from a plain Q2_K_XL, and dropping it would label two
+// distinct choices identically.
+var quantSuffix = regexp.MustCompile(`(?i)(^|-)(ud-)?(i?q\d[\w_]*|bf16|fp16|fp32|f16|f32|fp8|fp4|nvfp4|mxfp4|int4|int8|awq|gptq)$`)
 
 // maxTreePages bounds how far we follow the Hub's cursor pagination. Pages hold
 // 1000 entries, so this covers any real repo while keeping a broken or hostile
@@ -245,6 +302,9 @@ func WeightsSize(repo string) (Weights, error) {
 
 	var rootTensors []treeEntry
 	candidates := map[string]int64{}
+	// Grouping keys are lowered so shards collapse together; quant names are
+	// conventionally upper case, so the name to show is kept alongside.
+	display := map[string]string{}
 	subdirs := map[string]int64{}
 	alternatives := map[string]bool{}
 	for _, f := range files {
@@ -265,8 +325,11 @@ func WeightsSize(repo string) (Weights, error) {
 		case isGGUF(f.Path):
 			// Root GGUFs are one quant per name, minus any shard suffix. The
 			// name is lowered so a repo shipping .GGUF still groups its shards.
-			key := strings.ToLower(f.Path)
-			candidates[ggufShard.ReplaceAllString(key, ".gguf")] += f.Size
+			key := ggufShard.ReplaceAllString(strings.ToLower(f.Path), ".gguf")
+			candidates[key] += f.Size
+			if _, seen := display[key]; !seen {
+				display[key] = ggufShard.ReplaceAllString(f.Path, ".gguf")
+			}
 		default:
 			rootTensors = append(rootTensors, f)
 		}
@@ -302,30 +365,75 @@ func WeightsSize(repo string) (Weights, error) {
 	if len(candidates) == 0 {
 		return Weights{}, nil
 	}
-	return pickSmallest(candidates), nil
+	return pickSmallest(candidates, display, repo), nil
 }
 
 // pickSmallest reports the smallest candidate, which is the one with any chance
-// of fitting. Candidates far below their siblings are dropped first: real
-// quants of one model stay within a single order of magnitude of each other, so
-// anything under that is a component or a stray file rather than a choice.
-func pickSmallest(candidates map[string]int64) Weights {
+// of fitting, and lists them all so a caller can offer the choice. Candidates
+// far below their siblings are dropped first: real quants of one model stay
+// within a single order of magnitude of each other, so anything under that is a
+// component or a stray file rather than a choice.
+//
+// SizeGB stays the smallest for compatibility with the fit check, which asks
+// "could anything here run" and wants the conservative answer. Choosing what to
+// actually serve is a different question and wants All.
+func pickSmallest(candidates map[string]int64, display map[string]string, repo string) Weights {
 	var largest int64
 	for _, size := range candidates {
 		largest = max(largest, size)
 	}
 	floor := int64(float64(largest) * smallestPlausibleShare)
-	smallest, n := int64(-1), 0
-	for _, size := range candidates {
+
+	w := Weights{}
+	smallest := int64(-1)
+	for name, size := range candidates {
 		if size < floor {
 			continue
 		}
-		n++
+		shown := name
+		if d, ok := display[name]; ok {
+			shown = d
+		}
+		w.All = append(w.All, Variant{
+			Name:   shown,
+			Label:  quantLabel(shown, repo),
+			SizeGB: float64(size) / 1e9,
+		})
 		if smallest < 0 || size < smallest {
 			smallest = size
 		}
 	}
-	return Weights{SizeGB: float64(smallest) / 1e9, Variants: n}
+	// Largest first: the best quality that fits is the interesting end of
+	// the list, and it is the one a reader should land on.
+	sort.Slice(w.All, func(i, j int) bool { return w.All[i].SizeGB > w.All[j].SizeGB })
+	w.Variants = len(w.All)
+	w.SizeGB = float64(smallest) / 1e9
+	return w
+}
+
+// BestFit picks the variant to actually serve: the largest that fits the
+// budget, since quantization trades quality for size and there is no reason to
+// take a worse one than the machine can hold.
+//
+// Returns false when nothing fits, rather than falling back to the smallest --
+// "the least bad option is still too big" is the caller's decision to make and
+// present, not something to paper over here.
+//
+// A budget of 0 means unknown, in which case the largest is not a safe default:
+// with nothing to check it against, the conservative choice is the smallest.
+func (w Weights) BestFit(budgetGB float64) (Variant, bool) {
+	if len(w.All) == 0 {
+		return Variant{}, false
+	}
+	if budgetGB <= 0 {
+		return w.All[len(w.All)-1], true
+	}
+	for _, v := range w.All { // largest first
+		if v.SizeGB <= budgetGB {
+			return v, true
+		}
+	}
+	return Variant{}, false
 }
 
 func isWeightFile(path string) bool {

@@ -62,11 +62,20 @@ type Detail struct {
 	// 1 means SizeGB is the whole story and more means it is the smallest of
 	// them. Absent when SizeGB is unknown, since then there was nothing to
 	// count.
-	Variants      int     `json:"variants,omitempty"`
-	BudgetGB      float64 `json:"budget_gb"`             // 0 = unknown (no config)
-	FitsBudget    *bool   `json:"fits_budget,omitempty"` // absent when either side is unknown
-	DetectedFlags string  `json:"detected_flags"`
-	MaxModelLen   string  `json:"detected_max_model_len,omitempty"`
+	Variants int `json:"variants,omitempty"`
+	// All lists those copies, largest first, so the choice is visible rather
+	// than made silently. SizeGB being the smallest is the right answer to
+	// "could anything here run" and the wrong one to show as the headline,
+	// since the smallest quant in a repo is also its worst.
+	All []hf.Variant `json:"all_variants,omitempty"`
+	// Best is the largest copy that fits the budget -- what someone would
+	// choose by hand, and what the verdict should be about. Absent when
+	// nothing fits or there is no budget to judge against.
+	Best          *hf.Variant `json:"best_variant,omitempty"`
+	BudgetGB      float64     `json:"budget_gb"`             // 0 = unknown (no config)
+	FitsBudget    *bool       `json:"fits_budget,omitempty"` // absent when either side is unknown
+	DetectedFlags string      `json:"detected_flags"`
+	MaxModelLen   string      `json:"detected_max_model_len,omitempty"`
 	// DroppedFlags explains anything the card asked for that the installed
 	// vLLM won't take, so it's visible before pulling rather than as a
 	// crash loop afterwards.
@@ -102,9 +111,16 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
 	} else if w.SizeGB > 0 {
 		d.SizeGB = w.SizeGB
 		d.Variants = w.Variants
+		d.All = w.All
 		if d.BudgetGB > 0 {
 			fits := w.SizeGB <= d.BudgetGB
 			d.FitsBudget = &fits
+			// Which one to actually run is a separate question from
+			// whether any of them can, and only worth answering when
+			// there is more than one to choose between.
+			if best, ok := w.BestFit(d.BudgetGB); ok && len(w.All) > 1 {
+				d.Best = &best
+			}
 		}
 	}
 	if flags, err := hf.DetectFlags(m.ID); err == nil {

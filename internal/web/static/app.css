@@ -784,3 +784,56 @@ input:focus-visible {
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ---------- quant list ---------- */
+
+.quants {
+  margin: 0 0 1rem;
+}
+
+.quants-title {
+  margin: 0 0 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--content-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.quant-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 12rem;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.quant-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.1875rem 0.375rem;
+  border-radius: 0.25rem;
+  color: var(--content-secondary);
+}
+
+/* The one worth running is called out, since the list is otherwise a wall of
+   near-identical strings and the whole point is which to choose. */
+.quant-list li[data-pick="best"] {
+  background: var(--surface-tertiary);
+  color: var(--content-success);
+  font-weight: 600;
+}
+
+.quant-list li[data-pick="toobig"] {
+  color: var(--content-disabled);
+  text-decoration: line-through;
+}
+
+.quants-note {
+  margin: 0.375rem 0 0;
+  color: var(--content-disabled);
+  font-size: 0.6875rem;
+}
