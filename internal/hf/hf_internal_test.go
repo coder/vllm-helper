@@ -959,3 +959,48 @@ func TestQuantLabel(t *testing.T) {
 		}
 	}
 }
+
+// unsloth/DeepSeek-V3.1-GGUF ships its smallest quant as a loose file at the
+// root and the other 26 in precision-named folders. Treating anything at the
+// root as settling the question hid all 26, so a repo spanning 170 GB to
+// 1.34 TB was reported as having one option.
+func TestWeightsSizeCountsQuantFoldersBesideARootFile(t *testing.T) {
+	serveTree(t, `[
+		{"type":"file","path":"DeepSeek-V3.1-UD-TQ1_0.gguf","size":170000000000},
+		{"type":"file","path":"UD-IQ1_S/model.gguf","size":192000000000},
+		{"type":"file","path":"Q2_K/model.gguf","size":245000000000}
+	]`)
+	got, err := WeightsSize(repo)
+	if err != nil {
+		t.Fatalf("WeightsSize: %v", err)
+	}
+	if got.Variants != 3 {
+		t.Errorf("Variants = %d, want 3: the folders are alternatives to the root file", got.Variants)
+	}
+	// The root file really is the smallest, so the fit check is unchanged.
+	if want := 170.0; got.SizeGB != want {
+		t.Errorf("SizeGB = %v, want %v", got.SizeGB, want)
+	}
+}
+
+// The other side of that: a second copy of one model in another format is not
+// a choice. gpt-oss-120b keeps whole metal/ and original/ copies beside its
+// root weights, and counting them would triple a 65 GB model.
+func TestWeightsSizeIgnoresFormatCopiesBesideRoot(t *testing.T) {
+	serveTree(t, `[
+		{"type":"file","path":"model-00001-of-00002.safetensors","size":40000000000},
+		{"type":"file","path":"model-00002-of-00002.safetensors","size":25000000000},
+		{"type":"file","path":"metal/model.bin","size":65000000000},
+		{"type":"file","path":"original/model.safetensors","size":65000000000}
+	]`)
+	got, err := WeightsSize(repo)
+	if err != nil {
+		t.Fatalf("WeightsSize: %v", err)
+	}
+	if got.Variants != 1 {
+		t.Errorf("Variants = %d, want 1: metal/ and original/ are the same weights", got.Variants)
+	}
+	if want := 65.0; got.SizeGB != want {
+		t.Errorf("SizeGB = %v, want %v (one copy, not three)", got.SizeGB, want)
+	}
+}

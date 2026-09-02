@@ -343,22 +343,26 @@ func WeightsSize(repo string) (Weights, error) {
 	if n := oneCopyOfRoot(rootTensors); n > 0 {
 		candidates[""] = n
 	}
+	// A folder named for a precision is an alternative even when something
+	// also sits at the repo root: unsloth/DeepSeek-V3.1-GGUF ships its
+	// smallest quant loose and the other 26 in folders, and gating these
+	// behind an empty root hid all 26.
+	//
+	// Sub-folders that are second copies in another format -- gpt-oss-120b's
+	// metal/ and original/ -- are not caught by this, because naming a format
+	// is not naming a precision and they hold no GGUF. That is the distinction
+	// the alternatives set already draws.
+	for dir := range alternatives {
+		candidates[dir] = subdirs[dir]
+	}
 	if len(candidates) == 0 {
-		switch {
-		case len(alternatives) > 0:
-			// Quant folders: each is a complete copy, so compare them.
-			for dir := range alternatives {
-				candidates[dir] = subdirs[dir]
-			}
-		default:
-			// Components of one model: the sum is the model.
-			var total int64
-			for _, size := range subdirs {
-				total += size
-			}
-			if total > 0 {
-				candidates["."] = total
-			}
+		// Components of one model: the sum is the model.
+		var total int64
+		for _, size := range subdirs {
+			total += size
+		}
+		if total > 0 {
+			candidates["."] = total
 		}
 	}
 
