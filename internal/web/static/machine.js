@@ -6,6 +6,10 @@
 // reconnect logic.
 "use strict";
 
+// True while a switch/restart/stop is in flight, so the buttons stay disabled
+// until the poll after it lands rather than inviting a second click.
+let busy = false;
+
 const el = {
   host: $("[data-host]"),
   build: $("[data-build]"),
