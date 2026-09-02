@@ -248,13 +248,40 @@ async function refreshLog() {
   }
 }
 
+// Polling cadence. Checking the status reaches the vLLM server, which writes
+// a line to its own log for every request it answers, so a tab left open on a
+// working machine must not poll at conversational speed -- it drowns the log
+// someone is reading to debug something else. Poll quickly only while
+// something is actually changing.
+const FAST_MS = 2000; // a load or a crash loop: the screen changes second to second
+const IDLE_MS = 30000; // steady state: nothing moves here unless someone asks it to
+
+function intervalFor(phase) {
+  return phase === "loading" || phase === "failing" ? FAST_MS : IDLE_MS;
+}
+
+let timer = null;
 let activeProfile = null;
+
+// Chained timeouts rather than an interval, so a slow poll delays the next
+// one instead of stacking up behind it.
+function schedule(ms) {
+  clearTimeout(timer);
+  // A hidden tab polls not at all; visibilitychange starts it again.
+  if (document.hidden) return;
+  timer = setTimeout(refresh, ms);
+}
+
 async function refresh() {
+  // Assume steady state, so a failure to reach our own server backs off
+  // rather than retrying hard against something that is down.
+  let phase = "stopped";
   try {
     const [status, machine] = await Promise.all([
       api("/api/status"),
       api("/api/machine"),
     ]);
+    phase = status.phase;
     // Rebuild the list only when the active model changed. Doing it on
     // every poll would fight the pointer mid-click.
     if (status.profile !== activeProfile) {
@@ -266,10 +293,48 @@ async function refresh() {
   } catch (e) {
     showError(e.message);
   }
-  refreshLog();
+  schedule(intervalFor(phase));
 }
 
+// The log is on its own clock. Reading it costs a journalctl call and
+// nothing else -- it never touches the vLLM server -- so it can stay live
+// while someone is following it without adding a line to the log they are
+// reading.
+const LOG_FOLLOW_MS = 2000;
+const LOG_IDLE_MS = 15000;
+
+let logTimer = null;
+
+function scheduleLog() {
+  clearTimeout(logTimer);
+  if (document.hidden) return;
+  logTimer = setTimeout(
+    logLoop,
+    el.follow.checked ? LOG_FOLLOW_MS : LOG_IDLE_MS,
+  );
+}
+
+async function logLoop() {
+  await refreshLog();
+  scheduleLog();
+}
+
+// Ticking the box should show the tail now, not in fifteen seconds.
+el.follow.addEventListener("change", () => {
+  if (el.follow.checked) logLoop();
+});
+
+// Coming back to the tab should show the truth immediately, not whatever was
+// on screen when it was hidden.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    clearTimeout(timer);
+    clearTimeout(logTimer);
+  } else {
+    refresh();
+    logLoop();
+  }
+});
+
 refresh();
-// Two seconds is fast enough to feel live while a model loads, and slow
-// enough that a tab left open overnight costs the machine nothing.
-setInterval(refresh, 2000);
+logLoop();

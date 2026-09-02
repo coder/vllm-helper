@@ -49,6 +49,35 @@ type Server struct {
 	mu         sync.RWMutex
 	privileged bool
 	privReason string
+
+	// The last health probe, reused for healthProbeTTL. Every probe is a
+	// request vLLM writes to its own access log, so the panel's polling is
+	// visible to anyone reading it -- and several open tabs must not turn
+	// into several streams of it.
+	healthMu   sync.Mutex
+	healthAt   time.Time
+	healthCode int
+	healthOK   bool
+}
+
+// healthProbeTTL bounds how often the vLLM endpoint is asked how it is. The
+// panel polls in seconds and a model loads in minutes, so a result this stale
+// is indistinguishable from a fresh one.
+const healthProbeTTL = 5 * time.Second
+
+// health probes the endpoint, or returns a recent answer instead.
+//
+// The lock is held across the request deliberately: concurrent callers should
+// queue behind one probe and share its result, which is the whole point.
+func (s *Server) health() (int, bool) {
+	s.healthMu.Lock()
+	defer s.healthMu.Unlock()
+	if !s.healthAt.IsZero() && time.Since(s.healthAt) < healthProbeTTL {
+		return s.healthCode, s.healthOK
+	}
+	code, ok := probeHealth(s.cfg.Port())
+	s.healthAt, s.healthCode, s.healthOK = time.Now(), code, ok
+	return code, ok
 }
 
 // privilege reports the cached answer.

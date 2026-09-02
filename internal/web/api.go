@@ -98,7 +98,13 @@ func (s *Server) status() statusResponse {
 			r.Model = m
 		}
 	}
-	r.HTTPStatus, r.Healthy = probeHealth(s.cfg.Port())
+	// Probing a unit that isn't running can only fail: vLLM binds the port
+	// after the weights are in memory, so a stopped unit means a closed
+	// port. Skipping it means a machine with the server stopped produces no
+	// probe traffic at all.
+	if h.State == "active" || h.State == "activating" {
+		r.HTTPStatus, r.Healthy = s.health()
+	}
 
 	switch {
 	case r.Healthy:

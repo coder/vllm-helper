@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/service"
@@ -227,4 +231,60 @@ func TestLoopbackOnly(t *testing.T) {
 			t.Errorf("LoopbackOnly(%q) = %v, want %v", addr, got, want)
 		}
 	}
+}
+
+// The panel polls, and every health probe is a line in the log of the very
+// server someone is likely reading. Several tabs open on one machine must not
+// multiply into several streams of them, so a recent answer is reused.
+func TestHealthProbeIsReusedBetweenCallers(t *testing.T) {
+	var probes int32
+	vllm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			atomic.AddInt32(&probes, 1)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer vllm.Close()
+
+	s := newTestServer(t)
+	s.cfg.File.Set("PORT", portOf(t, vllm.URL))
+
+	// Ten callers, as ten open tabs would be.
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, ok := s.health(); !ok {
+				t.Error("health() = not ok, want the endpoint reported healthy")
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&probes); got != 1 {
+		t.Errorf("probes = %d, want 1: concurrent callers should share one probe", got)
+	}
+
+	// And an answer older than the TTL is not reused, or the panel would
+	// never notice the server going down.
+	s.healthMu.Lock()
+	s.healthAt = time.Now().Add(-2 * healthProbeTTL)
+	s.healthMu.Unlock()
+	if _, ok := s.health(); !ok {
+		t.Error("health() = not ok after expiry")
+	}
+	if got := atomic.LoadInt32(&probes); got != 2 {
+		t.Errorf("probes = %d, want 2: a stale answer should be replaced", got)
+	}
+}
+
+// portOf pulls the port out of an httptest URL.
+func portOf(t *testing.T, rawURL string) string {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Port()
 }
