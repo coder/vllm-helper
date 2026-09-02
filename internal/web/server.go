@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
@@ -40,8 +41,26 @@ type Server struct {
 	// system-scope unit the daemon needs passwordless sudo; without it the
 	// UI shows the controls as unavailable instead of offering buttons
 	// that fail with "exit status 1".
+	//
+	// It is re-evaluated while it is false, because a sudo timestamp can
+	// appear or expire under a running panel, so it is guarded: handlers
+	// run concurrently.
+	mu         sync.RWMutex
 	privileged bool
 	privReason string
+}
+
+// privilege reports the cached answer.
+func (s *Server) privilege() (bool, string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.privileged, s.privReason
+}
+
+func (s *Server) setPrivilege(ok bool, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.privileged, s.privReason = ok, reason
 }
 
 // New builds a server for this machine.
@@ -66,7 +85,8 @@ func New(cfg *config.Config, build string) (*Server, error) {
 			NonInteractive: true,
 		},
 	}
-	s.privileged, s.privReason = checkPrivilege(cfg)
+	ok, reason := checkPrivilege(cfg)
+	s.setPrivilege(ok, reason)
 	return s, nil
 }
 

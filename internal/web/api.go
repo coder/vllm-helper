@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os/exec"
@@ -69,6 +70,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) status() statusResponse {
+	// Re-probe only while we believe privilege is missing. Probing when we
+	// have it would refresh the sudo timestamp on every poll and keep it
+	// alive indefinitely, which is not the panel's decision to make.
+	privileged, privReason := s.privilege()
+	if !privileged {
+		privileged, privReason = checkPrivilege(s.cfg)
+		s.setPrivilege(privileged, privReason)
+	}
 	h := s.svc.Health()
 	r := statusResponse{
 		Service:    s.cfg.ServiceName(),
@@ -79,8 +88,8 @@ func (s *Server) status() statusResponse {
 		Profile:    s.cfg.ActiveProfile(),
 		Port:       s.cfg.Port(),
 		Model:      "unknown",
-		Privileged: s.privileged,
-		PrivReason: s.privReason,
+		Privileged: privileged,
+		PrivReason: privReason,
 		Build:      s.build,
 		Host:       hostname(),
 	}
@@ -215,11 +224,28 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, actionResponse{OK: true})
 }
 
+// explain turns a failed systemctl call into something actionable.
+//
+// The service package sends the real reason to the daemon's stderr, so what
+// reaches here is a bare "exit status 1". The common cause is a sudo
+// timestamp that has since expired -- the startup check passed, so the
+// buttons were enabled, and by the time one was pressed the credential was
+// gone. Re-checking on failure costs one fork and turns a meaningless error
+// into the sudoers line that fixes it.
+func (s *Server) explain(err error) error {
+	if ok, reason := checkPrivilege(s.cfg); !ok {
+		s.setPrivilege(false, reason)
+		return errors.New(reason)
+	}
+	return fmt.Errorf("%w -- see 'journalctl -u %s'", err, s.cfg.ServiceName())
+}
+
 func (s *Server) requirePrivilege(w http.ResponseWriter) bool {
-	if s.privileged {
+	if ok, _ := s.privilege(); ok {
 		return true
 	}
-	writeJSON(w, http.StatusForbidden, actionResponse{Error: s.privReason})
+	_, reason := s.privilege()
+	writeJSON(w, http.StatusForbidden, actionResponse{Error: reason})
 	return false
 }
 
@@ -232,7 +258,7 @@ func (s *Server) privilegedCall(ctx context.Context, fn func() error) error {
 	select {
 	case err := <-done:
 		if err != nil {
-			return fmt.Errorf("%w -- check 'journalctl -u %s'", err, s.cfg.ServiceName())
+			return s.explain(err)
 		}
 		return nil
 	case <-ctx.Done():

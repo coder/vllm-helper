@@ -52,13 +52,14 @@ func newTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Server{
+	s := &Server{
 		cfg:        cfg,
 		build:      "test",
 		token:      token,
 		svc:        service.Service{Name: "vllm.service", Scope: "user", NonInteractive: true},
 		privileged: true,
 	}
+	return s
 }
 
 // The panel can stop a server and rewrite profiles, so an unauthenticated
@@ -182,8 +183,7 @@ func TestTokenIsStoredPrivatelyAndReused(t *testing.T) {
 // click can't fail with a bare "exit status 1".
 func TestActionsRefuseWithoutPrivilege(t *testing.T) {
 	s := newTestServer(t)
-	s.privileged = false
-	s.privReason = "needs passwordless sudo"
+	s.setPrivilege(false, "needs passwordless sudo")
 	h := s.Handler(Static())
 
 	r := httptest.NewRequest(http.MethodPost, "/api/restart", nil)
