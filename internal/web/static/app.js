@@ -55,14 +55,20 @@ async function api(path, options = {}) {
 }
 
 // The cookie is HttpOnly, so the page cannot read the token back out of it.
-// Keep the one from the URL for this session; a reload without it can still
-// read (cookie auth) but cannot mutate, which is the safe direction.
+// After a reload the URL no longer carries it either -- it was stripped from
+// the address bar on the first visit -- so ask the server, which will answer
+// a request the cookie already authenticated. Without this a reloaded tab
+// could watch the machine but not touch it.
 let cachedToken = tokenFromURL || "";
 async function token() {
   if (!cachedToken) {
-    throw new Error(
-      "This tab has no token. Reopen the URL printed by 'vllm-helper serve' to make changes.",
-    );
+    const res = await fetch("/api/token");
+    if (!res.ok) {
+      throw new Error(
+        "This tab is not authenticated. Reopen the URL printed by 'vllm-helper serve'.",
+      );
+    }
+    cachedToken = (await res.json()).token;
   }
   return cachedToken;
 }

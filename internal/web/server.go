@@ -156,6 +156,7 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/profiles", s.guard(s.handleProfiles))
 	mux.HandleFunc("GET /api/logs", s.guard(s.handleLogs))
 	mux.HandleFunc("GET /api/machine", s.guard(s.handleMachine))
+	mux.HandleFunc("GET /api/token", s.guard(s.handleToken))
 	mux.HandleFunc("POST /api/switch/{name}", s.guard(s.handleSwitch))
 	mux.HandleFunc("POST /api/restart", s.guard(s.handleRestart))
 	mux.HandleFunc("POST /api/stop", s.guard(s.handleStop))
@@ -228,6 +229,22 @@ func (s *Server) SetCookie(w http.ResponseWriter, r *http.Request) bool {
 		MaxAge:   int((30 * 24 * time.Hour).Seconds()),
 	})
 	return true
+}
+
+// handleToken hands the token back to a caller that already proved it has it.
+//
+// This is what makes a reload work. The cookie is HttpOnly, so the page cannot
+// read the token out of it, and without this a reloaded tab could display the
+// machine but not change anything -- it had no way to fill in the header that
+// mutations require.
+//
+// It does not weaken that requirement. Reaching this endpoint needs the cookie,
+// which is SameSite=Strict and so is not sent on a cross-site request at all;
+// and even if it were, the same-origin policy stops another origin from reading
+// the response. So the header remains something only a page served from here
+// can set, which is the property the mutation check depends on.
+func (s *Server) handleToken(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"token": s.token})
 }
 
 // Token is the shared secret for this machine.

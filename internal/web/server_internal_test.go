@@ -288,3 +288,54 @@ func portOf(t *testing.T, rawURL string) string {
 	}
 	return u.Port()
 }
+
+// Reloading the page drops the token from the URL -- it is stripped from the
+// address bar on the first visit -- and the cookie is HttpOnly, so the page
+// cannot read it back. A tab in that state must still be able to act, which
+// means recovering the token from the server over the cookie it does have.
+func TestReloadedTabCanRecoverTheTokenAndMutate(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	// A tab with only the cookie, exactly as it is after a reload.
+	cookie := &http.Cookie{Name: tokenCookie, Value: s.token}
+
+	req := httptest.NewRequest("GET", "/api/token", nil)
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/token = %d, want 200: a reloaded tab cannot recover the token", rec.Code)
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Token != s.token {
+		t.Fatal("GET /api/token returned the wrong token")
+	}
+
+	// The recovered token must satisfy the mutation check -- the actual
+	// symptom was a restart button that refused with "no token".
+	req = httptest.NewRequest("POST", "/api/restart", nil)
+	req.AddCookie(cookie)
+	req.Header.Set(tokenHeader, body.Token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
+		t.Errorf("POST /api/restart = %d, want the recovered token to be accepted", rec.Code)
+	}
+
+	// And the endpoint is not a way in: without the cookie it says nothing.
+	req = httptest.NewRequest("GET", "/api/token", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated GET /api/token = %d, want 401", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), s.token) {
+		t.Error("unauthenticated GET /api/token leaked the token")
+	}
+}
