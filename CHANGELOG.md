@@ -11,6 +11,15 @@ the fact.
 
 ### Added
 
+- `vllm-helper serve` runs a web panel for the machine: the model that's
+  loaded, whether it's serving or still coming up, how much memory is in use
+  against what this hardware can give a model, the other saved profiles with a
+  switch button, and the server log. It's a control plane only — inference
+  still goes straight to vLLM, so the panel is never in the path of a request
+  and can't affect one. Listens on localhost unless `--listen` says otherwise,
+  and every request needs the token printed at startup. Switching and stopping
+  need permission to control the service; where that's missing the panel says
+  so and disables those buttons rather than failing when they're pressed.
 - `vllm-helper upgrade` replaces the binary from a published release, checking
   the download against the release's checksum before writing it. `--check`
   reports what's available without installing it.

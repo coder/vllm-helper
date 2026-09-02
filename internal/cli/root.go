@@ -70,6 +70,7 @@ func newRootCmd() *cobra.Command {
 		newRestartCmd(),
 		newStopCmd(),
 		newLogsCmd(),
+		newServeCmd(),
 
 		newSetupCmd(),
 		newDoctorCmd(),

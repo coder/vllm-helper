@@ -59,7 +59,27 @@ vllm-helper restart             # re-apply the active profile and restart
 vllm-helper stop                # stop the server
 vllm-helper logs                # follow the server journal
 vllm-helper doctor              # hardware, running servers, integrations, drift
+vllm-helper serve               # web panel for this machine
 ```
+
+### Web panel
+
+```bash
+vllm-helper serve                          # localhost only
+vllm-helper serve --listen 0.0.0.0:8080    # reachable from another machine
+```
+
+Shows what's loaded, how much of the machine's memory is in use, and what else you could switch to, with the server's log underneath. It's a control plane only — inference traffic goes straight to vLLM on its own port, so the panel is never in the path of a request.
+
+Every request needs the token printed at startup; open the URL it gives you and it becomes a cookie. Treat that URL like a password, especially with `--listen`: anyone who has it can switch models and stop the server.
+
+Switching and stopping need permission to control the service. On Linux the unit is system-scope by default, so either run the panel with `sudo`, or allow those three commands for your user:
+
+```
+youruser ALL=(root) NOPASSWD: /usr/bin/systemctl restart vllm.service, /usr/bin/systemctl stop vllm.service, /usr/bin/systemctl start vllm.service
+```
+
+Without it the panel still reports everything, and says why the buttons are disabled rather than failing when you press them.
 
 Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the key from `~/.config/vllm-helper/secrets.env`. Switching reloads the model, which takes a few minutes when the weights are cached and longer on first download. `switch` waits until the endpoint responds; if the service fails or crash-loops, it exits with the last log lines.
 

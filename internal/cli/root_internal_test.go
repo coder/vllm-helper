@@ -14,7 +14,7 @@ func TestTheCommandSetIsPinned(t *testing.T) {
 	// completion is not here either, because the root disables it.
 	want := []string{
 		"adopt", "coder-sync", "doctor", "edit", "inspect", "list", "logs",
-		"new", "remove", "restart", "search", "set", "setup", "start",
+		"new", "remove", "restart", "search", "serve", "set", "setup", "start",
 		"status", "stop", "switch", "upgrade", "version",
 	}
 
