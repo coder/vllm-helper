@@ -248,3 +248,85 @@ func (s *Server) handleRemoveProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": name})
 }
+
+// ggufResponse describes the GGUF gap and what closing it would run, so the
+// panel can show the same command and caveats the CLI does before anyone
+// agrees to it.
+type ggufResponse struct {
+	Supported bool     `json:"supported"`
+	Command   string   `json:"command,omitempty"`
+	Caveats   []string `json:"caveats,omitempty"`
+	// Reason is why installing is not offered here, when it isn't.
+	Reason string `json:"reason,omitempty"`
+}
+
+func (s *Server) handleGGUF(w http.ResponseWriter, _ *http.Request) {
+	r := ggufResponse{
+		Supported: s.caps().SupportsGGUF(),
+		Command:   control.GGUFInstallCommand(s.cfg),
+		Caveats:   control.GGUFCaveats(),
+	}
+	if r.Command == "" {
+		r.Reason = "couldn't find the interpreter next to " + s.cfg.VLLMBin() +
+			" -- install the plugin by hand"
+	}
+	writeJSON(w, http.StatusOK, r)
+}
+
+// handleInstallGGUF adds the plugin vLLM needs to read GGUF at all.
+//
+// Deliberately not behind the privilege check the service controls use: this
+// writes to the vLLM environment, not to systemd, and on a normal install that
+// venv belongs to the user running the panel. Requiring root here would push
+// people towards running the whole panel as root, which is worse.
+//
+// It also cannot disturb anything running. The plugin is read when an engine
+// starts, so it takes effect on the next switch -- unlike every other mutation
+// here, this one leaves the current model alone.
+func (s *Server) handleInstallGGUF(w http.ResponseWriter, r *http.Request) {
+	if s.caps().SupportsGGUF() {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "already": true,
+			"message": "This vLLM already loads GGUF.",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), control.GGUFInstallTimeout*time.Second)
+	defer cancel()
+
+	// pip's output is captured rather than dropped: when a source build fails
+	// the reason is in there, and a browser has no journal to go and read.
+	var out bytes.Buffer
+	if err := control.InstallGGUF(ctx, s.cfg, &out); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": err.Error(),
+			"log":   lastLines(out.String(), 20),
+		})
+		return
+	}
+	control.ForgetCaps(s.cfg.Dirs)
+
+	if !s.caps().SupportsGGUF() {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "installed, but vLLM still doesn't register 'gguf' -- " +
+				"the plugin may need a matching vLLM version",
+			"log": lastLines(out.String(), 20),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"message": "Installed. GGUF models can be pulled now; it takes effect on the " +
+			"next switch, so nothing running was disturbed.",
+	})
+}
+
+// lastLines keeps the tail of a long build log, which is where the error is.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}

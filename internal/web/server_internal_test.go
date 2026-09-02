@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/service"
 )
 
@@ -480,5 +481,67 @@ func TestPullRefusesAQuantItCannotResolve(t *testing.T) {
 		if e.Name() != "demo.env" {
 			t.Errorf("a profile was written for a refused pull: %s", e.Name())
 		}
+	}
+}
+
+// The panel offers the same install the CLI does, so the endpoints behind it
+// need the same guard as every other mutation -- this one runs pip against the
+// machine's vLLM environment.
+func TestGGUFEndpointsAreGuarded(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/gguf"},
+		{"POST", "/api/gguf/install"},
+	} {
+		req := httptest.NewRequest(c.method, c.path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s = %d, want 401", c.method, c.path, rec.Code)
+		}
+	}
+
+	// Installing is a mutation, so a cookie alone must not be enough.
+	req := httptest.NewRequest("POST", "/api/gguf/install", nil)
+	req.AddCookie(&http.Cookie{Name: tokenCookie, Value: s.token})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("POST /api/gguf/install with cookie only = %d, want 403", rec.Code)
+	}
+}
+
+// The panel shows the command and the caveats rather than hardcoding them, so
+// what a browser is told cannot drift from what the CLI says.
+func TestGGUFStatusReportsTheSameFactsAsTheCLI(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	req := httptest.NewRequest("GET", "/api/gguf", nil)
+	req.Header.Set(tokenHeader, s.token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/gguf = %d, want 200", rec.Code)
+	}
+	var got struct {
+		Supported bool     `json:"supported"`
+		Command   string   `json:"command"`
+		Caveats   []string `json:"caveats"`
+		Reason    string   `json:"reason"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Caveats) != len(control.GGUFCaveats()) {
+		t.Errorf("caveats = %d, want the %d control publishes",
+			len(got.Caveats), len(control.GGUFCaveats()))
+	}
+	// The test config has no real vLLM, so there is no interpreter to install
+	// into -- which must be reported rather than offered as a button.
+	if got.Command == "" && got.Reason == "" {
+		t.Error("with no interpreter found, one of command or reason must say so")
 	}
 }
