@@ -89,11 +89,21 @@ func runSearch(args []string, jsonOut bool) error {
 		}
 		m := models[n-1]
 		fmt.Println()
-		printModelDetail(inspectModel(m, cfg))
+		d := inspectModel(m, cfg)
+		printModelDetail(d)
 		fmt.Println()
 
-		if confirm(fmt.Sprintf("Pull %s and switch to it?", m.ID), false) {
-			return pullAndSwitch(cfg, m.ID, watchOpts{follow: stdoutIsTTY(), wait: true})
+		choice, cancelled := pickQuant(cfg, d)
+		if cancelled {
+			fmt.Println()
+			continue
+		}
+		label := m.ID
+		if choice != nil {
+			label += " (" + choice.Variant.Label + ")"
+		}
+		if confirm(fmt.Sprintf("Pull %s and switch to it?", label), false) {
+			return pullAndSwitch(cfg, m.ID, choice, watchOpts{follow: stdoutIsTTY(), wait: true})
 		}
 		fmt.Println()
 	}
@@ -212,24 +222,83 @@ func printVariants(d catalog.Detail) {
 	fmt.Println()
 	fmt.Printf("  %d quants in this repo:\n", len(d.All))
 	for _, v := range d.All {
-		mark := "   "
+		mark, note := "   ", ""
 		switch {
+		case !v.Servable():
+			mark, note = "  -", "  "+v.Blocked
+		case v.GGUF && !d.GGUFReady:
+			mark, note = "  -", "  needs the GGUF plugin"
 		case d.Best != nil && v.Name == d.Best.Name:
 			mark = "  >"
 		case d.BudgetGB > 0 && v.SizeGB > d.BudgetGB:
-			mark = "  x"
+			mark, note = "  x", "  too big for this machine"
 		}
-		fmt.Printf("%s %-14s %6.1f GB\n", mark, v.Label, v.SizeGB)
+		fmt.Printf("%s %-14s %6.1f GB%s\n", mark, v.Label, v.SizeGB, note)
 	}
 	if d.Best != nil {
-		fmt.Printf("    > = biggest that fits your ~%.0fGB budget", d.BudgetGB)
-		if d.BudgetGB > 0 {
-			fmt.Print(";  x = too big")
-		}
-		fmt.Println()
+		fmt.Printf("    > = the one 'new --quant %s' would serve\n", d.Best.Label)
 	}
-	// Saying which one gets served matters more than the list itself: a
-	// profile records the repo, so what runs is whatever vLLM resolves --
-	// not necessarily the one measured above.
-	fmt.Println("    Pulling this repo does not pick one of these -- see issue #25.")
+	fmt.Printf("    Choose another with: vllm-helper new %s --quant <name>\n", d.ID)
+}
+
+// pickQuant asks which copy of a model to serve, when there is a choice worth
+// offering. Returns nil to mean "the repo's default", and cancelled when the
+// user wants to go back to the results rather than pull anything.
+//
+// The default is pre-selected and one keypress away, so the common case costs
+// nothing -- but a repo holding a 2-bit and an 8-bit copy should not decide
+// between them on the user's behalf and say nothing.
+func pickQuant(cfg *config.Config, d catalog.Detail) (choice *catalog.Choice, cancelled bool) {
+	servable := make([]hf.Variant, 0, len(d.All))
+	for _, v := range d.All {
+		if v.Servable() && (d.GGUFReady || !v.GGUF) {
+			servable = append(servable, v)
+		}
+	}
+	// One option, or none we could act on, is not a question.
+	if len(servable) < 2 {
+		if d.NeedsGGUF && !d.GGUFReady {
+			fmt.Println(ggufMissingMessage(cfg))
+			fmt.Println()
+		}
+		return nil, false
+	}
+
+	fmt.Println("Which quant?")
+	for i, v := range servable {
+		mark := " "
+		if d.Best != nil && v.Name == d.Best.Name {
+			mark = "*"
+		}
+		fmt.Printf(" %s %2d) %-14s %6.1f GB\n", mark, i+1, v.Label, v.SizeGB)
+	}
+	def := 1
+	if d.Best != nil {
+		for i, v := range servable {
+			if v.Name == d.Best.Name {
+				def = i + 1
+			}
+		}
+	}
+	fmt.Printf("  * = biggest that fits this machine\n")
+	for {
+		pick := ask(fmt.Sprintf("Pick one (1-%d, Enter for %d, 'b' to go back)", len(servable), def), "")
+		switch {
+		case pick == "":
+			pick = strconv.Itoa(def)
+		case pick == "b" || pick == "B":
+			return nil, true
+		}
+		n, err := strconv.Atoi(pick)
+		if err != nil || n < 1 || n > len(servable) {
+			fmt.Println("Not a valid number, try again.")
+			continue
+		}
+		v := servable[n-1]
+		// Nothing to append for a repo whose single copy is the repo.
+		if _, ok := v.Selector(); !ok {
+			return nil, false
+		}
+		return &catalog.Choice{Variant: v, BaseModel: d.BaseModel}, false
+	}
 }

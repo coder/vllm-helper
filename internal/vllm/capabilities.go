@@ -31,6 +31,11 @@ type Caps struct {
 	// is now an immediate "unrecognized arguments" exit -- so a name that
 	// no longer exists has to be caught alongside a value that doesn't.
 	Flags []string `json:"flags"`
+	// Quantizations is what the installed vLLM can actually load. Worth
+	// knowing separately from the flags because it moves independently of
+	// them: GGUF left vLLM core in 0.27.1 for an out-of-tree plugin, so a
+	// build that accepts every flag can still be unable to read a GGUF file.
+	Quantizations []string `json:"quantizations"`
 }
 
 // Known reports whether introspection actually produced a registry. An empty
@@ -39,6 +44,20 @@ type Caps struct {
 func (c Caps) Known() bool {
 	return len(c.ToolParsers) > 0 || len(c.ReasoningParsers) > 0 || len(c.Flags) > 0
 }
+
+// KnowsQuantizations reports whether the registry was readable, so "no GGUF"
+// can be told apart from "we could not ask". Refusing a pull needs certainty;
+// an unreadable registry must not look like a missing feature.
+func (c Caps) KnowsQuantizations() bool { return len(c.Quantizations) > 0 }
+
+// SupportsGGUF reports whether this vLLM can load GGUF weights.
+//
+// In 0.27.1 GGUF moved out of vLLM into vllm-gguf-plugin, so this is false on
+// a stock install and stays false until that package is added to the same
+// environment. It is the difference between a model that serves and one that
+// cannot start at all, which is worth knowing before a pull restarts the
+// service.
+func (c Caps) SupportsGGUF() bool { return contains(c.Quantizations, "gguf") }
 
 // HasToolParser reports whether the installed vLLM registers this parser.
 func (c Caps) HasToolParser(name string) bool { return contains(c.ToolParsers, name) }
@@ -70,7 +89,7 @@ func contains(haystack []string, needle string) bool {
 // is the accessor that forces and returns the real set.
 const introspect = `
 import json
-out = {"tool_parsers": [], "reasoning_parsers": [], "flags": []}
+out = {"tool_parsers": [], "reasoning_parsers": [], "flags": [], "quantizations": []}
 try:
     from vllm.tool_parsers import ToolParserManager
     out["tool_parsers"] = sorted(ToolParserManager.list_registered())
@@ -79,6 +98,11 @@ except Exception:
 try:
     from vllm.reasoning import ReasoningParserManager
     out["reasoning_parsers"] = sorted(ReasoningParserManager.list_registered())
+except Exception:
+    pass
+try:
+    from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS
+    out["quantizations"] = sorted(QUANTIZATION_METHODS)
 except Exception:
     pass
 try:

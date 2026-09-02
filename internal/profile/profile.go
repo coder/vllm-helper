@@ -81,6 +81,11 @@ func List(dirs config.Dirs) ([]*Profile, error) {
 // "Qwen/Qwen3.5-27B" -> "qwen3.5-27b".
 func NameFromRepo(repo string) string {
 	name := repo
+	// A quant selector ("org/model-GGUF:Q8_0") is part of the model string
+	// vLLM takes, not part of a filename.
+	if i := strings.IndexByte(name, ':'); i >= 0 {
+		name = name[:i]
+	}
 	if i := strings.LastIndex(name, "/"); i >= 0 {
 		name = name[i+1:]
 	}
@@ -89,7 +94,12 @@ func NameFromRepo(repo string) string {
 
 // CreateOpts are the settings for a brand-new profile.
 type CreateOpts struct {
-	Repo           string
+	Repo string
+	// Name overrides the profile name derived from Repo. Needed when Repo
+	// carries a quant selector ("org/model-GGUF:Q8_0"), both because the
+	// colon has no place in a filename and because two quants of one repo
+	// have to be able to coexist as separate profiles.
+	Name           string
 	MaxModelLen    string // default 131072
 	MemUtilization string // default 0.85
 	ExtraArgs      string
@@ -99,7 +109,10 @@ type CreateOpts struct {
 
 // Create writes a new profile file. Fails if it already exists.
 func Create(dirs config.Dirs, opts CreateOpts) (*Profile, error) {
-	name := NameFromRepo(opts.Repo)
+	name := opts.Name
+	if name == "" {
+		name = NameFromRepo(opts.Repo)
+	}
 	path := dirs.ProfileFile(name)
 	if _, err := os.Stat(path); err == nil {
 		return nil, fmt.Errorf("profile %q already exists", name)

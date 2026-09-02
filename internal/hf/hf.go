@@ -28,6 +28,37 @@ type Model struct {
 	PipelineTag string   `json:"pipeline_tag"`
 	CreatedAt   string   `json:"createdAt"`
 	Tags        []string `json:"tags"`
+	// CardData carries the card's YAML front matter. Only base_model is read
+	// from it, and it is typed loosely because the Hub accepts either a
+	// single repo id or a list of them.
+	CardData struct {
+		BaseModel json.RawMessage `json:"base_model"`
+	} `json:"cardData"`
+}
+
+// BaseModel is the model a derivative was made from -- the unquantized repo a
+// GGUF was converted from, in practice.
+//
+// It matters because vLLM's GGUF plugin resolves its HF config from the
+// tokenizer repo, and GGUF publishers largely ship no config.json: verified
+// live, bartowski/Qwen_Qwen3-32B-GGUF and both unsloth repos checked have
+// none. Without --tokenizer pointing somewhere that does, the server cannot
+// start. Deriving it from the repo name would be guesswork ("Qwen_Qwen3-32B"
+// -> "Qwen/Qwen3-32B" only by convention), so the card is asked instead.
+func (m Model) BaseModel() string {
+	raw := m.CardData.BaseModel
+	if len(raw) == 0 {
+		return ""
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		return one
+	}
+	var many []string
+	if json.Unmarshal(raw, &many) == nil && len(many) > 0 {
+		return many[0]
+	}
+	return ""
 }
 
 // License extracts the license tag ("license:apache-2.0" -> "apache-2.0").
@@ -133,7 +164,28 @@ type Variant struct {
 	// can be scanned: "Q8_0" rather than "Qwen_Qwen3-32B-Q8_0.gguf".
 	Label  string  `json:"label"`
 	SizeGB float64 `json:"size_gb"`
+	// GGUF marks a variant that needs vLLM's out-of-tree GGUF plugin.
+	GGUF bool `json:"gguf,omitempty"`
+	// Blocked says why vLLM cannot be pointed at this variant, and is empty
+	// when it can. Listing a quant that cannot be selected is worse than not
+	// listing it, because the sizes make it look like a live option.
+	Blocked string `json:"blocked,omitempty"`
 }
+
+// Selector is what to append to a repo id to serve this variant, and false
+// when the variant is the repo's own default and needs no suffix.
+//
+// vLLM addresses a GGUF quant by name -- "repo:Q8_0" -- not by filename or
+// path, so the label is what goes on the end.
+func (v Variant) Selector() (string, bool) {
+	if v.Name == "" || v.Name == "." || !v.GGUF {
+		return "", false
+	}
+	return ":" + v.Label, true
+}
+
+// Servable reports whether this variant can be selected at all.
+func (v Variant) Servable() bool { return v.Blocked == "" }
 
 // Weights describes the weight files found in a model repo.
 type Weights struct {
@@ -305,6 +357,9 @@ func WeightsSize(repo string) (Weights, error) {
 	// Grouping keys are lowered so shards collapse together; quant names are
 	// conventionally upper case, so the name to show is kept alongside.
 	display := map[string]string{}
+	// parts counts how many files each root-GGUF candidate is made of, since
+	// a split quant is one vLLM cannot address on any released plugin.
+	parts := map[string]int{}
 	subdirs := map[string]int64{}
 	alternatives := map[string]bool{}
 	for _, f := range files {
@@ -327,6 +382,7 @@ func WeightsSize(repo string) (Weights, error) {
 			// name is lowered so a repo shipping .GGUF still groups its shards.
 			key := ggufShard.ReplaceAllString(strings.ToLower(f.Path), ".gguf")
 			candidates[key] += f.Size
+			parts[key]++
 			if _, seen := display[key]; !seen {
 				display[key] = ggufShard.ReplaceAllString(f.Path, ".gguf")
 			}
@@ -369,7 +425,7 @@ func WeightsSize(repo string) (Weights, error) {
 	if len(candidates) == 0 {
 		return Weights{}, nil
 	}
-	return pickSmallest(candidates, display, repo), nil
+	return pickSmallest(candidates, display, parts, alternatives, repo), nil
 }
 
 // pickSmallest reports the smallest candidate, which is the one with any chance
@@ -381,7 +437,7 @@ func WeightsSize(repo string) (Weights, error) {
 // SizeGB stays the smallest for compatibility with the fit check, which asks
 // "could anything here run" and wants the conservative answer. Choosing what to
 // actually serve is a different question and wants All.
-func pickSmallest(candidates map[string]int64, display map[string]string, repo string) Weights {
+func pickSmallest(candidates map[string]int64, display map[string]string, parts map[string]int, folders map[string]bool, repo string) Weights {
 	var largest int64
 	for _, size := range candidates {
 		largest = max(largest, size)
@@ -398,11 +454,24 @@ func pickSmallest(candidates map[string]int64, display map[string]string, repo s
 		if d, ok := display[name]; ok {
 			shown = d
 		}
-		w.All = append(w.All, Variant{
+		v := Variant{
 			Name:   shown,
 			Label:  quantLabel(shown, repo),
 			SizeGB: float64(size) / 1e9,
-		})
+			GGUF:   isGGUF(shown) || folders[name],
+		}
+		// Which layouts vLLM can be pointed at is not a judgement about
+		// quality: it addresses a GGUF quant by name, and on every released
+		// plugin that lookup is a non-recursive glob over one file. So a
+		// quant in a folder is fetched and then reported missing, and a
+		// split one loads partial weights. Both are worse than refusing.
+		switch {
+		case folders[name]:
+			v.Blocked = "in a subfolder, which vLLM's GGUF plugin cannot address"
+		case parts[name] > 1:
+			v.Blocked = "split across files, which vLLM's GGUF plugin cannot load"
+		}
+		w.All = append(w.All, v)
 		if smallest < 0 || size < smallest {
 			smallest = size
 		}
@@ -419,20 +488,33 @@ func pickSmallest(candidates map[string]int64, display map[string]string, repo s
 // budget, since quantization trades quality for size and there is no reason to
 // take a worse one than the machine can hold.
 //
-// Returns false when nothing fits, rather than falling back to the smallest --
-// "the least bad option is still too big" is the caller's decision to make and
-// present, not something to paper over here.
+// ggufOK says whether this machine's vLLM can load GGUF at all. Both that and
+// the per-variant Blocked reason filter the candidates first, because ranking
+// on size alone reliably lands on something unloadable: the largest quant in a
+// GGUF repo is the one most likely to be split across files, and
+// bartowski/Qwen_Qwen3-32B-GGUF's biggest-that-fits is a bf16 that is both
+// split and in a subfolder.
+//
+// Returns false when nothing servable fits, rather than falling back to the
+// smallest -- "the least bad option is still too big" is the caller's decision
+// to make and present, not something to paper over here.
 //
 // A budget of 0 means unknown, in which case the largest is not a safe default:
 // with nothing to check it against, the conservative choice is the smallest.
-func (w Weights) BestFit(budgetGB float64) (Variant, bool) {
-	if len(w.All) == 0 {
+func (w Weights) BestFit(budgetGB float64, ggufOK bool) (Variant, bool) {
+	usable := make([]Variant, 0, len(w.All))
+	for _, v := range w.All {
+		if v.Servable() && (ggufOK || !v.GGUF) {
+			usable = append(usable, v)
+		}
+	}
+	if len(usable) == 0 {
 		return Variant{}, false
 	}
 	if budgetGB <= 0 {
-		return w.All[len(w.All)-1], true
+		return usable[len(usable)-1], true
 	}
-	for _, v := range w.All { // largest first
+	for _, v := range usable { // largest first
 		if v.SizeGB <= budgetGB {
 			return v, true
 		}

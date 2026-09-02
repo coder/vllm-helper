@@ -105,7 +105,20 @@ EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 
 Keep `EXTRA_ARGS` quoted if it has more than one flag; flag values with spaces (like JSON) can be quoted inside it.
 
-Before pulling a large model, reach for a quantized release — roughly 1 byte per parameter for FP8/INT8 and 0.5 for INT4/AWQ/GPTQ, against the budget `doctor` reports for your machine. Take the **largest** one that fits rather than the smallest: quantization trades quality for size, so there is nothing to gain from a 2-bit release on a machine with room for 8-bit. `inspect` lists every quant a repo holds and marks the biggest that fits.
+### Choosing a quantization
+
+Reach for a quantized release when a model is large — roughly 1 byte per parameter for FP8/INT8 and 0.5 for INT4/AWQ/GPTQ, against the budget `doctor` reports. Take the **largest** one that fits rather than the smallest: quantization trades quality for size, so there is nothing to gain from a 2-bit release on a machine with room for 8-bit.
+
+Most repos hold a single precision, and choosing a quant means choosing a different repo (`Qwen/Qwen3-32B` vs `Qwen/Qwen3-32B-AWQ`) — an ordinary `new`. GGUF repos are the exception: they ship a dozen quants side by side, so `inspect` lists them and `new` takes a `--quant`:
+
+```bash
+vllm-helper inspect bartowski/Qwen_Qwen3-32B-GGUF   # what's in there, and which fits
+vllm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0
+```
+
+`search` asks interactively, with the best fit preselected. The panel offers the same choice as a dropdown. Whichever you use, the quant is recorded in the profile, so what runs is what you picked.
+
+Two things vLLM constrains here, and they are reported rather than worked around. GGUF support **left vLLM core in 0.27.1** for an out-of-tree package — `vllm-helper install-gguf` adds it, after telling you what you are getting. And split-file or per-quant-subfolder GGUFs cannot be loaded on any released version of that plugin, so those are listed but not offered.
 
 ## macOS
 

@@ -11,6 +11,16 @@ the fact.
 
 ### Added
 
+- Choosing which quantization to serve, for the GGUF repos that ship several.
+  `new --quant Q8_0` takes one by name, `search` asks with the best fit
+  preselected, and the panel offers a dropdown. The choice is written into the
+  profile as `MODEL=repo:QUANT`, along with the `--tokenizer` such a model
+  needs, so what runs is what was picked rather than whatever vLLM resolves.
+- `install-gguf` installs the plugin vLLM now needs to read GGUF at all,
+  into the interpreter that owns the configured vLLM rather than whatever
+  `pip` is on PATH. It says what the trade-offs are before installing:
+  vLLM calls its own GGUF support experimental, the plugin builds from
+  source, and a native quant is usually faster where one exists.
 - `vllm-helper serve` runs a web panel for the machine: the model that's
   loaded, whether it's serving or still coming up, how much memory is in use
   against what this hardware can give a model, the other saved profiles with a
@@ -57,6 +67,13 @@ the fact.
 
 ### Changed
 
+- Quants vLLM has no way to load are marked as such instead of being offered.
+  It addresses a GGUF quant by name and only for a single file at a repo's
+  root, so split-file and per-quant-subfolder copies are listed but not
+  recommended, and a machine without the GGUF plugin is told so before a pull
+  rather than after the restart. This also stops the recommendation landing on
+  the least loadable entry: ranking on size alone picked bartowski's `bf16`,
+  which is both split and in a subfolder.
 - `inspect`, `search` and the panel now list every quantization a repo holds
   and lead with the biggest one that fits, instead of reporting only the
   smallest. The smallest is the right answer to "could anything here run" and
@@ -65,6 +82,9 @@ the fact.
   quant and its 8-bit one was 34.8 GB. Quants too large for the machine are
   marked as such, and a repo whose smallest quant still doesn't fit now says
   so rather than advising you to look for a smaller one that isn't there.
+  Pulling still saves the repo rather than one of its quants — vLLM offers no
+  way to address most of these layouts, so choosing a quant means choosing a
+  different repo. The list says so rather than leaving you to find out.
 - Coder sync is now a plugin (`internal/plugin/coder`) behind a small
   interface, rather than being wired through the CLI by hand. An integration
   declares its own configuration, contributes its own commands, and opts into

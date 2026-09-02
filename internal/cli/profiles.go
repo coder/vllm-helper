@@ -13,6 +13,7 @@ import (
 	"github.com/coder/vllm-helper/internal/catalog"
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/control"
+	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -150,30 +151,80 @@ func runSwitch(args []string, opts watchOpts) error {
 
 func newNewCmd() *cobra.Command {
 	var w waitFlags
+	var quant string
 	c := &cobra.Command{
 		Use:     "new <org/model-repo>",
 		Short:   "Pull a new HuggingFace model, save it as a profile, and switch to it",
 		GroupID: groupModels,
 		Args:    cobra.MaximumNArgs(1),
+		Example: "  vllm-helper new Qwen/Qwen3-32B\n" +
+			"  vllm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0",
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) < 1 {
-				return errors.New("usage: vllm-helper new <org/model-repo> [--wait|--no-follow] [--timeout 30m]")
+				return errors.New("usage: vllm-helper new <org/model-repo> [--quant NAME] [--wait|--no-follow] [--timeout 30m]")
 			}
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
 			}
-			return pullAndSwitch(cfg, args[0], w.opts())
+			choice, err := resolveQuant(cfg, args[0], quant)
+			if err != nil {
+				return err
+			}
+			return pullAndSwitch(cfg, args[0], choice, w.opts())
 		},
 	}
+	c.Flags().StringVar(&quant, "quant", "",
+		"which quantization to serve, for repos that ship several (see 'vllm-helper inspect')")
 	w.register(c)
 	return c
 }
 
+// resolveQuant turns a --quant name into a choice, refusing anything this
+// machine could not actually serve.
+//
+// Refusing here rather than at startup matters: activating a profile restarts
+// the service, so a model that cannot load takes the running one down with it
+// and leaves the machine serving nothing.
+func resolveQuant(cfg *config.Config, repo, want string) (*catalog.Choice, error) {
+	if want == "" {
+		return nil, nil
+	}
+	m, err := hf.Lookup(repo)
+	if err != nil {
+		return nil, fmt.Errorf("looking up %s: %w", repo, err)
+	}
+	d := inspectModel(m, cfg)
+	v, ok := catalog.FindVariant(d.All, want)
+	if !ok {
+		var have []string
+		for _, x := range d.All {
+			have = append(have, x.Label)
+		}
+		if len(have) == 0 {
+			return nil, fmt.Errorf("%s ships a single copy, so there is no quant to choose", repo)
+		}
+		return nil, fmt.Errorf("%s has no quant called %q -- it has: %s",
+			repo, want, strings.Join(have, ", "))
+	}
+	if !v.Servable() {
+		return nil, fmt.Errorf("%s is %s", v.Label, v.Blocked)
+	}
+	if v.GGUF && !d.GGUFReady {
+		return nil, errors.New(ggufMissingMessage(cfg))
+	}
+	return &catalog.Choice{Variant: v, BaseModel: d.BaseModel}, nil
+}
+
 // pullAndSwitch is `new` minus the flag parsing, so `search` can funnel
 // into it with its own options.
-func pullAndSwitch(cfg *config.Config, repo string, opts watchOpts) error {
+func pullAndSwitch(cfg *config.Config, repo string, choice *catalog.Choice, opts watchOpts) error {
 	name := profile.NameFromRepo(repo)
+	if choice != nil {
+		if _, ok := choice.Variant.Selector(); ok {
+			name += "-" + strings.ToLower(choice.Variant.Label)
+		}
+	}
 
 	p, err := profile.Load(cfg.Dirs, name)
 	if err == nil {
@@ -185,7 +236,7 @@ func pullAndSwitch(cfg *config.Config, repo string, opts watchOpts) error {
 	fmt.Println("Pulling new model:", repo)
 	fmt.Println("Checking the model's README for known vLLM serving flags, and its")
 	fmt.Println("chat template for known crash patterns...")
-	plan := catalog.PrepareProfile(cfg.Dirs, repo, vllmCaps(cfg))
+	plan := catalog.PrepareProfile(cfg.Dirs, repo, choice, vllmCaps(cfg))
 	for _, n := range plan.Notes {
 		fmt.Println(n)
 	}

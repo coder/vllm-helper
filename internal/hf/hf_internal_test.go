@@ -1,6 +1,7 @@
 package hf
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -920,26 +921,26 @@ func TestBestFit(t *testing.T) {
 		{Label: "IQ2_XXS", SizeGB: 9},
 	}}
 
-	if v, ok := w.BestFit(84); !ok || v.Label != "bf16" {
+	if v, ok := w.BestFit(84, true); !ok || v.Label != "bf16" {
 		t.Errorf("BestFit(84) = %v/%v, want bf16: it fits, so nothing worse should be chosen", v.Label, ok)
 	}
-	if v, ok := w.BestFit(40); !ok || v.Label != "Q8_0" {
+	if v, ok := w.BestFit(40, true); !ok || v.Label != "Q8_0" {
 		t.Errorf("BestFit(40) = %v/%v, want Q8_0", v.Label, ok)
 	}
-	if v, ok := w.BestFit(10); !ok || v.Label != "IQ2_XXS" {
+	if v, ok := w.BestFit(10, true); !ok || v.Label != "IQ2_XXS" {
 		t.Errorf("BestFit(10) = %v/%v, want IQ2_XXS", v.Label, ok)
 	}
 	// Nothing fits is a fact the caller has to present, not one to paper
 	// over by handing back the smallest anyway.
-	if v, ok := w.BestFit(5); ok {
+	if v, ok := w.BestFit(5, true); ok {
 		t.Errorf("BestFit(5) = %v, want no fit: the smallest is still too big", v.Label)
 	}
 	// No budget means nothing to check against, so the safe pick is the
 	// smallest rather than the largest.
-	if v, ok := w.BestFit(0); !ok || v.Label != "IQ2_XXS" {
+	if v, ok := w.BestFit(0, true); !ok || v.Label != "IQ2_XXS" {
 		t.Errorf("BestFit(0) = %v/%v, want the smallest when the budget is unknown", v.Label, ok)
 	}
-	if _, ok := (Weights{}).BestFit(84); ok {
+	if _, ok := (Weights{}).BestFit(84, true); ok {
 		t.Error("BestFit on a repo with no variants should report no fit")
 	}
 }
@@ -1002,5 +1003,87 @@ func TestWeightsSizeIgnoresFormatCopiesBesideRoot(t *testing.T) {
 	}
 	if want := 65.0; got.SizeGB != want {
 		t.Errorf("SizeGB = %v, want %v (one copy, not three)", got.SizeGB, want)
+	}
+}
+
+// The Hub accepts base_model as either a single repo id or a list, and both
+// shapes appear in the wild -- bartowski writes a string, unsloth a list.
+func TestBaseModelAcceptsBothShapes(t *testing.T) {
+	for _, c := range []struct{ raw, want string }{
+		{`"Qwen/Qwen3-32B"`, "Qwen/Qwen3-32B"},
+		{`["deepseek-ai/DeepSeek-V3.1"]`, "deepseek-ai/DeepSeek-V3.1"},
+		{`["a/one","b/two"]`, "a/one"},
+		{`[]`, ""},
+		{`null`, ""},
+		{``, ""},
+		{`{"unexpected":"shape"}`, ""},
+	} {
+		var m Model
+		if c.raw != "" {
+			m.CardData.BaseModel = json.RawMessage(c.raw)
+		}
+		if got := m.BaseModel(); got != c.want {
+			t.Errorf("BaseModel() with %s = %q, want %q", c.raw, got, c.want)
+		}
+	}
+}
+
+// vLLM addresses a GGUF quant by name and can only do it for a single file at
+// a repo's root. Recommending anything else produces a model that downloads
+// and then fails to load, which is worse than not offering it -- the pull has
+// already restarted the service by then.
+func TestVariantsRecordWhatCannotBeServed(t *testing.T) {
+	serveTree(t, `[
+		{"type":"file","path":"m-Q8_0.gguf","size":34000000000},
+		{"type":"file","path":"m-bf16-00001-of-00002.gguf","size":40000000000},
+		{"type":"file","path":"m-bf16-00002-of-00002.gguf","size":25000000000},
+		{"type":"file","path":"UD-Q2_K_XL/model.gguf","size":20000000000}
+	]`)
+	got, err := WeightsSize(repo)
+	if err != nil {
+		t.Fatalf("WeightsSize: %v", err)
+	}
+	by := map[string]Variant{}
+	for _, v := range got.All {
+		by[v.Label] = v
+	}
+	if v := by["Q8_0"]; !v.Servable() {
+		t.Errorf("Q8_0 should be servable, got %q", v.Blocked)
+	}
+	if v := by["bf16"]; v.Servable() {
+		t.Error("a split quant should not be offered: no released plugin can load one")
+	}
+	if v := by["UD-Q2_K_XL"]; v.Servable() {
+		t.Error("a subfolder quant should not be offered: the plugin's glob cannot see it")
+	}
+	for label, v := range by {
+		if !v.GGUF {
+			t.Errorf("%s should be marked GGUF", label)
+		}
+	}
+
+	// So the recommendation must be the biggest *servable* one, not the
+	// biggest. Ranking on size alone lands on the split bf16.
+	best, ok := got.BestFit(84, true)
+	if !ok || best.Label != "Q8_0" {
+		t.Errorf("BestFit = %q/%v, want Q8_0: bf16 is bigger but cannot load", best.Label, ok)
+	}
+	// And with no GGUF support at all, nothing here is servable.
+	if v, ok := got.BestFit(84, false); ok {
+		t.Errorf("BestFit without GGUF support = %q, want nothing", v.Label)
+	}
+}
+
+// The selector is what gets appended to a repo id, and only GGUF has one.
+func TestVariantSelector(t *testing.T) {
+	if s, ok := (Variant{Name: "m-Q8_0.gguf", Label: "Q8_0", GGUF: true}).Selector(); !ok || s != ":Q8_0" {
+		t.Errorf("Selector() = %q/%v, want :Q8_0", s, ok)
+	}
+	// Root safetensors are the repo itself; appending anything would break it.
+	if _, ok := (Variant{Name: "", Label: "default"}).Selector(); ok {
+		t.Error("root weights should have no selector")
+	}
+	if _, ok := (Variant{Name: "fp8", Label: "fp8"}).Selector(); ok {
+		t.Error("a non-GGUF variant has no selector -- vLLM has no way to address it")
 	}
 }
