@@ -170,6 +170,8 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/token", s.guard(s.handleToken))
 	mux.HandleFunc("GET /api/search", s.guard(s.handleSearch))
 	mux.HandleFunc("GET /api/inspect", s.guard(s.handleInspect))
+	mux.HandleFunc("GET /api/gguf", s.guard(s.handleGGUF))
+	mux.HandleFunc("POST /api/gguf/install", s.guard(s.handleInstallGGUF))
 	mux.HandleFunc("POST /api/pull", s.guard(s.handlePull))
 	mux.HandleFunc("POST /api/profiles/{name}/remove", s.guard(s.handleRemoveProfile))
 	mux.HandleFunc("POST /api/switch/{name}", s.guard(s.handleSwitch))

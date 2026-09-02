@@ -92,6 +92,24 @@
               </div>
               <div class="notice" data-flags hidden></div>
               <div class="notice notice-warn" data-dropped hidden></div>
+
+              <!-- The same explain-then-offer the CLI does. Shown in place of
+                   the pull button, because on this machine there is nothing
+                   to pull until it is dealt with. -->
+              <div class="gguf" data-gguf hidden>
+                <p class="gguf-lead">
+                  This vLLM can&rsquo;t load GGUF &mdash; support moved out of
+                  vLLM core in 0.27.1 and needs a separate package.
+                </p>
+                <code class="gguf-cmd" data-gguf-cmd></code>
+                <p class="gguf-sub">Worth knowing first:</p>
+                <ul class="gguf-caveats" data-gguf-caveats></ul>
+                <div class="gguf-actions">
+                  <button class="btn" data-gguf-install>Install it</button>
+                  <span class="gguf-status" data-gguf-status></span>
+                </div>
+                <pre class="gguf-log" data-gguf-log hidden></pre>
+              </div>
             </div>
 
             <div class="notice notice-error" data-detail-error hidden></div>

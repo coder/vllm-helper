@@ -20,7 +20,11 @@ the fact.
   into the interpreter that owns the configured vLLM rather than whatever
   `pip` is on PATH. It says what the trade-offs are before installing:
   vLLM calls its own GGUF support experimental, the plugin builds from
-  source, and a native quant is usually faster where one exists.
+  source, and a native quant is usually faster where one exists. The panel
+  offers the same thing in place of a pull button that could only fail,
+  with the command and caveats read from the machine so the two cannot
+  drift. Installing disturbs nothing that is running: the plugin is read
+  when an engine starts, so it applies from the next switch.
 - `vllm-helper serve` runs a web panel for the machine: the model that's
   loaded, whether it's serving or still coming up, how much memory is in use
   against what this hardware can give a model, the other saved profiles with a

@@ -31,6 +31,12 @@ const el = {
   flags: $("[data-flags]"),
   dropped: $("[data-dropped]"),
   detailError: $("[data-detail-error]"),
+  gguf: $("[data-gguf]"),
+  ggufCmd: $("[data-gguf-cmd]"),
+  ggufCaveats: $("[data-gguf-caveats]"),
+  ggufInstall: $("[data-gguf-install]"),
+  ggufStatus: $("[data-gguf-status]"),
+  ggufLog: $("[data-gguf-log]"),
   pull: $("[data-pull]"),
   pullNote: $("[data-pull-note]"),
 };
@@ -231,6 +237,52 @@ function renderQuants(d) {
     : "None of these can be served on this machine.";
 }
 
+// showGGUFOffer fills in the install panel from the server, so the command
+// and the caveats are the machine's own rather than a copy that could drift
+// from what the CLI says.
+async function showGGUFOffer() {
+  el.gguf.hidden = false;
+  el.ggufStatus.textContent = "";
+  el.ggufLog.hidden = true;
+  try {
+    const g = await api("/api/gguf");
+    el.ggufCmd.textContent = g.command || g.reason || "";
+    el.ggufCaveats.innerHTML = "";
+    for (const c of g.caveats || []) {
+      const li = document.createElement("li");
+      li.textContent = c;
+      el.ggufCaveats.append(li);
+    }
+    // Nowhere to install into is not something a button can fix.
+    el.ggufInstall.hidden = !g.command;
+  } catch (err) {
+    el.ggufStatus.textContent = err.message;
+  }
+}
+
+el.ggufInstall.addEventListener("click", async () => {
+  if (
+    !confirm(
+      "Install the GGUF plugin?\n\nIt builds from source, so this can take several minutes. Nothing currently running is affected — the plugin is read the next time a model starts.",
+    )
+  ) {
+    return;
+  }
+  el.ggufInstall.disabled = true;
+  el.ggufStatus.textContent =
+    "Installing… this builds from source, so give it a few minutes.";
+  el.ggufLog.hidden = true;
+  try {
+    const res = await api("/api/gguf/install", { method: "POST" });
+    el.ggufStatus.textContent = res.message || "Installed.";
+    // Re-inspect so the quant list stops saying everything is unavailable.
+    if (selected) inspect(selected);
+  } catch (err) {
+    el.ggufStatus.textContent = err.message;
+    el.ggufInstall.disabled = false;
+  }
+});
+
 async function inspect(repo) {
   selected = repo;
   el.empty.hidden = true;
@@ -241,8 +293,11 @@ async function inspect(repo) {
   el.body.hidden = true;
   el.detailError.hidden = true;
   el.pull.disabled = true;
+  el.pull.hidden = false;
   el.pull.textContent = "Pull and switch";
   el.pullNote.hidden = true;
+  el.gguf.hidden = true;
+  el.ggufInstall.disabled = false;
 
   try {
     const d = await api(`/api/inspect?repo=${encodeURIComponent(repo)}`);
@@ -264,18 +319,17 @@ async function inspect(repo) {
     renderQuants(d);
 
     // A repo that is entirely GGUF on a machine without the plugin cannot be
-    // served at all, so say that before the button rather than after it.
+    // served at all, whichever quant is picked -- so offer to fix that instead
+    // of a pull button that could only fail.
     if (d.needs_gguf && !d.gguf_ready) {
-      el.dropped.hidden = false;
-      el.dropped.textContent =
-        "This vLLM cannot load GGUF — support moved out of vLLM core in 0.27.1. " +
-        "Run 'vllm-helper install-gguf' on the machine, or pick a model with " +
-        "safetensors weights (AWQ, GPTQ, FP8, NVFP4).";
-      el.pull.disabled = true;
+      await showGGUFOffer();
+      el.pull.hidden = true;
       el.loading.hidden = true;
       el.body.hidden = false;
       return;
     }
+    el.gguf.hidden = true;
+    el.pull.hidden = false;
 
     el.flags.hidden = !d.detected_flags;
     if (d.detected_flags) {
