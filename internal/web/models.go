@@ -156,7 +156,42 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An explicit quant is resolved against what the repo actually holds,
+	// so a stale page cannot ask for one that is gone -- or one that vLLM
+	// has no way to load.
+	var choice *catalog.Choice
+	if want := strings.TrimSpace(r.URL.Query().Get("quant")); want != "" {
+		m, err := hf.Lookup(repo)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{
+				"error": "could not re-read " + repo + " from HuggingFace: " + err.Error()})
+			return
+		}
+		d := catalog.Inspect(m, s.budget(), s.caps())
+		v, ok := catalog.FindVariant(d.All, want)
+		switch {
+		case !ok:
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": repo + " has no quant called " + want})
+			return
+		case !v.Servable():
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": want + " is " + v.Blocked})
+			return
+		case v.GGUF && !d.GGUFReady:
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "this vLLM cannot load GGUF -- install vllm-gguf-plugin first"})
+			return
+		}
+		choice = &catalog.Choice{Variant: v, BaseModel: d.BaseModel}
+	}
+
 	name := profile.NameFromRepo(repo)
+	if choice != nil {
+		if _, ok := choice.Variant.Selector(); ok {
+			name += "-" + strings.ToLower(choice.Variant.Label)
+		}
+	}
 	out := pullResponse{OK: true, Profile: name}
 
 	// An existing profile is reused rather than overwritten. Someone may
@@ -167,7 +202,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		out.Notes = append(out.Notes,
 			"Profile '"+name+"' already existed -- switching to it with its saved settings.")
 	} else {
-		plan := catalog.PrepareProfile(s.cfg.Dirs, repo, s.caps())
+		plan := catalog.PrepareProfile(s.cfg.Dirs, repo, choice, s.caps())
 		out.Notes = append(out.Notes, plan.Notes...)
 		if _, err := profile.Create(s.cfg.Dirs, plan.Opts); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

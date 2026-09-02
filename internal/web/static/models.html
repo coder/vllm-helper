@@ -79,13 +79,16 @@
               <dl class="facts" data-facts></dl>
               <div class="quants" data-quants hidden>
                 <h4 class="quants-title">
-                  Quants in this repo <span data-quants-count></span>
+                  <label for="quant-pick"
+                    >Quant <span data-quants-count></span
+                  ></label>
                 </h4>
-                <ul class="quant-list" data-quant-list></ul>
-                <p class="quants-note">
-                  Pulling saves the repo, not one of these &mdash; what gets
-                  served is whatever vLLM resolves.
-                </p>
+                <select
+                  class="quant-select"
+                  id="quant-pick"
+                  data-quant-select
+                ></select>
+                <p class="quants-note" data-quant-note></p>
               </div>
               <div class="notice" data-flags hidden></div>
               <div class="notice notice-warn" data-dropped hidden></div>

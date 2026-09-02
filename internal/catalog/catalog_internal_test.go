@@ -1,9 +1,12 @@
 package catalog
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/hf"
+	"github.com/coder/vllm-helper/internal/vllm"
 )
 
 // A repo id becomes both a URL sent to the Hub and, through NameFromRepo, part
@@ -65,7 +68,7 @@ func TestInspectSeparatesTheFitCheckFromTheChoice(t *testing.T) {
 		},
 	}
 
-	best, ok := w.BestFit(84)
+	best, ok := w.BestFit(84, true)
 	if !ok || best.Label != "Q8_0" {
 		t.Fatalf("BestFit(84) = %q/%v, want Q8_0", best.Label, ok)
 	}
@@ -80,7 +83,56 @@ func TestInspectSeparatesTheFitCheckFromTheChoice(t *testing.T) {
 	}
 
 	// A budget that only the worst quant clears must not pretend otherwise.
-	if got, _ := w.BestFit(10); got.Label != "IQ2_XXS" {
+	if got, _ := w.BestFit(10, true); got.Label != "IQ2_XXS" {
 		t.Errorf("BestFit(10) = %q, want IQ2_XXS: nothing better fits", got.Label)
+	}
+}
+
+// A chosen quant has to reach vLLM's command line, and for GGUF that means
+// two things at once: the selector on the model string, and a tokenizer to
+// read the config from, since GGUF repos rarely ship one.
+func TestPrepareProfileAppliesAQuantChoice(t *testing.T) {
+	dirs := config.Dirs{Data: t.TempDir()}
+	choice := &Choice{
+		Variant:   hf.Variant{Name: "m-Q8_0.gguf", Label: "Q8_0", GGUF: true},
+		BaseModel: "Qwen/Qwen3-32B",
+	}
+	p := PrepareProfile(dirs, "bartowski/Qwen_Qwen3-32B-GGUF", choice, vllm.Caps{})
+
+	if want := "bartowski/Qwen_Qwen3-32B-GGUF:Q8_0"; p.Opts.Repo != want {
+		t.Errorf("Repo = %q, want %q", p.Opts.Repo, want)
+	}
+	// A name of its own, or a second quant of the same repo could not exist
+	// alongside the first.
+	if want := "qwen_qwen3-32b-gguf-q8_0"; p.Opts.Name != want {
+		t.Errorf("Name = %q, want %q", p.Opts.Name, want)
+	}
+	if !strings.Contains(p.Opts.ExtraArgs, "--tokenizer Qwen/Qwen3-32B") {
+		t.Errorf("ExtraArgs = %q, want a --tokenizer: GGUF repos rarely ship a config", p.Opts.ExtraArgs)
+	}
+
+	// No choice means the repo's default, unchanged.
+	plain := PrepareProfile(dirs, "Qwen/Qwen3-32B", nil, vllm.Caps{})
+	if plain.Opts.Repo != "Qwen/Qwen3-32B" {
+		t.Errorf("Repo = %q, want the bare repo when nothing was chosen", plain.Opts.Repo)
+	}
+	if strings.Contains(plain.Opts.ExtraArgs, "--tokenizer") {
+		t.Errorf("ExtraArgs = %q, want no tokenizer for a normal repo", plain.Opts.ExtraArgs)
+	}
+}
+
+// Case matters to publishers and not to people.
+func TestFindVariantIsCaseInsensitive(t *testing.T) {
+	all := []hf.Variant{{Label: "Q8_0"}, {Label: "UD-Q2_K_XL"}}
+	for _, in := range []string{"Q8_0", "q8_0", "Q8_0"} {
+		if v, ok := FindVariant(all, in); !ok || v.Label != "Q8_0" {
+			t.Errorf("FindVariant(%q) missed", in)
+		}
+	}
+	if v, ok := FindVariant(all, "ud-q2_k_xl"); !ok || v.Label != "UD-Q2_K_XL" {
+		t.Errorf("FindVariant lower-cased miss: %v/%v", v.Label, ok)
+	}
+	if _, ok := FindVariant(all, "Q4_K_M"); ok {
+		t.Error("FindVariant should not invent a quant the repo lacks")
 	}
 }

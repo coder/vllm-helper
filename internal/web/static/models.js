@@ -26,7 +26,8 @@ const el = {
   facts: $("[data-facts]"),
   quants: $("[data-quants]"),
   quantsCount: $("[data-quants-count]"),
-  quantList: $("[data-quant-list]"),
+  quantSelect: $("[data-quant-select]"),
+  quantNote: $("[data-quant-note]"),
   flags: $("[data-flags]"),
   dropped: $("[data-dropped]"),
   detailError: $("[data-detail-error]"),
@@ -188,35 +189,46 @@ function renderVerdict(d) {
   }
 }
 
-// The quants a repo holds, so the choice is visible instead of being made
-// silently at the smallest. Marked against the budget, because "which of
-// these can this machine run" is the only reason to show a list of sizes.
+// The quants a repo holds, as a control rather than a readout: a repo with a
+// 2-bit and an 8-bit copy should not have that decided silently. The best fit
+// is pre-selected so the common case is still one click.
+//
+// Options vLLM could not load are shown disabled rather than hidden, because
+// "the 65 GB one is right there and greyed out" answers a question that its
+// absence would only raise.
 function renderQuants(d) {
-  el.quantList.innerHTML = "";
+  el.quantSelect.innerHTML = "";
   if (!d.all_variants || d.all_variants.length < 2) {
     el.quants.hidden = true;
     return;
   }
   el.quants.hidden = false;
   el.quantsCount.textContent = `(${d.all_variants.length})`;
+
   for (const v of d.all_variants) {
-    const li = document.createElement("li");
-    if (d.best_variant && v.name === d.best_variant.name) {
-      li.dataset.pick = "best";
-      li.title = "The largest that fits this machine";
+    const opt = document.createElement("option");
+    opt.value = v.label;
+    const size = `${v.size_gb.toFixed(1)} GB`;
+    if (v.blocked) {
+      opt.disabled = true;
+      opt.textContent = `${v.label} — ${size} — ${v.blocked}`;
+    } else if (v.gguf && !d.gguf_ready) {
+      opt.disabled = true;
+      opt.textContent = `${v.label} — ${size} — needs the GGUF plugin`;
     } else if (d.budget_gb > 0 && v.size_gb > d.budget_gb) {
-      li.dataset.pick = "toobig";
-      li.title = "Larger than this machine's budget";
+      opt.textContent = `${v.label} — ${size} — too big for this machine`;
+    } else {
+      opt.textContent = `${v.label} — ${size}`;
     }
-    const label = document.createElement("span");
-    label.className = "quant-label";
-    label.textContent = v.label;
-    const size = document.createElement("span");
-    size.className = "quant-size";
-    size.textContent = `${v.size_gb.toFixed(1)} GB`;
-    li.append(label, size);
-    el.quantList.append(li);
+    if (d.best_variant && v.name === d.best_variant.name) {
+      opt.selected = true;
+    }
+    el.quantSelect.append(opt);
   }
+
+  el.quantNote.textContent = d.best_variant
+    ? `${d.best_variant.label} is the biggest this machine can serve.`
+    : "None of these can be served on this machine.";
 }
 
 async function inspect(repo) {
@@ -250,6 +262,20 @@ async function inspect(repo) {
     }
 
     renderQuants(d);
+
+    // A repo that is entirely GGUF on a machine without the plugin cannot be
+    // served at all, so say that before the button rather than after it.
+    if (d.needs_gguf && !d.gguf_ready) {
+      el.dropped.hidden = false;
+      el.dropped.textContent =
+        "This vLLM cannot load GGUF — support moved out of vLLM core in 0.27.1. " +
+        "Run 'vllm-helper install-gguf' on the machine, or pick a model with " +
+        "safetensors weights (AWQ, GPTQ, FP8, NVFP4).";
+      el.pull.disabled = true;
+      el.loading.hidden = true;
+      el.body.hidden = false;
+      return;
+    }
 
     el.flags.hidden = !d.detected_flags;
     if (d.detected_flags) {
@@ -292,9 +318,11 @@ el.pull.addEventListener("click", async () => {
   el.pull.disabled = true;
   el.pull.textContent = "Saving…";
   try {
-    const res = await api(`/api/pull?repo=${encodeURIComponent(repo)}`, {
-      method: "POST",
-    });
+    let path = `/api/pull?repo=${encodeURIComponent(repo)}`;
+    if (!el.quants.hidden && el.quantSelect.value) {
+      path += `&quant=${encodeURIComponent(el.quantSelect.value)}`;
+    }
+    const res = await api(path, { method: "POST" });
     // The interesting thing now is the machine coming up, which is the other
     // page's whole job -- so hand over to it rather than reporting from here.
     const notes = [...(res.notes || []), ...(res.warnings || [])];

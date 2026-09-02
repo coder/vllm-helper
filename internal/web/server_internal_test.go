@@ -446,3 +446,39 @@ func TestRemoveRefusesTheActiveProfile(t *testing.T) {
 		t.Errorf("removing a missing profile = %d, want 404", rec.Code)
 	}
 }
+
+// A quant name off a query string decides what the machine serves, so it is
+// resolved against the repo rather than trusted. Anything the repo does not
+// hold has to be refused before the pull, because pulling restarts the service
+// and a model that cannot start takes the running one down with it.
+//
+// Deliberately uses a repo id that cannot resolve rather than a real one: the
+// point is that an unresolvable choice never reaches the profile writer, and
+// a test that depends on the Hub answering would be asserting the Hub.
+func TestPullRefusesAQuantItCannotResolve(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	req := httptest.NewRequest("POST",
+		"/api/pull?repo=vllm-helper-test/definitely-not-a-real-repo&quant="+
+			url.QueryEscape("Q8_0"), nil)
+	req.Header.Set(tokenHeader, s.token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK {
+		t.Errorf("POST /api/pull with an unresolvable quant = 200, want a refusal")
+	}
+	if strings.Contains(rec.Body.String(), "sk-do-not-leak-me") {
+		t.Error("the refusal leaked a credential")
+	}
+	entries, err := os.ReadDir(s.cfg.Dirs.Profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != "demo.env" {
+			t.Errorf("a profile was written for a refused pull: %s", e.Name())
+		}
+	}
+}

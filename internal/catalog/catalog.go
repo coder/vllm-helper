@@ -71,11 +71,19 @@ type Detail struct {
 	// Best is the largest copy that fits the budget -- what someone would
 	// choose by hand, and what the verdict should be about. Absent when
 	// nothing fits or there is no budget to judge against.
-	Best          *hf.Variant `json:"best_variant,omitempty"`
-	BudgetGB      float64     `json:"budget_gb"`             // 0 = unknown (no config)
-	FitsBudget    *bool       `json:"fits_budget,omitempty"` // absent when either side is unknown
-	DetectedFlags string      `json:"detected_flags"`
-	MaxModelLen   string      `json:"detected_max_model_len,omitempty"`
+	Best *hf.Variant `json:"best_variant,omitempty"`
+	// NeedsGGUF is true when every copy in this repo is GGUF, so the repo as
+	// a whole is out of reach without vLLM's out-of-tree plugin.
+	NeedsGGUF bool `json:"needs_gguf,omitempty"`
+	// GGUFReady is whether this machine's vLLM can load GGUF at all.
+	GGUFReady bool `json:"gguf_ready"`
+	// BaseModel is where a GGUF's tokenizer and config have to come from,
+	// since GGUF repos largely ship no config.json of their own.
+	BaseModel     string  `json:"base_model,omitempty"`
+	BudgetGB      float64 `json:"budget_gb"`             // 0 = unknown (no config)
+	FitsBudget    *bool   `json:"fits_budget,omitempty"` // absent when either side is unknown
+	DetectedFlags string  `json:"detected_flags"`
+	MaxModelLen   string  `json:"detected_max_model_len,omitempty"`
 	// DroppedFlags explains anything the card asked for that the installed
 	// vLLM won't take, so it's visible before pulling rather than as a
 	// crash loop afterwards.
@@ -102,7 +110,15 @@ func ToResult(m hf.Model) Result {
 // A model whose size could not be read keeps FitsBudget unset rather than
 // guessing, so nothing downstream claims it fits.
 func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
-	d := Detail{Result: ToResult(m), BudgetGB: budgetGB}
+	d := Detail{
+		Result:    ToResult(m),
+		BudgetGB:  budgetGB,
+		BaseModel: m.BaseModel(),
+		// Only claim the plugin is missing when the registry was actually
+		// readable. An unreadable one means "we could not ask", and refusing
+		// a pull on that basis would be worse than letting it try.
+		GGUFReady: !caps.KnowsQuantizations() || caps.SupportsGGUF(),
+	}
 	// A failed measurement is not the same as a repo with nothing to measure:
 	// the pagination guards report an error precisely so a short listing is
 	// not mistaken for a small model, and swallowing it here would undo that.
@@ -112,13 +128,14 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
 		d.SizeGB = w.SizeGB
 		d.Variants = w.Variants
 		d.All = w.All
+		d.NeedsGGUF = allGGUF(w.All)
 		if d.BudgetGB > 0 {
 			fits := w.SizeGB <= d.BudgetGB
 			d.FitsBudget = &fits
 			// Which one to actually run is a separate question from
 			// whether any of them can, and only worth answering when
 			// there is more than one to choose between.
-			if best, ok := w.BestFit(d.BudgetGB); ok && len(w.All) > 1 {
+			if best, ok := w.BestFit(d.BudgetGB, caps.SupportsGGUF()); ok && len(w.All) > 1 {
 				d.Best = &best
 			}
 		}
@@ -147,13 +164,38 @@ type Plan struct {
 // Nothing here is fatal. Every check that fails degrades to a note, because
 // the alternative -- refusing to save a profile because the Hub was slow --
 // helps nobody.
-func PrepareProfile(dirs config.Dirs, repo string, caps vllm.Caps) Plan {
+func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Caps) Plan {
 	var p Plan
 	name := profile.NameFromRepo(repo)
+	model := repo
+
+	// A chosen quant becomes part of the model string, which is how vLLM
+	// addresses one: "repo:Q8_0". Only GGUF works this way -- for everything
+	// else the repo is the quant, so there is nothing to append.
+	var extraFlags string
+	if choice != nil {
+		if sel, ok := choice.Variant.Selector(); ok {
+			model += sel
+			name = profile.NameFromRepo(repo) + "-" + strings.ToLower(choice.Variant.Label)
+			p.Notes = append(p.Notes, "Serving the "+choice.Variant.Label+" quant.")
+		}
+		// vLLM's GGUF plugin resolves its HF config from the tokenizer repo,
+		// and GGUF publishers largely ship no config.json, so without this
+		// the server cannot start at all.
+		if choice.Variant.GGUF && choice.BaseModel != "" {
+			extraFlags = "--tokenizer " + choice.BaseModel
+			p.Notes = append(p.Notes,
+				"Pointing --tokenizer at "+choice.BaseModel+
+					", since GGUF repos rarely ship the config vLLM needs.")
+		}
+	}
 
 	detected, _ := hf.DetectFlags(repo)
 	extraArgs, dropped := vllm.Check(detected.ExtraArgs, caps)
 	p.Notes = append(p.Notes, dropped...)
+	if extraFlags != "" {
+		extraArgs = strings.TrimSpace(extraFlags + " " + extraArgs)
+	}
 
 	if patched, needsPatch, err := hf.DetectChatTemplatePatch(repo); err != nil {
 		p.Notes = append(p.Notes, "Chat template check failed, continuing without it: "+err.Error())
@@ -174,7 +216,8 @@ func PrepareProfile(dirs config.Dirs, repo string, caps vllm.Caps) Plan {
 	}
 
 	p.Opts = profile.CreateOpts{
-		Repo:        repo,
+		Repo:        model,
+		Name:        name,
 		MaxModelLen: detected.MaxModelLen,
 		ExtraArgs:   extraArgs,
 		Source:      "vllm-helper new",
@@ -189,4 +232,39 @@ func PrepareProfile(dirs config.Dirs, repo string, caps vllm.Caps) Plan {
 		p.Opts.Status = "NOT YET VERIFIED -- no flags auto-detected, check the model card by hand"
 	}
 	return p
+}
+
+// allGGUF reports whether every copy in a repo is GGUF, which makes the repo
+// itself unreachable without the plugin. A repo that also ships safetensors is
+// not, since that copy serves natively.
+func allGGUF(all []hf.Variant) bool {
+	if len(all) == 0 {
+		return false
+	}
+	for _, v := range all {
+		if !v.GGUF {
+			return false
+		}
+	}
+	return true
+}
+
+// FindVariant resolves a user's quant choice against what a repo holds.
+//
+// Matching is case-insensitive on the label, since quant names are written
+// however the publisher felt: Q8_0, q8_0, and UD-Q2_K_XL all appear.
+func FindVariant(all []hf.Variant, label string) (hf.Variant, bool) {
+	for _, v := range all {
+		if strings.EqualFold(v.Label, label) {
+			return v, true
+		}
+	}
+	return hf.Variant{}, false
+}
+
+// Choice is a user's decision about which copy of a model to serve, together
+// with the base model its tokenizer must come from.
+type Choice struct {
+	Variant   hf.Variant
+	BaseModel string
 }
