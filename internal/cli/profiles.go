@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/coder/vllm-helper/internal/catalog"
 	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
 )
@@ -184,45 +183,13 @@ func pullAndSwitch(cfg *config.Config, repo string, opts watchOpts) error {
 	}
 
 	fmt.Println("Pulling new model:", repo)
-	fmt.Println("Checking the model's README for known vLLM serving flags...")
-	detected, _ := hf.DetectFlags(repo)
-	// A card prescribes flags for whatever vLLM its author ran. Drop the
-	// ones this build won't accept before they reach a profile, or the
-	// first switch is a crash loop.
-	extraArgs := checkExtraArgs(detected.ExtraArgs, vllmCaps(cfg))
-
-	fmt.Println("Checking the model's chat template for known crash patterns...")
-	patchedTemplate, needsPatch, err := hf.DetectChatTemplatePatch(repo)
-	if err != nil {
-		fmt.Println("Chat template check failed, continuing without it:", err)
-	} else if needsPatch {
-		tmplPath := filepath.Join(cfg.Dirs.Data, "chat-templates", name+".jinja")
-		if err := os.MkdirAll(filepath.Dir(tmplPath), 0o755); err != nil {
-			fmt.Println("Couldn't create chat-templates dir, continuing without the patch:", err)
-		} else if err := os.WriteFile(tmplPath, []byte(patchedTemplate), 0o644); err != nil {
-			fmt.Println("Couldn't write patched template, continuing without it:", err)
-		} else {
-			fmt.Println("This model's bundled template crashes if a system-role message isn't")
-			fmt.Println("first in the conversation (common with agent harnesses like Coder Agents).")
-			fmt.Println("Patched a local copy:", tmplPath)
-			extraArgs = strings.TrimSpace(extraArgs + " --chat-template " + tmplPath)
-		}
+	fmt.Println("Checking the model's README for known vLLM serving flags, and its")
+	fmt.Println("chat template for known crash patterns...")
+	plan := catalog.PrepareProfile(cfg.Dirs, repo, vllmCaps(cfg))
+	for _, n := range plan.Notes {
+		fmt.Println(n)
 	}
-
-	createOpts := profile.CreateOpts{
-		Repo:        repo,
-		MaxModelLen: detected.MaxModelLen,
-		ExtraArgs:   extraArgs,
-		Source:      "vllm-helper new",
-	}
-	if extraArgs != "" {
-		fmt.Println("Auto-detected from the model card:", extraArgs)
-		createOpts.Status = "NOT YET VERIFIED -- flags auto-detected from README"
-	} else {
-		fmt.Println("No vllm serve snippet found in the model's README -- check its HF card by")
-		fmt.Println("hand and edit the profile if it needs specific flags.")
-		createOpts.Status = "NOT YET VERIFIED -- no flags auto-detected, check the model card by hand"
-	}
+	createOpts := plan.Opts
 	fmt.Printf("Saving it as profile '%s' for next time.\n", name)
 	p, err = profile.Create(cfg.Dirs, createOpts)
 	if err != nil {

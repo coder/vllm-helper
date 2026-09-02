@@ -27,6 +27,23 @@ const el = {
   follow: $("[data-follow]"),
   restart: $("[data-restart]"),
   stop: $("[data-stop]"),
+  searchForm: $("[data-search-form]"),
+  searchInput: $("[data-search-input]"),
+  searchBtn: $("[data-search-btn]"),
+  searchError: $("[data-search-error]"),
+  hits: $("[data-hits]"),
+  sheet: $("[data-inspect]"),
+  sheetTitle: $("[data-inspect-title]"),
+  sheetLink: $("[data-inspect-link]"),
+  sheetLoading: $("[data-inspect-loading]"),
+  sheetBody: $("[data-inspect-body]"),
+  sheetError: $("[data-inspect-error]"),
+  verdict: $("[data-verdict]"),
+  facts: $("[data-inspect-facts]"),
+  flags: $("[data-inspect-flags]"),
+  dropped: $("[data-inspect-dropped]"),
+  pull: $("[data-pull]"),
+  cancelInspect: $("[data-inspect-cancel]"),
 };
 
 // The token arrives once in the URL and is exchanged for a cookie by the
@@ -121,6 +138,9 @@ function renderStatus(s) {
   document
     .querySelectorAll("[data-switch]")
     .forEach((b) => (b.disabled = !canAct || b.dataset.switch === s.profile));
+  document
+    .querySelectorAll("[data-remove]")
+    .forEach((b) => (b.disabled = !canAct || b.dataset.remove === s.profile));
 }
 
 function renderMachine(m) {
@@ -148,7 +168,7 @@ function renderProfiles(list, activeName) {
   el.modelCount.textContent = list.length ? `(${list.length})` : "";
   if (!list.length) {
     el.models.innerHTML =
-      '<li class="empty">No saved models yet. Pull one with <code>vllm-helper new &lt;org/model&gt;</code>.</li>';
+      '<li class="empty">No saved models yet. Find one under <strong>Add model</strong>.</li>';
     return;
   }
   el.models.innerHTML = "";
@@ -187,6 +207,16 @@ function renderProfiles(list, activeName) {
       btn.dataset.switch = p.name;
       btn.addEventListener("click", () => switchTo(p.name, p.model || p.name));
       li.append(btn);
+
+      // Only inactive profiles get this. Removing the running one is
+      // refused by the server anyway, and offering a button that cannot
+      // work is worse than not offering it.
+      const rm = document.createElement("button");
+      rm.className = "m-remove";
+      rm.textContent = "Remove";
+      rm.dataset.remove = p.name;
+      rm.addEventListener("click", () => removeProfile(p.name));
+      li.append(rm);
     }
     el.models.append(li);
   }
@@ -344,3 +374,245 @@ document.addEventListener("visibilitychange", () => {
 
 refresh();
 logLoop();
+
+// ---------- views ----------
+
+// Two views, no router: the panel is one screen with a second job attached,
+// and a URL per view would only mean the token dance had to happen twice.
+function showView(name) {
+  document
+    .querySelectorAll("[data-panel]")
+    .forEach((p) => (p.hidden = p.dataset.panel !== name));
+  document
+    .querySelectorAll(".tab")
+    .forEach((t) =>
+      t.dataset.view === name
+        ? t.setAttribute("aria-current", "page")
+        : t.removeAttribute("aria-current"),
+    );
+  if (name === "discover") el.searchInput.focus();
+}
+
+document
+  .querySelectorAll(".tab")
+  .forEach((t) => t.addEventListener("click", () => showView(t.dataset.view)));
+
+// ---------- search ----------
+
+function fmtCount(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)}k`;
+  return String(n);
+}
+
+function renderHits(results) {
+  el.hits.innerHTML = "";
+  if (!results.length) {
+    el.hits.innerHTML =
+      '<li class="empty">No text-generation models matched. Try different terms.</li>';
+    return;
+  }
+  for (const r of results) {
+    const li = document.createElement("li");
+    li.tabIndex = 0;
+    li.setAttribute("role", "button");
+
+    const main = document.createElement("div");
+    main.className = "hit-main";
+    const id = document.createElement("div");
+    id.className = "hit-id";
+    id.textContent = r.id;
+    const meta = document.createElement("div");
+    meta.className = "hit-meta";
+    meta.append(
+      `${fmtCount(r.downloads)} downloads · ${fmtCount(r.likes)} likes · ${r.license}`,
+    );
+    if (r.quant_tags?.length) {
+      const q = document.createElement("span");
+      q.className = "hit-quant";
+      q.textContent = `  [${r.quant_tags.join(", ")}]`;
+      meta.append(q);
+    }
+    main.append(id, meta);
+    li.append(main);
+
+    const open = () => inspect(r.id);
+    li.addEventListener("click", open);
+    li.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        open();
+      }
+    });
+    el.hits.append(li);
+  }
+}
+
+el.searchForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = el.searchInput.value.trim();
+  if (!q) return;
+  el.searchError.hidden = true;
+  el.searchBtn.disabled = true;
+  el.searchBtn.textContent = "Searching…";
+  el.hits.innerHTML = "";
+  try {
+    const { results } = await api(`/api/search?q=${encodeURIComponent(q)}`);
+    renderHits(results);
+  } catch (err) {
+    el.searchError.textContent = err.message;
+    el.searchError.hidden = false;
+  } finally {
+    el.searchBtn.disabled = false;
+    el.searchBtn.textContent = "Search";
+  }
+});
+
+// ---------- inspect ----------
+
+let inspecting = null;
+
+function fact(dl, term, value) {
+  const dt = document.createElement("dt");
+  dt.textContent = term;
+  const dd = document.createElement("dd");
+  dd.textContent = value;
+  dl.append(dt, dd);
+}
+
+// The verdict repeats the CLI's wording on purpose. Someone who has read
+// 'inspect' output in a terminal should not have to learn a second vocabulary
+// for the same judgement, and the error direction matters: an over-report is
+// an annoyance, an under-report gets a 100 GB download and an OOM.
+function renderVerdict(d) {
+  const of =
+    d.variants > 1 ? `, smallest of ${d.variants} quants in this repo` : "";
+  if (d.size_error) {
+    el.verdict.dataset.fit = "unknown";
+    el.verdict.textContent = `Size could not be measured: ${d.size_error}`;
+  } else if (!d.size_gb) {
+    el.verdict.dataset.fit = "unknown";
+    el.verdict.textContent =
+      "No servable weights found — an adapter or projector-only repo, or check the model card.";
+  } else if (d.fits_budget === undefined) {
+    el.verdict.dataset.fit = "unknown";
+    el.verdict.textContent = `${d.size_gb.toFixed(1)} GB — no budget configured on this machine${of}.`;
+  } else if (d.fits_budget) {
+    el.verdict.dataset.fit = "yes";
+    el.verdict.textContent = `${d.size_gb.toFixed(1)} GB — fits under the ~${Math.round(d.budget_gb)} GB budget${of}.`;
+  } else {
+    el.verdict.dataset.fit = "no";
+    el.verdict.textContent = `${d.size_gb.toFixed(1)} GB — TOO BIG for this machine's ~${Math.round(d.budget_gb)} GB budget${of}. You can still pull it, but expect it not to load.`;
+  }
+}
+
+async function inspect(repo) {
+  inspecting = repo;
+  el.sheetTitle.textContent = repo;
+  el.sheetLink.href = `https://huggingface.co/${repo}`;
+  el.sheetLoading.hidden = false;
+  el.sheetBody.hidden = true;
+  el.sheetError.hidden = true;
+  el.pull.disabled = true;
+  el.pull.textContent = "Pull and switch";
+  el.sheet.showModal();
+
+  try {
+    const d = await api(`/api/inspect?repo=${encodeURIComponent(repo)}`);
+    if (inspecting !== repo) return; // a newer pick won
+
+    renderVerdict(d);
+
+    el.facts.innerHTML = "";
+    fact(el.facts, "license", d.license);
+    fact(el.facts, "downloads", fmtCount(d.downloads));
+    fact(
+      el.facts,
+      "quant",
+      d.quant_tags?.length ? d.quant_tags.join(", ") : "none detected in tags",
+    );
+    if (d.detected_max_model_len) {
+      fact(
+        el.facts,
+        "context",
+        Number(d.detected_max_model_len).toLocaleString(),
+      );
+    }
+
+    el.flags.hidden = !d.detected_flags;
+    if (d.detected_flags) {
+      el.flags.textContent = `Flags auto-detected from the model card, and accepted by your vLLM: ${d.detected_flags}`;
+    }
+    el.dropped.hidden = !d.dropped_flags?.length;
+    if (d.dropped_flags?.length) {
+      el.dropped.textContent = d.dropped_flags.join("\n");
+    }
+
+    // An existing profile means pulling would be a switch, so say that
+    // rather than letting the button imply something new is downloaded.
+    el.pull.textContent = d.existing_profile
+      ? `Switch to saved '${d.existing_profile}'`
+      : "Pull and switch";
+    el.pull.disabled = false;
+    el.sheetLoading.hidden = true;
+    el.sheetBody.hidden = false;
+  } catch (err) {
+    if (inspecting !== repo) return;
+    el.sheetLoading.hidden = true;
+    el.sheetError.textContent = err.message;
+    el.sheetError.hidden = false;
+  }
+}
+
+el.cancelInspect.addEventListener("click", () => el.sheet.close());
+
+el.pull.addEventListener("click", async () => {
+  const repo = inspecting;
+  if (!repo) return;
+  if (
+    !confirm(
+      `Pull ${repo} and switch to it?\n\nThis restarts the server and unloads the current model. vLLM downloads the weights on start, so a large model can take a long time before it serves.`,
+    )
+  ) {
+    return;
+  }
+  el.pull.disabled = true;
+  el.pull.textContent = "Saving…";
+  try {
+    const res = await api(`/api/pull?repo=${encodeURIComponent(repo)}`, {
+      method: "POST",
+    });
+    el.sheet.close();
+    showView("machine");
+    const notes = [...(res.notes || []), ...(res.warnings || [])];
+    showError(notes.join("\n"));
+    activeProfile = null; // force the model list to rebuild with the new one
+    refresh();
+  } catch (err) {
+    el.sheetError.textContent = err.message;
+    el.sheetError.hidden = false;
+    el.pull.disabled = false;
+    el.pull.textContent = "Pull and switch";
+  }
+});
+
+// ---------- remove ----------
+
+async function removeProfile(name) {
+  if (
+    !confirm(
+      `Delete the saved profile '${name}'?\n\nThis removes its settings and its Coder model entry. The downloaded weights stay in your HuggingFace cache.`,
+    )
+  ) {
+    return;
+  }
+  try {
+    await api(`/api/profiles/${encodeURIComponent(name)}/remove`, {
+      method: "POST",
+    });
+    activeProfile = null;
+    refresh();
+  } catch (err) {
+    showError(err.message);
+  }
+}

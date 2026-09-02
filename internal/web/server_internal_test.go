@@ -339,3 +339,110 @@ func TestReloadedTabCanRecoverTheTokenAndMutate(t *testing.T) {
 		t.Error("unauthenticated GET /api/token leaked the token")
 	}
 }
+
+// The model-management endpoints reach the network and write profiles, so
+// they must sit behind the same guard as everything else. An unauthenticated
+// caller reaching any of them would be able to make this machine fetch from
+// the internet and rewrite what it serves.
+func TestModelEndpointsRequireAuth(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/search?q=qwen"},
+		{"GET", "/api/inspect?repo=Qwen/Qwen3-0.6B"},
+		{"POST", "/api/pull?repo=Qwen/Qwen3-0.6B"},
+		{"POST", "/api/profiles/demo/remove"},
+	} {
+		req := httptest.NewRequest(c.method, c.path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s = %d, want 401", c.method, c.path, rec.Code)
+		}
+	}
+
+	// And the mutations need the token in a header, not just the cookie:
+	// a cookie alone would let another site POST here.
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/api/pull?repo=Qwen/Qwen3-0.6B"},
+		{"POST", "/api/profiles/demo/remove"},
+	} {
+		req := httptest.NewRequest(c.method, c.path, nil)
+		req.AddCookie(&http.Cookie{Name: tokenCookie, Value: s.token})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s %s with cookie only = %d, want 403", c.method, c.path, rec.Code)
+		}
+	}
+}
+
+// A repo id off a query string reaches both an outbound URL and, via
+// NameFromRepo, a filename. It must be rejected before either, and rejected
+// without the handler having gone to the network to find out.
+func TestMalformedRepoIsRejectedBeforeAnyWork(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	for _, repo := range []string{
+		"", "../../etc/passwd", "owner/..", "noslash", "owner/na me",
+		"https://evil.test/x", "a/b/c",
+	} {
+		path := "/api/inspect?repo=" + url.QueryEscape(repo)
+		req := httptest.NewRequest("GET", path, nil)
+		req.Header.Set(tokenHeader, s.token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("GET /api/inspect?repo=%q = %d, want 400", repo, rec.Code)
+		}
+	}
+
+	// The same guard has to hold on the write path, which is the one that
+	// would create a file.
+	for _, repo := range []string{"owner/..", "../../etc/passwd", "a/b/c"} {
+		path := "/api/pull?repo=" + url.QueryEscape(repo)
+		req := httptest.NewRequest("POST", path, nil)
+		req.Header.Set(tokenHeader, s.token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("POST /api/pull?repo=%q = %d, want 400", repo, rec.Code)
+		}
+	}
+}
+
+// Removing the model currently being served would leave the running service
+// with no profile behind it, so it is refused rather than allowed to happen
+// and be discovered at the next restart.
+func TestRemoveRefusesTheActiveProfile(t *testing.T) {
+	s := newTestServer(t)
+	// The active profile is state, not config: it lives in its own file so a
+	// switch does not have to rewrite config.env.
+	if err := os.WriteFile(s.cfg.Dirs.ActiveProfileFile(), []byte("demo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := s.Handler(nil)
+
+	req := httptest.NewRequest("POST", "/api/profiles/demo/remove", nil)
+	req.Header.Set(tokenHeader, s.token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("removing the active profile = %d, want 409", rec.Code)
+	}
+	if _, err := os.Stat(s.cfg.Dirs.ProfileFile("demo")); err != nil {
+		t.Error("the active profile was deleted despite the refusal")
+	}
+
+	// A profile that does not exist is a 404, not a 500 and not a stack
+	// trace -- the name comes off a URL.
+	req = httptest.NewRequest("POST", "/api/profiles/nope/remove", nil)
+	req.Header.Set(tokenHeader, s.token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("removing a missing profile = %d, want 404", rec.Code)
+	}
+}

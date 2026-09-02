@@ -71,6 +71,8 @@ vllm-helper serve --listen 0.0.0.0:8080    # reachable from another machine
 
 Shows what's loaded, how much of the machine's memory is in use, and what else you could switch to, with the server's log underneath. It's a control plane only — inference traffic goes straight to vLLM on its own port, so the panel is never in the path of a request.
 
+**Add model** searches HuggingFace the way `search` does, and picking a result checks its weight size against this machine's budget and its model card's flags against your installed vLLM before anything is saved. Pulling saves a profile and switches to it; the weights themselves are downloaded by vLLM as it starts, so a big model spends a while in the panel's loading state before it serves. Saved models can be removed from the same list they're switched from — the active one can't, and the weights stay in your HuggingFace cache either way.
+
 Every request needs the token printed at startup; open the URL it gives you and it becomes a cookie. Treat that URL like a password, especially with `--listen`: anyone who has it can switch models and stop the server.
 
 Switching and stopping need permission to control the service. On Linux the unit is system-scope by default, so either run the panel with `sudo`, or allow those three commands for your user:

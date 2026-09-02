@@ -11,10 +11,16 @@
     <header class="bar">
       <span class="wordmark">vllm&#8209;helper</span>
       <span class="bar-host" data-host>&nbsp;</span>
+      <nav class="tabs">
+        <button class="tab" data-view="machine" aria-current="page">
+          Machine
+        </button>
+        <button class="tab" data-view="discover">Add model</button>
+      </nav>
       <span class="bar-build" data-build>&nbsp;</span>
     </header>
 
-    <main>
+    <main data-panel="machine">
       <!-- The machine, as one object: what it is serving and what that
            costs it. Everything else on the page is secondary to this. -->
       <section class="now" aria-labelledby="now-title">
@@ -76,6 +82,59 @@
         <pre class="log" data-log tabindex="0">Loading&#8230;</pre>
       </section>
     </main>
+
+    <!-- Finding a model to run is a different job from watching the one that
+         is running, so it gets its own view rather than more rows on the
+         machine page. -->
+    <main data-panel="discover" hidden>
+      <section aria-labelledby="search-title">
+        <h2 class="section-title" id="search-title">Search HuggingFace</h2>
+        <form class="search" data-search-form>
+          <input
+            class="search-input"
+            data-search-input
+            type="search"
+            placeholder="qwen3 coder, nemotron, llama 70b&#8230;"
+            aria-label="Search HuggingFace for a model"
+            autocomplete="off"
+          />
+          <button class="btn" type="submit" data-search-btn>Search</button>
+        </form>
+        <p class="search-note">
+          Text-generation models, most downloaded first. Picking one checks its
+          size against this machine before anything is saved.
+        </p>
+        <div class="notice notice-error" data-search-error hidden></div>
+        <ul class="hits" data-hits></ul>
+      </section>
+    </main>
+
+    <!-- The detail view is a dialog rather than a third page: it is always
+         about a model you just picked, and closing it should put you back on
+         the results you were reading. -->
+    <dialog class="sheet" data-inspect>
+      <form method="dialog" class="sheet-close-form">
+        <button class="sheet-close" aria-label="Close">&times;</button>
+      </form>
+      <h3 class="sheet-title" data-inspect-title>&nbsp;</h3>
+      <a class="sheet-link" data-inspect-link target="_blank" rel="noopener"
+        >View on HuggingFace</a
+      >
+      <p class="sheet-loading" data-inspect-loading>
+        Measuring this model against your machine&#8230;
+      </p>
+      <div class="sheet-body" data-inspect-body hidden>
+        <div class="verdict" data-verdict></div>
+        <dl class="facts" data-inspect-facts></dl>
+        <div class="notice" data-inspect-flags hidden></div>
+        <div class="notice notice-warn" data-inspect-dropped hidden></div>
+      </div>
+      <div class="notice notice-error" data-inspect-error hidden></div>
+      <div class="sheet-actions">
+        <button class="btn" data-pull disabled>Pull and switch</button>
+        <button class="btn btn-quiet" data-inspect-cancel>Cancel</button>
+      </div>
+    </dialog>
 
     <script src="/app.js"></script>
   </body>

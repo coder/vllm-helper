@@ -26,6 +26,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/service"
+	"github.com/coder/vllm-helper/internal/vllm"
 )
 
 // Server holds everything the handlers need.
@@ -78,6 +79,15 @@ func (s *Server) health() (int, bool) {
 	code, ok := probeHealth(s.cfg.Port())
 	s.healthAt, s.healthCode, s.healthOK = time.Now(), code, ok
 	return code, ok
+}
+
+// caps describes what the installed vLLM will accept, so a model card's flags
+// can be checked before they reach a profile.
+//
+// Probe caches its answer on disk keyed by vLLM version, so this is cheap
+// after the first call and correct across an upgrade.
+func (s *Server) caps() vllm.Caps {
+	return vllm.Probe(s.cfg.VLLMBin(), s.cfg.Dirs.State)
 }
 
 // privilege reports the cached answer.
@@ -157,6 +167,10 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/logs", s.guard(s.handleLogs))
 	mux.HandleFunc("GET /api/machine", s.guard(s.handleMachine))
 	mux.HandleFunc("GET /api/token", s.guard(s.handleToken))
+	mux.HandleFunc("GET /api/search", s.guard(s.handleSearch))
+	mux.HandleFunc("GET /api/inspect", s.guard(s.handleInspect))
+	mux.HandleFunc("POST /api/pull", s.guard(s.handlePull))
+	mux.HandleFunc("POST /api/profiles/{name}/remove", s.guard(s.handleRemoveProfile))
 	mux.HandleFunc("POST /api/switch/{name}", s.guard(s.handleSwitch))
 	mux.HandleFunc("POST /api/restart", s.guard(s.handleRestart))
 	mux.HandleFunc("POST /api/stop", s.guard(s.handleStop))
