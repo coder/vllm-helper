@@ -176,6 +176,14 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/restart", s.guard(s.handleRestart))
 	mux.HandleFunc("POST /api/stop", s.guard(s.handleStop))
 
+	// Real pages rather than one document that hides half of itself:
+	// watching a machine and choosing a model are separate jobs, and each
+	// then loads only its own script. Extensionless so the address bar reads
+	// as a place rather than a file.
+	mux.Handle("GET /models", s.guard(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, static, "models.html")
+	}))
+
 	files := http.FileServerFS(static)
 	mux.Handle("GET /", s.guard(func(w http.ResponseWriter, r *http.Request) {
 		files.ServeHTTP(w, r)

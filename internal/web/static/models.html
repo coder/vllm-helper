@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Add model &middot; vllm-helper</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="wordmark">vllm&#8209;helper</span>
+      <span class="bar-host" data-host>&nbsp;</span>
+      <nav class="tabs">
+        <a class="tab" href="/">Machine</a>
+        <a class="tab" href="/models" aria-current="page">Add model</a>
+      </nav>
+      <span class="bar-build" data-build>&nbsp;</span>
+    </header>
+
+    <main class="discover">
+      <div class="discover-head">
+        <h1 class="page-title">Add a model</h1>
+        <p class="page-sub" data-budget-line hidden></p>
+      </div>
+
+      <!-- Left: what exists. Right: whether this machine can run it. The
+           split is the point of the page -- the Hub's listing has no sizes,
+           so the verdict has to be fetched per model, and putting it beside
+           the list means you can work through candidates without losing
+           your place. -->
+      <div class="discover-cols">
+        <section class="col-results" aria-labelledby="results-title">
+          <h2 class="sr-only" id="results-title">Search results</h2>
+          <form class="search" data-search-form>
+            <input
+              class="search-input"
+              data-search-input
+              type="search"
+              placeholder="qwen3 coder, nemotron, llama&#8230;"
+              aria-label="Search HuggingFace for a model"
+              autocomplete="off"
+            />
+            <button class="btn" type="submit" data-search-btn>Search</button>
+          </form>
+          <div class="notice notice-error" data-search-error hidden></div>
+          <p class="results-note" data-results-note hidden></p>
+          <ul class="hits" data-hits></ul>
+        </section>
+
+        <section class="col-detail" aria-labelledby="detail-title">
+          <h2 class="sr-only" id="detail-title">Model detail</h2>
+
+          <div class="detail-empty" data-detail-empty>
+            <p>Search for a model, then pick one.</p>
+            <p class="detail-empty-sub">
+              Picking a result measures its weights against this machine and
+              checks the flags on its model card against your installed vLLM,
+              before anything is saved.
+            </p>
+          </div>
+
+          <article class="detail" data-detail hidden>
+            <h3 class="detail-title" data-detail-title>&nbsp;</h3>
+            <a
+              class="detail-link"
+              data-detail-link
+              target="_blank"
+              rel="noopener"
+              >View on HuggingFace &rarr;</a
+            >
+
+            <p class="detail-loading" data-detail-loading>
+              Measuring against this machine&#8230;
+            </p>
+
+            <div data-detail-body hidden>
+              <div class="verdict" data-verdict></div>
+              <dl class="facts" data-facts></dl>
+              <div class="notice" data-flags hidden></div>
+              <div class="notice notice-warn" data-dropped hidden></div>
+            </div>
+
+            <div class="notice notice-error" data-detail-error hidden></div>
+
+            <div class="detail-actions">
+              <button class="btn" data-pull disabled>Pull and switch</button>
+              <p class="detail-note" data-pull-note hidden></p>
+            </div>
+          </article>
+        </section>
+      </div>
+    </main>
+
+    <script src="/common.js"></script>
+    <script src="/models.js"></script>
+  </body>
+</html>
