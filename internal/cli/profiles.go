@@ -197,12 +197,17 @@ func resolveQuant(cfg *config.Config, repo, want string) (*catalog.Choice, error
 	d := inspectModel(m, cfg)
 	v, ok := catalog.FindVariant(d.All, want)
 	if !ok {
-		var have []string
+		// A repo holding one copy has nothing to choose between, and listing
+		// its single placeholder label back ("it has: default") reads as a
+		// typo on the user's part rather than a category error.
+		if len(d.All) < 2 {
+			return nil, fmt.Errorf(
+				"%s ships a single set of weights, so there is no quant to choose -- drop --quant, "+
+					"or look for a repo of quantized builds", repo)
+		}
+		have := make([]string, 0, len(d.All))
 		for _, x := range d.All {
 			have = append(have, x.Label)
-		}
-		if len(have) == 0 {
-			return nil, fmt.Errorf("%s ships a single copy, so there is no quant to choose", repo)
 		}
 		return nil, fmt.Errorf("%s has no quant called %q -- it has: %s",
 			repo, want, strings.Join(have, ", "))

@@ -204,6 +204,13 @@ func printModelDetail(d catalog.Detail) {
 	for _, w := range d.DroppedFlags {
 		fmt.Printf("  dropped:    %s\n", w)
 	}
+	// A repo that is entirely GGUF on a machine without the plugin cannot be
+	// served at all, whichever quant is picked, so lead with that rather than
+	// leaving it to be inferred from every row saying the same thing.
+	if d.NeedsGGUF && !d.GGUFReady {
+		fmt.Println()
+		fmt.Println("  " + ggufMissingMessage(nil))
+	}
 	printVariants(d)
 }
 
@@ -235,10 +242,13 @@ func printVariants(d catalog.Detail) {
 		}
 		fmt.Printf("%s %-14s %6.1f GB%s\n", mark, v.Label, v.SizeGB, note)
 	}
+	// Only offer the flag when there is something it could pick. On a machine
+	// that cannot load GGUF every row is struck through, and inviting a
+	// choice there would be inviting a failure.
 	if d.Best != nil {
 		fmt.Printf("    > = the one 'new --quant %s' would serve\n", d.Best.Label)
+		fmt.Printf("    Choose another with: vllm-helper new %s --quant <name>\n", d.ID)
 	}
-	fmt.Printf("    Choose another with: vllm-helper new %s --quant <name>\n", d.ID)
 }
 
 // pickQuant asks which copy of a model to serve, when there is a choice worth
