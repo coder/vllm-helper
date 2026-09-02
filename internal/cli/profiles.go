@@ -12,7 +12,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/catalog"
 	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/plugin"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -224,11 +224,7 @@ func runRemove(args []string) error {
 	if name == cfg.ActiveProfile() {
 		return fmt.Errorf("'%s' is the currently active model -- switch to something else first", name)
 	}
-	plugin.Dispatch(context.Background(), os.Stderr, plugin.EventRemoved, plugin.State{
-		Config:  cfg,
-		Name:    name,
-		BaseURL: localBaseURL(cfg),
-	})
+	control.NotifyRemoved(context.Background(), cfg, name, os.Stderr)
 	if err := profile.Remove(cfg.Dirs, name); err != nil {
 		return err
 	}
@@ -240,7 +236,7 @@ func runRemove(args []string) error {
 // record the active profile, sync Coder, restart the service, and watch
 // the boot according to opts.
 func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) error {
-	if err := writeActiveEnv(cfg, p); err != nil {
+	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err
 	}
 	// Warn, never refuse: profiles get hand-edited and vLLM gets upgraded
@@ -258,18 +254,17 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	}
 
 	fmt.Println()
-	plugin.Dispatch(context.Background(), os.Stderr, plugin.EventActivating, plugin.State{
-		Config:  cfg,
-		Name:    p.Name,
-		Profile: p,
-		BaseURL: localBaseURL(cfg),
-	})
-
-	fmt.Println()
-	fmt.Printf("Restarting %s (this reloads the model -- can take several minutes,\n", cfg.ServiceName())
-	fmt.Println("longer if the model isn't cached on disk yet)...")
-	if err := svc(cfg).Restart(); err != nil {
-		return fmt.Errorf("restarting service: %w", err)
+	// The banner belongs to the restart rather than before it, so that a
+	// plugin taking its time doesn't leave "Restarting..." on screen with
+	// nothing happening yet.
+	restart := func() error {
+		fmt.Println()
+		fmt.Printf("Restarting %s (this reloads the model -- can take several minutes,\n", cfg.ServiceName())
+		fmt.Println("longer if the model isn't cached on disk yet)...")
+		return svc(cfg).Restart()
+	}
+	if err := control.NotifyAndRestart(context.Background(), cfg, p, os.Stderr, restart); err != nil {
+		return err
 	}
 
 	if !opts.follow && !opts.wait {
@@ -280,40 +275,6 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	}
 	fmt.Println()
 	return watchBoot(cfg, p.Name, opts)
-}
-
-// writeActiveEnv assembles state/active.env from config.env + secrets.env +
-// the profile (same layering as the bash implementation, and the output
-// stays bash-sourceable) and records the active profile name.
-func writeActiveEnv(cfg *config.Config, p *profile.Profile) error {
-	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
-		return err
-	}
-	var b strings.Builder
-	appendFile := func(f *config.EnvFile) {
-		if f == nil {
-			return
-		}
-		for _, line := range f.Lines {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-				continue
-			}
-			b.WriteString(line + "\n")
-		}
-	}
-	appendFile(cfg.File)
-	appendFile(cfg.Secrets)
-	appendFile(p.File)
-
-	tmp := cfg.Dirs.ActiveEnvFile() + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, cfg.Dirs.ActiveEnvFile()); err != nil {
-		return err
-	}
-	return os.WriteFile(cfg.Dirs.ActiveProfileFile(), []byte(p.Name+"\n"), 0o644)
 }
 
 // statusReport is the machine-readable shape of `status`.
@@ -349,25 +310,12 @@ func gatherStatus(cfg *config.Config) statusReport {
 			r.Model = m
 		}
 	}
-	r.HTTPStatus, r.Healthy = probeHealth(cfg.Port())
+	r.HTTPStatus, r.Healthy = control.ProbeHealth(cfg.Port())
 	if r.Crashed {
 		// Only worth the journalctl call when there's a failure to explain.
-		r.LastLog = lastMeaningfulLine(svc(cfg).LastLogs(40))
+		r.LastLog = control.LastMeaningfulLine(svc(cfg).LastLogs(40))
 	}
 	return r
-}
-
-// lastMeaningfulLine picks the line most likely to say why the server died.
-// A Python traceback ends with the exception, and vLLM's fatal startup
-// errors are one-liners, so the last non-blank line is nearly always it.
-func lastMeaningfulLine(logs string) string {
-	lines := strings.Split(logs, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if line := strings.TrimSpace(lines[i]); line != "" {
-			return line
-		}
-	}
-	return ""
 }
 
 func newStatusCmd() *cobra.Command {

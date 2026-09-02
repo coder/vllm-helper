@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/profile"
 )
@@ -93,7 +94,7 @@ func (s *Server) status() statusResponse {
 		Build:      s.build,
 		Host:       hostname(),
 	}
-	if active, err := parseActive(s.cfg); err == nil {
+	if active, err := control.ParseActiveEnv(s.cfg); err == nil {
 		if m := active.Get("MODEL"); m != "" {
 			r.Model = m
 		}
@@ -111,7 +112,7 @@ func (s *Server) status() statusResponse {
 		r.Phase = "serving"
 	case h.Crashed:
 		r.Phase = "failing"
-		r.LastLog = lastMeaningfulLine(s.svc.LastLogs(40))
+		r.LastLog = control.LastMeaningfulLine(s.svc.LastLogs(40))
 	case h.State == "active" || h.State == "activating":
 		// The port stays closed for the whole load -- vLLM binds only
 		// after the weights are in memory -- so an unresponsive endpoint

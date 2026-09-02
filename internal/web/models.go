@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/coder/vllm-helper/internal/catalog"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/hf"
-	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -206,11 +206,7 @@ func (s *Server) handleRemoveProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	// Tell the plugins before the file goes, since they key off the name.
 	var pluginOut bytes.Buffer
-	plugin.Dispatch(r.Context(), &pluginOut, plugin.EventRemoved, plugin.State{
-		Config:  s.cfg,
-		Name:    name,
-		BaseURL: fmt.Sprintf("http://localhost:%s/v1", s.cfg.Port()),
-	})
+	control.NotifyRemoved(r.Context(), s.cfg, name, &pluginOut)
 	if err := profile.Remove(s.cfg.Dirs, name); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

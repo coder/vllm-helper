@@ -3,11 +3,11 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
 )
 
 // watchOpts controls how a restart is observed.
@@ -17,20 +17,6 @@ type watchOpts struct {
 	timeout time.Duration // 0 = wait forever (first downloads are slow)
 }
 
-// probeHealth checks vLLM's /health route. Returns the HTTP status code
-// (0 if nothing answered) and whether the endpoint is serving.
-func probeHealth(port string) (int, bool) {
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://localhost:%s/health", port))
-	if err != nil {
-		return 0, false
-	}
-	resp.Body.Close()
-	return resp.StatusCode, resp.StatusCode == http.StatusOK
-}
-
-// crashReason describes a restart loop, counting from the baseline taken
-// before the switch when we have one.
 func crashReason(now, baseline int) string {
 	if baseline >= 0 && now > baseline {
 		return fmt.Sprintf("the service is crash-looping (%d restarts since the switch)", now-baseline)
@@ -82,7 +68,7 @@ func watchBoot(cfg *config.Config, label string, opts watchOpts) error {
 	}
 
 	for {
-		if _, healthy := probeHealth(cfg.Port()); healthy {
+		if _, healthy := control.ProbeHealth(cfg.Port()); healthy {
 			elapsed := time.Since(start).Round(time.Second)
 			fmt.Printf("\n%s serving on port %s (took %s) -- '%s' is live.\n",
 				checkmark(), cfg.Port(), elapsed, label)

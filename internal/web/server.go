@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/service"
 	"github.com/coder/vllm-helper/internal/vllm"
 )
@@ -76,7 +77,7 @@ func (s *Server) health() (int, bool) {
 	if !s.healthAt.IsZero() && time.Since(s.healthAt) < healthProbeTTL {
 		return s.healthCode, s.healthOK
 	}
-	code, ok := probeHealth(s.cfg.Port())
+	code, ok := control.ProbeHealth(s.cfg.Port())
 	s.healthAt, s.healthCode, s.healthOK = time.Now(), code, ok
 	return code, ok
 }
