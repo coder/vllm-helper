@@ -90,7 +90,7 @@ func runSearch(args []string, jsonOut bool) error {
 		m := models[n-1]
 		fmt.Println()
 		d := inspectModel(m, cfg)
-		printModelDetail(d)
+		printModelDetail(d, cfg)
 		fmt.Println()
 
 		choice, cancelled := pickQuant(cfg, d)
@@ -141,7 +141,7 @@ func runInspect(args []string, jsonOut bool) error {
 	if jsonOut {
 		return printJSON(d)
 	}
-	printModelDetail(d)
+	printModelDetail(d, cfg)
 	return nil
 }
 
@@ -155,7 +155,7 @@ func inspectModel(m hf.Model, cfg *config.Config) catalog.Detail {
 	return catalog.Inspect(m, budget, vllmCaps(cfg))
 }
 
-func printModelDetail(d catalog.Detail) {
+func printModelDetail(d catalog.Detail, cfg *config.Config) {
 	fmt.Println(d.ID)
 	fmt.Println(d.URL)
 	fmt.Printf("  license:    %s\n", d.License)
@@ -209,7 +209,7 @@ func printModelDetail(d catalog.Detail) {
 	// leaving it to be inferred from every row saying the same thing.
 	if d.NeedsGGUF && !d.GGUFReady {
 		fmt.Println()
-		fmt.Println("  " + ggufMissingMessage(nil))
+		fmt.Println("  " + ggufMissingMessage(cfg))
 	}
 	printVariants(d)
 }
