@@ -103,7 +103,9 @@ GPU_MEMORY_UTILIZATION=0.85
 EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 ```
 
-Keep `EXTRA_ARGS` quoted if it has more than one flag; flag values with spaces (like JSON) can be quoted inside it. Before pulling a large model, prefer the smallest official quantized release: roughly 1 byte per parameter for FP8/INT8 and 0.5 for INT4/AWQ/GPTQ, against the budget `doctor` reports for your machine.
+Keep `EXTRA_ARGS` quoted if it has more than one flag; flag values with spaces (like JSON) can be quoted inside it.
+
+Before pulling a large model, reach for a quantized release — roughly 1 byte per parameter for FP8/INT8 and 0.5 for INT4/AWQ/GPTQ, against the budget `doctor` reports for your machine. Take the **largest** one that fits rather than the smallest: quantization trades quality for size, so there is nothing to gain from a 2-bit release on a machine with room for 8-bit. `inspect` lists every quant a repo holds and marks the biggest that fits.
 
 ## macOS
 

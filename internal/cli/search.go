@@ -161,7 +161,6 @@ func printModelDetail(d catalog.Detail) {
 	if d.Variants > 1 {
 		of = fmt.Sprintf(", smallest of %d quants in this repo", d.Variants)
 	}
-	defer printVariants(d)
 	switch {
 	case d.SizeError != "":
 		fmt.Printf("  size:       could not be measured: %s\n", d.SizeError)
@@ -172,8 +171,18 @@ func printModelDetail(d catalog.Detail) {
 		fmt.Println("  size:       unknown (no servable weights found -- an adapter or projector-only repo, or check the model card)")
 	case d.FitsBudget == nil:
 		fmt.Printf("  size:       %.1f GB  (no budget configured -- run 'vllm-helper setup'%s)\n", d.SizeGB, of)
+	case *d.FitsBudget && d.Best != nil:
+		// Lead with the one worth running rather than the one that merely
+		// proves something here fits, which is the smallest and so also the
+		// worst quant in the repo.
+		fmt.Printf("  size:       %.1f GB at %s  (biggest of %d quants that fits the ~%.0fGB budget; smallest is %.1f GB)\n",
+			d.Best.SizeGB, d.Best.Label, d.Variants, d.BudgetGB, d.SizeGB)
 	case *d.FitsBudget:
 		fmt.Printf("  size:       %.1f GB  (fits under the ~%.0fGB budget%s)\n", d.SizeGB, d.BudgetGB, of)
+	case d.Variants > 1:
+		// Every quant was measured and the smallest still doesn't fit, so
+		// there is no smaller one to go and look for.
+		fmt.Printf("  size:       %.1f GB  (TOO BIG for this machine -- and it is the smallest of %d quants here, so try a different repo)\n", d.SizeGB, d.Variants)
 	default:
 		fmt.Printf("  size:       %.1f GB  (TOO BIG for this machine -- look for a smaller quant%s)\n", d.SizeGB, of)
 	}
@@ -185,6 +194,7 @@ func printModelDetail(d catalog.Detail) {
 	for _, w := range d.DroppedFlags {
 		fmt.Printf("  dropped:    %s\n", w)
 	}
+	printVariants(d)
 }
 
 // printVariants lists the other copies of a model in a repo.
