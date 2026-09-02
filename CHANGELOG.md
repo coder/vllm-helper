@@ -21,7 +21,7 @@ the fact.
   need permission to control the service; where that's missing the panel says
   so and disables those buttons rather than failing when they're pressed.
 - The panel can find and add models, not just switch between saved ones. An
-  "Add model" view searches HuggingFace, and picking a result measures it
+  "Add model" page searches HuggingFace, and picking a result measures it
   against this machine — weight size against the budget, model-card flags
   against the installed vLLM — before saving anything. Pulling saves a profile
   and switches to it, and saved models can be removed from the same list they
