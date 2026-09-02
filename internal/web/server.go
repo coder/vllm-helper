@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -99,8 +100,16 @@ func checkPrivilege(cfg *config.Config) (bool, string) {
 	if os.Geteuid() == 0 {
 		return true, ""
 	}
-	// The same check the service package's privileged calls will make.
-	if err := run("sudo", "-n", "true"); err == nil {
+	// Ask sudo whether this exact command is permitted, rather than whether
+	// sudo works at all. A sensible rule grants only the three systemctl
+	// verbs the panel needs, and under such a rule `sudo -n true` fails --
+	// which would report the panel as powerless while its buttons would in
+	// fact have worked.
+	systemctl, err := exec.LookPath("systemctl")
+	if err != nil {
+		systemctl = "/usr/bin/systemctl"
+	}
+	if err := run("sudo", "-n", "-l", systemctl, "restart", cfg.ServiceName()); err == nil {
 		return true, ""
 	}
 	return false, fmt.Sprintf(
