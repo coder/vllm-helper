@@ -136,6 +136,13 @@ the fact.
 
 ### Fixed
 
+- Installing the GGUF plugin from the panel no longer holds a request open for
+  the whole build. It builds from source, so that request stayed open for
+  minutes and browsers drop those — after which the page could not tell a
+  finished install from a lost one, and the model card only showed the truth
+  if you searched for it again. The install now runs on the server and the
+  page polls it, which also means a reload rejoins one already in progress
+  rather than offering to start a second.
 - The capability probe had stopped working wherever a vLLM plugin was
   installed. vLLM logs plugin registration to stdout, so the probe's JSON was
   no longer the only thing on the stream and parsing it yielded nothing —
