@@ -40,7 +40,12 @@ async function api(path, options = {}) {
   const res = await fetch(path, { ...options, headers });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body.error || `${res.status} ${res.statusText}`);
+    const err = new Error(body.error || `${res.status} ${res.statusText}`);
+    // Carry the rest of the payload: a failed source build explains itself in
+    // pip's last lines, and a browser has no journal to go and read.
+    err.log = body.log;
+    err.status = res.status;
+    throw err;
   }
   return body;
 }

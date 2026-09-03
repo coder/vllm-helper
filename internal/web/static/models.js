@@ -21,6 +21,7 @@ const el = {
   title: $("[data-detail-title]"),
   link: $("[data-detail-link]"),
   loading: $("[data-detail-loading]"),
+  loadingText: $("[data-detail-loading-text]"),
   body: $("[data-detail-body]"),
   verdict: $("[data-verdict]"),
   facts: $("[data-facts]"),
@@ -100,7 +101,7 @@ el.form.addEventListener("submit", async (e) => {
   if (!q) return;
   el.error.hidden = true;
   el.btn.disabled = true;
-  el.btn.textContent = "Searching…";
+  el.btn.innerHTML = '<span class="spinner"></span>Searching…';
   el.hits.innerHTML = "";
   el.resultsNote.hidden = true;
   try {
@@ -279,9 +280,20 @@ el.ggufInstall.addEventListener("click", async () => {
     if (selected) inspect(selected);
   } catch (err) {
     el.ggufStatus.textContent = err.message;
+    if (err.log) {
+      el.ggufLog.textContent = err.log;
+      el.ggufLog.hidden = false;
+    }
     el.ggufInstall.disabled = false;
+    el.ggufInstall.textContent = "Install the plugin";
   }
 });
+
+// slowAfter is when a wait stops being a pause and starts being a worry. The
+// first inspect on a machine can ask vLLM what it supports, which imports
+// torch and takes seconds; saying so is better than a spinner that just keeps
+// spinning.
+const SLOW_AFTER_MS = 4000;
 
 async function inspect(repo) {
   selected = repo;
@@ -290,6 +302,13 @@ async function inspect(repo) {
   el.title.textContent = repo;
   el.link.href = `https://huggingface.co/${repo}`;
   el.loading.hidden = false;
+  el.loadingText.textContent = "Measuring against this machine…";
+  const slow = setTimeout(() => {
+    if (selected === repo) {
+      el.loadingText.textContent =
+        "Still measuring — reading the repo, and asking vLLM what it supports.";
+    }
+  }, SLOW_AFTER_MS);
   el.body.hidden = true;
   el.detailError.hidden = true;
   el.pull.disabled = true;
@@ -298,9 +317,11 @@ async function inspect(repo) {
   el.pullNote.hidden = true;
   el.gguf.hidden = true;
   el.ggufInstall.disabled = false;
+  el.ggufInstall.textContent = "Install the plugin";
 
   try {
     const d = await api(`/api/inspect?repo=${encodeURIComponent(repo)}`);
+    clearTimeout(slow);
     if (selected !== repo) return; // a newer pick won the race
 
     renderVerdict(d);
@@ -352,6 +373,7 @@ async function inspect(repo) {
     el.loading.hidden = true;
     el.body.hidden = false;
   } catch (err) {
+    clearTimeout(slow);
     if (selected !== repo) return;
     el.loading.hidden = true;
     el.detailError.textContent = err.message;
@@ -370,7 +392,7 @@ el.pull.addEventListener("click", async () => {
     return;
   }
   el.pull.disabled = true;
-  el.pull.textContent = "Saving…";
+  el.pull.innerHTML = '<span class="spinner"></span>Saving…';
   try {
     let path = `/api/pull?repo=${encodeURIComponent(repo)}`;
     if (!el.quants.hidden && el.quantSelect.value) {

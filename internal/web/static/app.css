@@ -837,51 +837,58 @@ input:focus-visible {
 }
 
 .gguf-lead {
-  margin: 0;
+  margin: 0 0 0.75rem;
   font-size: 0.8125rem;
   color: var(--content-warning);
 }
 
+.gguf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.gguf-status {
+  flex: 1 1 100%;
+  font-size: 0.75rem;
+  color: var(--content-secondary);
+}
+
+.gguf-caveats {
+  margin: 0.75rem 0 0;
+  padding-left: 1.125rem;
+  font-size: 0.75rem;
+  color: var(--content-secondary);
+}
+
+.gguf-caveats li + li {
+  margin-top: 0.25rem;
+}
+
+.gguf-manual {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--content-secondary);
+}
+
+.gguf-manual summary {
+  cursor: pointer;
+}
+
+/* Wraps rather than scrolls: a venv path is long, this column is narrow, and
+   a command you have to drag sideways to read is one you cannot copy. */
 .gguf-cmd {
   display: block;
-  margin: 0.625rem 0;
+  margin-top: 0.5rem;
   padding: 0.375rem 0.5rem;
   border-radius: 0.25rem;
   background: var(--surface-tertiary);
   color: var(--content-primary);
   font-family: var(--font-mono);
   font-size: 0.6875rem;
-  overflow-x: auto;
-  white-space: nowrap;
-}
-
-.gguf-sub {
-  margin: 0 0 0.25rem;
-  font-size: 0.75rem;
-  color: var(--content-secondary);
-}
-
-.gguf-caveats {
-  margin: 0;
-  padding-left: 1.125rem;
-  font-size: 0.75rem;
-  color: var(--content-secondary);
-}
-
-.gguf-caveats li {
-  margin-bottom: 0.125rem;
-}
-
-.gguf-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.875rem;
-}
-
-.gguf-status {
-  font-size: 0.75rem;
-  color: var(--content-secondary);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 /* Tail of a failed build. Bounded, because pip is verbose and the useful
@@ -896,4 +903,57 @@ input:focus-visible {
   font-family: var(--font-mono);
   font-size: 0.6875rem;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- spinner ---------- */
+
+.detail-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Measuring a model reaches the Hub several times and can ask vLLM what it
+   supports, which imports torch. That is seconds, sometimes tens of them, and
+   a line of static text through it reads as a page that has stopped. */
+.spinner {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  border: 2px solid var(--surface-quaternary);
+  border-top-color: var(--content-link);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Respect a system setting that exists because motion makes some people ill;
+   a pulse still says "working" without rotating. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: pulse 1.4s ease-in-out infinite;
+    border-top-color: var(--surface-quaternary);
+    background: var(--content-link);
+  }
+  @keyframes pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+}
+
+/* The button says what it is doing, so it needs the same treatment. */
+.btn .spinner {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-width: 2px;
+  margin-right: 0.375rem;
+  vertical-align: -1px;
+  display: inline-block;
 }
