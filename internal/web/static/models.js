@@ -403,6 +403,16 @@ async function inspect(repo) {
     // A repo that is entirely GGUF on a machine without the plugin cannot be
     // served at all, whichever quant is picked -- so offer to fix that instead
     // of a pull button that could only fail.
+    // An architecture the plugin cannot map is not fixable by installing
+    // anything, so offering the install here would be misleading.
+    if (d.needs_gguf && d.arch_blocked) {
+      el.dropped.hidden = false;
+      el.dropped.textContent = `This model can't be served as GGUF — it is ${d.arch_blocked}`;
+      el.pull.disabled = true;
+      el.loading.hidden = true;
+      el.body.hidden = false;
+      return;
+    }
     if (d.needs_gguf && !d.gguf_ready) {
       await showGGUFOffer();
       el.pull.hidden = true;

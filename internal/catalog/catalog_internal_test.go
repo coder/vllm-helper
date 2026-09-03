@@ -1,8 +1,14 @@
 package catalog
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/hf"
@@ -179,5 +185,70 @@ func TestNotesDoNotCreditTheCardForOurOwnFlags(t *testing.T) {
 	}
 	if strings.Contains(p.Opts.Status, "auto-detected from README") {
 		t.Errorf("Status = %q, but the README prescribed nothing", p.Opts.Status)
+	}
+}
+
+// The architecture check needs the base model's config, which is a second
+// request. It runs concurrently with the weights measurement so it costs no
+// wall time -- if it were sequential every GGUF inspect would get slower by a
+// whole round trip, which is the thing that makes a picker unusable.
+func TestInspectFetchesTheArchConcurrently(t *testing.T) {
+	var mu sync.Mutex
+	var overlapped bool
+	inFlight := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		inFlight++
+		if inFlight > 1 {
+			overlapped = true
+		}
+		mu.Unlock()
+		// Long enough that a sequential implementation cannot overlap by
+		// accident, short enough not to slow the suite.
+		time.Sleep(80 * time.Millisecond)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+
+		switch {
+		case strings.HasSuffix(r.URL.Path, "config.json"):
+			fmt.Fprint(w, `{"model_type":"qwen3_moe","num_experts":128}`)
+		case strings.Contains(r.URL.Path, "/tree/"):
+			fmt.Fprint(w, `[{"type":"file","path":"m-Q8_0.gguf","size":34000000000},
+			                {"type":"file","path":"m-Q4_K_M.gguf","size":19000000000}]`)
+		default:
+			fmt.Fprint(w, `# no serve snippet`)
+		}
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+
+	m := hf.Model{ID: "unsloth/demo-GGUF"}
+	m.CardData.BaseModel = json.RawMessage(`"org/demo"`)
+
+	start := time.Now()
+	d := Inspect(m, 84, vllm.Caps{})
+	elapsed := time.Since(start)
+
+	if !overlapped {
+		t.Error("the config fetch did not overlap the others -- it is costing a round trip")
+	}
+	if elapsed > 250*time.Millisecond {
+		t.Errorf("Inspect took %v against three 80ms requests, which is close to sequential", elapsed)
+	}
+
+	// And the answer is the point: every quant is refused, with a reason
+	// that names the way out.
+	if d.ArchBlocked == "" {
+		t.Fatal("a Qwen3-MoE GGUF repo was not flagged")
+	}
+	for _, v := range d.All {
+		if v.Servable() {
+			t.Errorf("%s is still offered despite the architecture being unloadable", v.Label)
+		}
+	}
+	if d.Best != nil {
+		t.Errorf("recommended %s from a repo where nothing can load", d.Best.Label)
 	}
 }

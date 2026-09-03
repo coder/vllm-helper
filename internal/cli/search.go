@@ -207,7 +207,13 @@ func printModelDetail(d catalog.Detail, cfg *config.Config) {
 	// A repo that is entirely GGUF on a machine without the plugin cannot be
 	// served at all, whichever quant is picked, so lead with that rather than
 	// leaving it to be inferred from every row saying the same thing.
-	if d.NeedsGGUF && !d.GGUFReady {
+	// The architecture is the harder stop of the two: no machine and no
+	// plugin install changes it, so it is said first and instead.
+	switch {
+	case d.NeedsGGUF && d.ArchBlocked != "":
+		fmt.Println()
+		fmt.Println("  can't be served as GGUF: " + d.ArchBlocked)
+	case d.NeedsGGUF && !d.GGUFReady:
 		fmt.Println()
 		fmt.Println("  " + ggufMissingMessage(cfg))
 	}

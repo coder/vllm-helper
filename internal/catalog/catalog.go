@@ -77,6 +77,10 @@ type Detail struct {
 	NeedsGGUF bool `json:"needs_gguf,omitempty"`
 	// GGUFReady is whether this machine's vLLM can load GGUF at all.
 	GGUFReady bool `json:"gguf_ready"`
+	// ArchBlocked says why no GGUF build of this model can be served,
+	// whatever the machine or the quant -- set when the architecture itself
+	// is one the plugin cannot map.
+	ArchBlocked string `json:"arch_blocked,omitempty"`
 	// BaseModel is where a GGUF's tokenizer and config have to come from,
 	// since GGUF repos largely ship no config.json of their own.
 	BaseModel     string  `json:"base_model,omitempty"`
@@ -119,6 +123,23 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
 		// a pull on that basis would be worse than letting it try.
 		GGUFReady: !caps.KnowsQuantizations() || caps.SupportsGGUF(),
 	}
+	// Whether a GGUF build of this architecture can be loaded at all needs the
+	// base model's config, which is a separate request. Started here and read
+	// after the weights have been measured, so it costs no wall time: both are
+	// network-bound and neither depends on the other.
+	//
+	// Only for repos that name a base model, which in practice means GGUF
+	// ones -- a normal repo has nothing to look up and pays nothing.
+	archCh := make(chan hf.Arch, 1)
+	if d.BaseModel != "" {
+		go func() {
+			a, _ := hf.Config(d.BaseModel)
+			archCh <- a
+		}()
+	} else {
+		archCh <- hf.Arch{}
+	}
+
 	// A failed measurement is not the same as a repo with nothing to measure:
 	// the pagination guards report an error precisely so a short listing is
 	// not mistaken for a small model, and swallowing it here would undo that.
@@ -129,6 +150,20 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
 		d.Variants = w.Variants
 		d.All = w.All
 		d.NeedsGGUF = allGGUF(w.All)
+
+		// Mark what the architecture rules out before anything is ranked, so
+		// a quant that cannot load is neither recommended nor selectable.
+		// The alternative is finding out from a crash loop, by which point
+		// the model that was serving has already been stopped.
+		if ok, why := hf.GGUFServable(<-archCh); !ok {
+			d.ArchBlocked = why
+			for i := range d.All {
+				if d.All[i].GGUF && d.All[i].Servable() {
+					d.All[i].Blocked = why
+				}
+			}
+		}
+
 		if d.BudgetGB > 0 {
 			fits := w.SizeGB <= d.BudgetGB
 			d.FitsBudget = &fits

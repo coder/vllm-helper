@@ -71,6 +71,13 @@ the fact.
 
 ### Changed
 
+- GGUF builds of mixture-of-experts models are marked unsupported rather than
+  offered. vLLM's GGUF plugin maps fused expert weights for two architectures
+  only (OLMoE and MiniMax-M2); every other MoE fails at load with one unmapped
+  parameter per layer — after the service has restarted, so the model that was
+  serving is already gone. The check reads the base model's `config.json`
+  concurrently with the work already being done, so it costs no extra wall
+  time, and the message names a safetensors quant as the way forward.
 - Quants vLLM has no way to load are marked as such instead of being offered.
   It addresses a GGUF quant by name and only for a single file at a repo's
   root, so split-file and per-quant-subfolder copies are listed but not
