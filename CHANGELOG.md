@@ -136,6 +136,16 @@ the fact.
 
 ### Fixed
 
+- The capability probe had stopped working wherever a vLLM plugin was
+  installed. vLLM logs plugin registration to stdout, so the probe's JSON was
+  no longer the only thing on the stream and parsing it yielded nothing —
+  which reads as "we could not ask", so model-card flag validation quietly
+  stopped running, nothing was cached, and an installed GGUF plugin was
+  reported as missing.
+- `inspect` and the panel's model detail were running `vllm --version` on
+  every call, before consulting the cache, and that imports vLLM. Measured at
+  10.1s per lookup on a DGX Spark against 0.4s of real work; now 0.25s once
+  warm, by reading the version from distribution metadata instead.
 - `new` no longer writes a context length the model can't support when its
   README has no `vllm serve` snippet. The clamp to the model's real
   `max_position_embeddings` sat behind an early return taken on exactly those
