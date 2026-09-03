@@ -33,6 +33,10 @@ const el = {
   follow: $("[data-follow]"),
   restart: $("[data-restart]"),
   stop: $("[data-stop]"),
+  notes: $("[data-notes]"),
+  notesTitle: $("[data-notes-title]"),
+  notesList: $("[data-notes-list]"),
+  notesDismiss: $("[data-notes-dismiss]"),
 };
 
 const PHASES = {
@@ -47,6 +51,30 @@ function showError(message) {
   el.error.textContent = message;
   el.error.hidden = !message;
 }
+
+// showNotes reports what a switch decided rather than what went wrong.
+//
+// Separate from showError because these are not failures -- "serving the Q8_0
+// quant", "patched the chat template" -- and colouring them red taught people
+// to distrust a screen that was working correctly. It stays until dismissed,
+// since it is the only record of choices made on the user's behalf, and a
+// poll every thirty seconds must not wipe it out from under a reader.
+function showNotes(items, title) {
+  el.notesList.innerHTML = "";
+  const lines = (items || []).filter((s) => s && s.trim());
+  el.notes.hidden = lines.length === 0;
+  if (!lines.length) return;
+  el.notesTitle.textContent = title || "What this switch did";
+  for (const line of lines) {
+    const li = document.createElement("li");
+    li.textContent = line;
+    el.notesList.append(li);
+  }
+}
+
+el.notesDismiss.addEventListener("click", () => {
+  el.notes.hidden = true;
+});
 
 function renderStatus(s) {
   el.host.textContent = s.host || "";
@@ -177,7 +205,9 @@ async function switchTo(name, label) {
     const res = await api(`/api/switch/${encodeURIComponent(name)}`, {
       method: "POST",
     });
-    if (res.warnings?.length) showError(res.warnings.join("\n"));
+    // Plugin output, not a failure -- the switch succeeded or we would be in
+    // the catch below.
+    showNotes(res.warnings, `Switched to ${label}`);
   } catch (e) {
     showError(e.message);
   } finally {
@@ -340,7 +370,16 @@ This removes its settings and its Coder model entry. The downloaded weights stay
 const handover = sessionStorage.getItem("vllm-helper-notes");
 if (handover !== null) {
   sessionStorage.removeItem("vllm-helper-notes");
-  if (handover) showError(handover);
+  try {
+    const { notes, warnings, model } = JSON.parse(handover);
+    showNotes(
+      [...(notes || []), ...(warnings || [])],
+      model ? `Pulled ${model}` : "What this pull did",
+    );
+  } catch {
+    // An older tab may have left a plain string behind.
+    if (handover) showNotes([handover]);
+  }
 }
 
 refresh();

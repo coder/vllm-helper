@@ -191,11 +191,14 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 	}
 
 	detected, _ := hf.DetectFlags(repo)
-	extraArgs, dropped := vllm.Check(detected.ExtraArgs, caps)
+
+	// Kept apart from extraFlags on purpose. These two end up in the same
+	// ExtraArgs but they are not the same claim: one is what the model's
+	// author prescribed, the other is what this tool added. Merging them
+	// before reporting attributed our own --tokenizer to the card, and said
+	// "flags auto-detected from README" about a repo whose README had none.
+	cardArgs, dropped := vllm.Check(detected.ExtraArgs, caps)
 	p.Notes = append(p.Notes, dropped...)
-	if extraFlags != "" {
-		extraArgs = strings.TrimSpace(extraFlags + " " + extraArgs)
-	}
 
 	if patched, needsPatch, err := hf.DetectChatTemplatePatch(repo); err != nil {
 		p.Notes = append(p.Notes, "Chat template check failed, continuing without it: "+err.Error())
@@ -211,7 +214,7 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 				"This model's bundled template crashes if a system-role message isn't first in "+
 					"the conversation (common with agent harnesses like Coder Agents). Patched a "+
 					"local copy: "+tmplPath)
-			extraArgs = strings.TrimSpace(extraArgs + " --chat-template " + tmplPath)
+			extraFlags = strings.TrimSpace(extraFlags + " --chat-template " + tmplPath)
 		}
 	}
 
@@ -219,11 +222,14 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 		Repo:        model,
 		Name:        name,
 		MaxModelLen: detected.MaxModelLen,
-		ExtraArgs:   extraArgs,
+		ExtraArgs:   strings.TrimSpace(extraFlags + " " + cardArgs),
 		Source:      "vllm-helper new",
 	}
-	if extraArgs != "" {
-		p.Notes = append(p.Notes, "Auto-detected from the model card: "+extraArgs)
+	// Only the card's own flags decide this. What we added says nothing about
+	// whether the author documented how to serve the model, which is what the
+	// status is for.
+	if cardArgs != "" {
+		p.Notes = append(p.Notes, "Auto-detected from the model card: "+cardArgs)
 		p.Opts.Status = "NOT YET VERIFIED -- flags auto-detected from README"
 	} else {
 		p.Notes = append(p.Notes,

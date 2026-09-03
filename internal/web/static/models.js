@@ -462,8 +462,14 @@ el.pull.addEventListener("click", async () => {
     const res = await api(path, { method: "POST" });
     // The interesting thing now is the machine coming up, which is the other
     // page's whole job -- so hand over to it rather than reporting from here.
-    const notes = [...(res.notes || []), ...(res.warnings || [])];
-    sessionStorage.setItem("vllm-helper-notes", notes.join("\n"));
+    sessionStorage.setItem(
+      "vllm-helper-notes",
+      JSON.stringify({
+        notes: res.notes,
+        warnings: res.warnings,
+        model: repo,
+      }),
+    );
     location.href = "/";
   } catch (err) {
     el.detailError.textContent = err.message;
