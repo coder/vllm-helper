@@ -276,6 +276,59 @@ main.discover {
   color: var(--content-destructive);
 }
 
+/* A record of decisions, not a problem. Blue rather than amber or red, and
+   set in the body face: these are sentences to read once, where the rest of
+   the notices are terse machine facts. */
+.notice-note {
+  position: relative;
+  border-left-color: var(--content-link);
+  font-family: var(--font-sans);
+  padding-right: 2.25rem;
+}
+
+.notice-title {
+  margin: 0 0 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--content-primary);
+}
+
+.notice-list {
+  margin: 0;
+  padding-left: 1.125rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.notice-list li + li {
+  margin-top: 0.375rem;
+}
+
+.notice-dismiss {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.5rem;
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--content-secondary);
+  font-size: 1.125rem;
+  line-height: 1;
+  padding: 0.25rem 0.375rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.notice-dismiss:hover {
+  color: var(--content-primary);
+  background: var(--surface-tertiary);
+}
+
+.notice-dismiss:focus-visible {
+  outline: 2px solid var(--content-link);
+  outline-offset: 1px;
+}
+
 /* ---------- buttons ---------- */
 
 .now-actions {

@@ -136,3 +136,48 @@ func TestFindVariantIsCaseInsensitive(t *testing.T) {
 		t.Error("FindVariant should not invent a quant the repo lacks")
 	}
 }
+
+// What the tool adds and what the model's author prescribed are different
+// claims, and merging them before reporting made both wrong: a repo whose
+// README contains no serve snippet was told "Auto-detected from the model
+// card: --tokenizer ...", naming a flag this tool had just injected, and the
+// profile was stamped "flags auto-detected from README" on that basis. The
+// user-visible result was the same tokenizer reported twice, the second time
+// falsely.
+func TestNotesDoNotCreditTheCardForOurOwnFlags(t *testing.T) {
+	dirs := config.Dirs{Data: t.TempDir()}
+	choice := &Choice{
+		Variant:   hf.Variant{Name: "m-Q8_0.gguf", Label: "Q8_0", GGUF: true},
+		BaseModel: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+	}
+	// A repo with no README snippet, which is the usual case for GGUF.
+	p := PrepareProfile(dirs, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", choice, vllm.Caps{})
+
+	// The flag still has to reach vLLM -- the plugin cannot start without it.
+	if !strings.Contains(p.Opts.ExtraArgs, "--tokenizer Qwen/Qwen3-Coder-30B-A3B-Instruct") {
+		t.Errorf("ExtraArgs = %q, want the tokenizer we added", p.Opts.ExtraArgs)
+	}
+
+	var credited, mentions int
+	for _, n := range p.Notes {
+		if strings.HasPrefix(n, "Auto-detected from the model card:") {
+			credited++
+			if strings.Contains(n, "--tokenizer") {
+				t.Errorf("note credits the card for a flag we added: %q", n)
+			}
+		}
+		if strings.Contains(n, "--tokenizer") {
+			mentions++
+		}
+	}
+	if credited != 0 {
+		t.Errorf("a card with no serve snippet produced %d auto-detected notes", credited)
+	}
+	if mentions != 1 {
+		t.Errorf("the tokenizer is reported %d times, want exactly 1:\n  %s",
+			mentions, strings.Join(p.Notes, "\n  "))
+	}
+	if strings.Contains(p.Opts.Status, "auto-detected from README") {
+		t.Errorf("Status = %q, but the README prescribed nothing", p.Opts.Status)
+	}
+}
