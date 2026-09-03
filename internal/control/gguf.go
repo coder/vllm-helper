@@ -27,12 +27,15 @@ const GGUFInstallTimeout = 20 * 60 // seconds
 //
 // Said before the prompt, not after: these are the things that would otherwise
 // be discovered as a failed model load half an hour later.
+// Two, not four. The earlier list repeated things the interface already shows
+// -- which layouts cannot load is written against each quant in the list, and
+// "prefer a native quant" is advice rather than a consequence of installing.
+// A wall of warnings above a button is read as noise and pushes the button off
+// the screen, which is the opposite of informed consent.
 func GGUFCaveats() []string {
 	return []string{
-		"vLLM's own docs call GGUF support experimental and under-optimized.",
-		"The plugin builds from source and needs a compiler and CUDA headers.",
-		"Split-file and per-quant-subfolder GGUFs still won't load; only single files at a repo's root work on released versions.",
-		"A native quant (AWQ/GPTQ/FP8/NVFP4) is usually faster where one exists.",
+		"vLLM calls its own GGUF support experimental; a native quant (AWQ, GPTQ, FP8, NVFP4) is faster where one exists.",
+		"It builds from source, so expect several minutes and a compiler.",
 	}
 }
 

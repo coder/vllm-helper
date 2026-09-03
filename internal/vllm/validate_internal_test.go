@@ -138,3 +138,44 @@ func TestCapsKnown(t *testing.T) {
 		t.Error("a populated Caps should be Known")
 	}
 }
+
+// vLLM logs plugin registration to stdout, so the probe's JSON is not the only
+// thing on the stream. Installing the GGUF plugin turned a working probe into
+// a silent no-op: an empty Caps reads as "we could not ask", so flag
+// validation went quiet, nothing was cached (making every call re-import
+// torch, ~10s), and the plugin that had just been installed was reported as
+// missing. Measured on a DGX Spark.
+func TestExtractCapsIgnoresLogNoise(t *testing.T) {
+	const payload = `{"quantizations":["gguf"]}`
+
+	noisy := "INFO 09-03 09:36:00 [__init__.py:112] Registered model loader `gguf`\n" +
+		"INFO 09-03 09:36:00 [config.py:459] Registered config parser `gguf`\n" +
+		capsMarker + payload + "\n"
+
+	got, ok := extractCaps([]byte(noisy))
+	if !ok {
+		t.Fatal("extractCaps found nothing in output that contains the marked line")
+	}
+	if string(got) != payload {
+		t.Errorf("extractCaps = %q, want %q", got, payload)
+	}
+
+	// Clean output still works, and so does a trailing log line -- nothing
+	// says the noise has to come first.
+	for name, in := range map[string]string{
+		"clean":        capsMarker + payload,
+		"trailing log": capsMarker + payload + "\nINFO something afterwards",
+		"crlf":         capsMarker + payload + "\r\n",
+	} {
+		if got, ok := extractCaps([]byte(in)); !ok || string(got) != payload {
+			t.Errorf("%s: extractCaps = %q/%v, want the payload", name, got, ok)
+		}
+	}
+
+	// And output with no marked line at all is a failure, not an empty
+	// success -- the difference between "vLLM has no parsers" and "we could
+	// not ask" decides whether validation runs.
+	if _, ok := extractCaps([]byte("INFO only\nnothing useful here")); ok {
+		t.Error("extractCaps claimed success on output with no marked line")
+	}
+}

@@ -117,8 +117,28 @@ try:
     out["flags"] = sorted(flags)
 except Exception:
     pass
-print(json.dumps(out))
+print("VLLM_HELPER_CAPS " + json.dumps(out))
 `
+
+// capsMarker prefixes the probe's one line of real output.
+//
+// vLLM logs plugin registration to stdout, not stderr -- installing the GGUF
+// plugin turns the script's output into two INFO lines followed by the JSON,
+// and parsing the whole stream silently yielded nothing. The failure mode was
+// invisible: an empty Caps means "we could not ask", so flag validation went
+// quiet, the answer was never cached (making every call re-import torch), and
+// the newly installed plugin was reported as missing.
+const capsMarker = "VLLM_HELPER_CAPS "
+
+// extractCaps pulls the marked line out of whatever else was printed.
+func extractCaps(out []byte) ([]byte, bool) {
+	for _, line := range strings.Split(string(out), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), capsMarker); ok {
+			return []byte(rest), true
+		}
+	}
+	return nil, false
+}
 
 // timeout bounds the import of vLLM, which is slow (seconds) because it pulls
 // in torch. Generous, since the result is cached.
@@ -194,8 +214,12 @@ func runIntrospect(binPath string) Caps {
 	if err != nil {
 		return Caps{}
 	}
+	line, ok := extractCaps(out)
+	if !ok {
+		return Caps{}
+	}
 	var caps Caps
-	if json.Unmarshal(out, &caps) != nil {
+	if json.Unmarshal(line, &caps) != nil {
 		return Caps{}
 	}
 	return caps
