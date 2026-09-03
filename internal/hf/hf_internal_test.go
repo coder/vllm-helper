@@ -1087,3 +1087,53 @@ func TestVariantSelector(t *testing.T) {
 		t.Error("a non-GGUF variant has no selector -- vLLM has no way to address it")
 	}
 }
+
+// The MoE field was never standardised, so three families spell it three
+// ways. Missing one means a model that cannot load is offered as though it
+// can -- and the cost of that is a crash loop on a machine that was serving.
+func TestMoEDetectionCoversEverySpelling(t *testing.T) {
+	for name, a := range map[string]Arch{
+		"qwen/olmoe":      {NumExperts: 128},
+		"mixtral-derived": {NumLocalExperts: 8},
+		"deepseek":        {NRoutedExperts: 256},
+	} {
+		if !a.MoE() {
+			t.Errorf("%s: MoE() = false, want true", name)
+		}
+	}
+	if (Arch{ModelType: "qwen3"}).MoE() {
+		t.Error("a dense model was reported as MoE")
+	}
+}
+
+// vLLM's GGUF plugin maps fused expert weights for exactly two architectures.
+// Everything else MoE fails at load, after the restart, with one unmapped
+// parameter per layer.
+func TestGGUFServable(t *testing.T) {
+	// The two the plugin special-cases.
+	for _, mt := range []string{"olmoe", "OLMoE", "minimax_m2"} {
+		if ok, why := GGUFServable(Arch{ModelType: mt, NumExperts: 64}); !ok {
+			t.Errorf("%s should be servable, got %q", mt, why)
+		}
+	}
+
+	// The one that took the machine down.
+	ok, why := GGUFServable(Arch{ModelType: "qwen3_moe", NumExperts: 128})
+	if ok {
+		t.Fatal("qwen3_moe GGUF reported servable -- this is the crash-loop case")
+	}
+	if !strings.Contains(why, "safetensors") {
+		t.Errorf("the refusal should point at what to use instead, got %q", why)
+	}
+
+	// Dense models are unaffected: the mapping problem is about experts.
+	if ok, _ := GGUFServable(Arch{ModelType: "qwen3"}); !ok {
+		t.Error("a dense model was refused")
+	}
+	// And a config we could not read must not refuse anything. Guessing that
+	// a model is unservable because the Hub was slow would be worse than
+	// letting vLLM decide.
+	if ok, _ := GGUFServable(Arch{}); !ok {
+		t.Error("an unreadable config was treated as a refusal")
+	}
+}

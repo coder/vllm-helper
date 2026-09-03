@@ -178,6 +178,10 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
 				"error": want + " is " + v.Blocked})
 			return
+		case v.GGUF && d.ArchBlocked != "":
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": repo + " can't be served as GGUF -- it is " + d.ArchBlocked})
+			return
 		case v.GGUF && !d.GGUFReady:
 			writeJSON(w, http.StatusBadRequest, map[string]string{
 				"error": "this vLLM cannot load GGUF -- install vllm-gguf-plugin first"})

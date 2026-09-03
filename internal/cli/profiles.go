@@ -215,6 +215,11 @@ func resolveQuant(cfg *config.Config, repo, want string) (*catalog.Choice, error
 	if !v.Servable() {
 		return nil, fmt.Errorf("%s is %s", v.Label, v.Blocked)
 	}
+	// Refused here rather than at startup: activating a profile restarts the
+	// service, so a model that cannot load takes the running one down with it.
+	if v.GGUF && d.ArchBlocked != "" {
+		return nil, fmt.Errorf("%s can't be served as GGUF -- it is %s", repo, d.ArchBlocked)
+	}
 	if v.GGUF && !d.GGUFReady {
 		return nil, errors.New(ggufMissingMessage(cfg))
 	}
