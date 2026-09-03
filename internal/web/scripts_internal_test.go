@@ -49,8 +49,10 @@ func TestNoPageAssignsToAnUndeclaredName(t *testing.T) {
 		"sessionStorage": true, "localStorage": true, "console": true,
 		"fetch": true, "setTimeout": true, "clearTimeout": true,
 		"setInterval": true, "clearInterval": true, "confirm": true, "alert": true,
-		// SCREAMING_SNAKE tokens that are not constants of ours.
-		"POST": true, "GET": true, "PUT": true, "DELETE": true, "UTF": true,
+		// All-caps tokens the constant scan picks up that are not constants
+		// of ours: standard globals, and HTTP verbs written in strings.
+		"JSON": true, "URL": true, "POST": true, "GET": true, "PUT": true,
+		"DELETE": true, "UTF": true, "DOM": true, "API": true,
 	}
 
 	for page, scripts := range scriptsFor {
