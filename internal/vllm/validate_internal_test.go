@@ -1,6 +1,7 @@
 package vllm
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -177,5 +178,56 @@ func TestExtractCapsIgnoresLogNoise(t *testing.T) {
 	// not ask" decides whether validation runs.
 	if _, ok := extractCaps([]byte("INFO only\nnothing useful here")); ok {
 		t.Error("extractCaps claimed success on output with no marked line")
+	}
+}
+
+// The GGUF plugin does not register a quantization method -- it hooks vLLM's
+// loader and config-parser registries instead. Looking for it in
+// QUANTIZATION_METHODS reported a freshly installed plugin as missing, which
+// then hid every GGUF quant behind "needs the GGUF plugin" and dropped the
+// best-fit recommendation. Measured on a DGX Spark that had just installed it.
+func TestSupportsGGUFReadsThePluginNotTheQuantRegistry(t *testing.T) {
+	// The registry lists a dozen native methods and never "gguf", even with
+	// the plugin present.
+	native := Caps{Quantizations: []string{"awq", "gptq", "fp8", "compressed-tensors"}}
+	if native.SupportsGGUF() {
+		t.Error("SupportsGGUF() = true from the quantization registry alone")
+	}
+
+	withPlugin := Caps{Quantizations: native.Quantizations, GGUF: true}
+	if !withPlugin.SupportsGGUF() {
+		t.Error("SupportsGGUF() = false with the plugin installed")
+	}
+
+	// And a machine we could not ask about must not read as "no plugin":
+	// KnowsQuantizations is what separates the two, and callers gate on it.
+	if (Caps{}).KnowsQuantizations() {
+		t.Error("an empty Caps should not claim to know the quantization registry")
+	}
+	if !native.KnowsQuantizations() {
+		t.Error("a populated registry should be reported as known")
+	}
+}
+
+// The cheap probe is what makes every call fast: it reads distribution
+// metadata rather than importing vLLM, so it must survive the same log noise
+// the capability script does.
+func TestExtractMarkedHandlesEitherScript(t *testing.T) {
+	noisy := "INFO 09-03 [__init__.py:112] Registered model loader\n" +
+		envMarker + `{"version":"0.27.1","gguf":true}` + "\n"
+	got, ok := extractMarked([]byte(noisy), envMarker)
+	if !ok {
+		t.Fatal("extractMarked found nothing")
+	}
+	var e env
+	if err := json.Unmarshal(got, &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if e.Version != "0.27.1" || !e.GGUF {
+		t.Errorf("env = %+v, want version 0.27.1 and gguf true", e)
+	}
+	// The two markers must not match each other's lines.
+	if _, ok := extractMarked([]byte(capsMarker+"{}"), envMarker); ok {
+		t.Error("the env marker matched a capability line")
 	}
 }
