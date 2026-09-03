@@ -275,6 +275,12 @@ async function showGGUFOffer() {
   }
 }
 
+// slowAfter is when a wait stops being a pause and starts being a worry. The
+// first inspect on a machine can ask vLLM what it supports, which imports
+// torch and takes seconds; saying so is better than a spinner that just keeps
+// spinning.
+const SLOW_AFTER_MS = 4000;
+
 // INSTALL_POLL_MS is how often the page asks whether a build has finished.
 // The work is minutes, so this is about keeping the elapsed counter honest
 // rather than catching the moment it lands.
