@@ -60,6 +60,54 @@ type Server struct {
 	healthAt   time.Time
 	healthCode int
 	healthOK   bool
+
+	// install tracks a GGUF plugin install, which builds from source and runs
+	// for minutes. It is deliberately not a blocking request: a POST held open
+	// that long is dropped by browsers and proxies, and the page it belongs to
+	// has no way to find out whether the work continued.
+	installMu sync.Mutex
+	install   installState
+}
+
+// installState is what a caller can learn about a background install.
+type installState struct {
+	Running bool
+	Done    bool
+	Err     string
+	Log     string
+	Started time.Time
+}
+
+// installStatus reports a copy of the current state.
+func (s *Server) installStatus() installState {
+	s.installMu.Lock()
+	defer s.installMu.Unlock()
+	return s.install
+}
+
+// beginInstall marks an install as started, refusing a second one. Returning
+// false means one is already running, which the caller reports rather than
+// queueing -- two pips writing to one site-packages is not something to do.
+func (s *Server) beginInstall() bool {
+	s.installMu.Lock()
+	defer s.installMu.Unlock()
+	if s.install.Running {
+		return false
+	}
+	s.install = installState{Running: true, Started: time.Now()}
+	return true
+}
+
+// finishInstall records the outcome for whoever polls next.
+func (s *Server) finishInstall(err error, log string) {
+	s.installMu.Lock()
+	defer s.installMu.Unlock()
+	s.install.Running = false
+	s.install.Done = true
+	s.install.Log = log
+	if err != nil {
+		s.install.Err = err.Error()
+	}
 }
 
 // healthProbeTTL bounds how often the vLLM endpoint is asked how it is. The
