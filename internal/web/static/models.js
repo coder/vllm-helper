@@ -256,9 +256,68 @@ async function showGGUFOffer() {
     }
     // Nowhere to install into is not something a button can fix.
     el.ggufInstall.hidden = !g.command;
+
+    // A build started before this page loaded is still the machine's build.
+    // Rejoin it rather than offering to start a second one.
+    if (g.installing) {
+      el.ggufInstall.disabled = true;
+      el.ggufInstall.innerHTML = '<span class="spinner"></span>Installing…';
+      watchInstall();
+    } else if (g.install_error) {
+      el.ggufStatus.textContent = g.install_error;
+      if (g.install_log) {
+        el.ggufLog.textContent = g.install_log;
+        el.ggufLog.hidden = false;
+      }
+    }
   } catch (err) {
     el.ggufStatus.textContent = err.message;
   }
+}
+
+// INSTALL_POLL_MS is how often the page asks whether a build has finished.
+// The work is minutes, so this is about keeping the elapsed counter honest
+// rather than catching the moment it lands.
+const INSTALL_POLL_MS = 3000;
+
+let installPoll = null;
+
+// watchInstall follows a build that is already running on the machine, which
+// is what makes this survive a reload: the install belongs to the server, not
+// to the page that started it, so a refreshed tab picks it back up.
+function watchInstall() {
+  clearInterval(installPoll);
+  installPoll = setInterval(async () => {
+    let g;
+    try {
+      g = await api("/api/gguf");
+    } catch {
+      return; // a blip mid-build is not worth abandoning the watch for
+    }
+    if (g.installing) {
+      const mins = Math.floor((g.elapsed_seconds || 0) / 60);
+      const secs = (g.elapsed_seconds || 0) % 60;
+      el.ggufStatus.textContent = `Building from source… ${mins}m ${String(secs).padStart(2, "0")}s elapsed.`;
+      return;
+    }
+
+    clearInterval(installPoll);
+    installPoll = null;
+    if (g.install_error) {
+      el.ggufStatus.textContent = g.install_error;
+      if (g.install_log) {
+        el.ggufLog.textContent = g.install_log;
+        el.ggufLog.hidden = false;
+      }
+      el.ggufInstall.disabled = false;
+      el.ggufInstall.textContent = "Install the plugin";
+      return;
+    }
+    // Re-measure the model that is on screen, so the quants it just became
+    // possible to serve stop being listed as unavailable.
+    el.ggufStatus.textContent = "Installed. Re-checking this model…";
+    if (selected) inspect(selected);
+  }, INSTALL_POLL_MS);
 }
 
 el.ggufInstall.addEventListener("click", async () => {
@@ -270,33 +329,29 @@ el.ggufInstall.addEventListener("click", async () => {
     return;
   }
   el.ggufInstall.disabled = true;
-  el.ggufStatus.textContent =
-    "Installing… this builds from source, so give it a few minutes.";
+  el.ggufInstall.innerHTML = '<span class="spinner"></span>Installing…';
   el.ggufLog.hidden = true;
+  el.ggufStatus.textContent = "Starting…";
   try {
     const res = await api("/api/gguf/install", { method: "POST" });
-    el.ggufStatus.textContent = res.message || "Installed.";
-    // Re-inspect so the quant list stops saying everything is unavailable.
-    if (selected) inspect(selected);
+    if (res.already) {
+      // Nothing to wait for; just show the truth.
+      if (selected) inspect(selected);
+      return;
+    }
+    el.ggufStatus.textContent = res.message || "Building from source…";
+    watchInstall();
   } catch (err) {
     el.ggufStatus.textContent = err.message;
-    if (err.log) {
-      el.ggufLog.textContent = err.log;
-      el.ggufLog.hidden = false;
-    }
     el.ggufInstall.disabled = false;
     el.ggufInstall.textContent = "Install the plugin";
   }
 });
 
-// slowAfter is when a wait stops being a pause and starts being a worry. The
-// first inspect on a machine can ask vLLM what it supports, which imports
-// torch and takes seconds; saying so is better than a spinner that just keeps
-// spinning.
-const SLOW_AFTER_MS = 4000;
-
 async function inspect(repo) {
   selected = repo;
+  clearInterval(installPoll);
+  installPoll = null;
   el.empty.hidden = true;
   el.detail.hidden = false;
   el.title.textContent = repo;

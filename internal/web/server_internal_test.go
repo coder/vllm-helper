@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -543,5 +544,90 @@ func TestGGUFStatusReportsTheSameFactsAsTheCLI(t *testing.T) {
 	// into -- which must be reported rather than offered as a button.
 	if got.Command == "" && got.Reason == "" {
 		t.Error("with no interpreter found, one of command or reason must say so")
+	}
+}
+
+// The plugin builds a CUDA extension from source, which is minutes. A POST
+// held open that long is dropped by browsers and proxies, and when it is, the
+// page cannot tell a finished install from a lost one -- the symptom being a
+// card that never updates until you search for the model again.
+//
+// So the request must return at once and the work outlive it.
+func TestInstallGGUFReturnsWithoutWaiting(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	// The test config points at no real vLLM, so this is refused before any
+	// work starts -- which is itself the thing being checked: the handler
+	// answers rather than blocking.
+	done := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest("POST", "/api/gguf/install", nil)
+		req.Header.Set(tokenHeader, s.token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		done <- rec.Code
+	}()
+
+	select {
+	case code := <-done:
+		// Accepted when it started, 400 when there is nowhere to install to.
+		// Either is a prompt answer; a hang is what this test exists to catch.
+		if code != http.StatusAccepted && code != http.StatusBadRequest {
+			t.Errorf("POST /api/gguf/install = %d, want 202 or 400", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("POST /api/gguf/install blocked -- it must start the work and return")
+	}
+}
+
+// Progress lives on the server, so a reloaded page rejoins an install it did
+// not start rather than offering to start a second one.
+func TestGGUFStatusReportsAnInstallInFlight(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	if !s.beginInstall() {
+		t.Fatal("beginInstall refused on a fresh server")
+	}
+	// A second one must be refused while the first runs: two pips writing to
+	// one site-packages is not something to do.
+	if s.beginInstall() {
+		t.Error("beginInstall allowed a second concurrent install")
+	}
+
+	req := httptest.NewRequest("GET", "/api/gguf", nil)
+	req.Header.Set(tokenHeader, s.token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var got struct {
+		Installing bool   `json:"installing"`
+		Error      string `json:"install_error"`
+		Log        string `json:"install_log"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Installing {
+		t.Error("a running install is not reported, so a reloaded page would offer to start another")
+	}
+
+	// And the outcome is readable afterwards, log included, since a failed
+	// build explains itself in pip's last lines and a browser has no journal.
+	s.finishInstall(errors.New("build failed"), "gcc: fatal error")
+	req2 := httptest.NewRequest("GET", "/api/gguf", nil)
+	req2.Header.Set(tokenHeader, s.token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req2)
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Installing {
+		t.Error("a finished install is still reported as running")
+	}
+	if got.Error == "" || got.Log == "" {
+		t.Errorf("a failed install must surface its reason and log, got err=%q log=%q",
+			got.Error, got.Log)
 	}
 }

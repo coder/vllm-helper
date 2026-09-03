@@ -258,13 +258,33 @@ type ggufResponse struct {
 	Caveats   []string `json:"caveats,omitempty"`
 	// Reason is why installing is not offered here, when it isn't.
 	Reason string `json:"reason,omitempty"`
+	// Installing is true while a background install runs, so a page that was
+	// reloaded -- or opened in a second tab -- still learns that one is under
+	// way rather than offering to start another.
+	Installing bool `json:"installing"`
+	// Elapsed lets the page say how long it has been going, since a source
+	// build is minutes and silence for that long reads as a hang.
+	Elapsed int    `json:"elapsed_seconds,omitempty"`
+	Error   string `json:"install_error,omitempty"`
+	Log     string `json:"install_log,omitempty"`
 }
 
 func (s *Server) handleGGUF(w http.ResponseWriter, _ *http.Request) {
+	st := s.installStatus()
 	r := ggufResponse{
-		Supported: s.caps().SupportsGGUF(),
-		Command:   control.GGUFInstallCommand(s.cfg),
-		Caveats:   control.GGUFCaveats(),
+		Supported:  s.caps().SupportsGGUF(),
+		Command:    control.GGUFInstallCommand(s.cfg),
+		Caveats:    control.GGUFCaveats(),
+		Installing: st.Running,
+		Error:      st.Err,
+	}
+	if st.Running {
+		r.Elapsed = int(time.Since(st.Started).Seconds())
+	}
+	// The log is only worth returning when it explains a failure. pip is
+	// verbose and a successful build has nothing anyone needs to read.
+	if st.Err != "" {
+		r.Log = st.Log
 	}
 	if r.Command == "" {
 		r.Reason = "couldn't find the interpreter next to " + s.cfg.VLLMBin() +
@@ -273,7 +293,14 @@ func (s *Server) handleGGUF(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, r)
 }
 
-// handleInstallGGUF adds the plugin vLLM needs to read GGUF at all.
+// handleInstallGGUF starts installing the plugin vLLM needs to read GGUF, and
+// returns immediately.
+//
+// It does not wait. The plugin builds a CUDA extension from source, which is
+// minutes: a POST held open that long is dropped by browsers and proxies, and
+// when it is, the page cannot tell a finished install from a lost one. So the
+// work outlives the request and the page polls /api/gguf for the outcome --
+// which also means a reload, or a second tab, sees the same truth.
 //
 // Deliberately not behind the privilege check the service controls use: this
 // writes to the vLLM environment, not to systemd, and on a normal install that
@@ -283,7 +310,7 @@ func (s *Server) handleGGUF(w http.ResponseWriter, _ *http.Request) {
 // It also cannot disturb anything running. The plugin is read when an engine
 // starts, so it takes effect on the next switch -- unlike every other mutation
 // here, this one leaves the current model alone.
-func (s *Server) handleInstallGGUF(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleInstallGGUF(w http.ResponseWriter, _ *http.Request) {
 	if s.caps().SupportsGGUF() {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok": true, "already": true,
@@ -291,34 +318,46 @@ func (s *Server) handleInstallGGUF(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), control.GGUFInstallTimeout*time.Second)
-	defer cancel()
-
-	// pip's output is captured rather than dropped: when a source build fails
-	// the reason is in there, and a browser has no journal to go and read.
-	var out bytes.Buffer
-	if err := control.InstallGGUF(ctx, s.cfg, &out); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": err.Error(),
-			"log":   lastLines(out.String(), 20),
+	if control.GGUFInstallCommand(s.cfg) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "couldn't find the interpreter next to " + s.cfg.VLLMBin() +
+				" -- install the plugin by hand",
 		})
 		return
 	}
-	control.ForgetCaps(s.cfg.Dirs)
-
-	if !s.caps().SupportsGGUF() {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": "installed, but vLLM still doesn't register 'gguf' -- " +
-				"the plugin may need a matching vLLM version",
-			"log": lastLines(out.String(), 20),
+	if !s.beginInstall() {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "an install is already running",
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"message": "Installed. GGUF models can be pulled now; it takes effect on the " +
-			"next switch, so nothing running was disturbed.",
+
+	// Detached from the request context on purpose: cancelling a half-finished
+	// pip because someone closed a tab would leave site-packages in a state
+	// nobody asked for.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(),
+			control.GGUFInstallTimeout*time.Second)
+		defer cancel()
+
+		var out bytes.Buffer
+		err := control.InstallGGUF(ctx, s.cfg, &out)
+		if err == nil {
+			// Keyed by vLLM's version, which installing a plugin does not
+			// change, so it would otherwise keep reporting the old answer.
+			control.ForgetCaps(s.cfg.Dirs)
+			if !s.caps().SupportsGGUF() {
+				err = errors.New("installed, but vLLM still doesn't register the " +
+					"GGUF plugin -- it may need a matching vLLM version")
+			}
+		}
+		s.finishInstall(err, lastLines(out.String(), 20))
+	}()
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"ok":      true,
+		"started": true,
+		"message": "Building from source. This takes a few minutes; nothing running is affected.",
 	})
 }
 

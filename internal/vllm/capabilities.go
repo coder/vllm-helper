@@ -240,6 +240,8 @@ func pythonFor(binPath string) string {
 	return ""
 }
 
+// runPython executes a script in the interpreter that owns binPath, bounded by
+// a timeout so a slow import cannot hang a command.
 func runPython(binPath, script string, limit time.Duration) ([]byte, error) {
 	python := pythonFor(binPath)
 	if python == "" {
