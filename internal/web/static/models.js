@@ -189,7 +189,7 @@ function renderVerdict(d) {
     if (d.best_variant) {
       set(
         "yes",
-        `Fits — ${d.best_variant.size_gb.toFixed(1)} GB at ${d.best_variant.label}`,
+        `Fits — ${d.best_variant.size_gb.toFixed(1)} GB at ${d.best_variant.display || d.best_variant.label}`,
         `The largest of ${d.variants} quants that fits this machine's ~${Math.round(d.budget_gb)} GB budget. The smallest is ${d.size_gb.toFixed(1)} GB.`,
       );
     } else {
@@ -226,18 +226,25 @@ function renderQuants(d) {
 
   for (const v of d.all_variants) {
     const opt = document.createElement("option");
+    // The value stays the full label: it is what vLLM is given.
     opt.value = v.label;
-    const size = `${v.size_gb.toFixed(1)} GB`;
+    opt.title = v.blocked ? `${v.label} — ${v.blocked}` : v.label;
+
+    const name = (v.display || v.label).padEnd(26);
+    const size = `${v.size_gb.toFixed(1)} GB`.padStart(8);
+    // Only the head of a blocked reason: the full sentence is repeated on
+    // every option otherwise, and the verdict above already gives it once.
+    const why = v.blocked ? v.blocked.split(/, | -- /)[0] : "";
     if (v.blocked) {
       opt.disabled = true;
-      opt.textContent = `${v.label} — ${size} — ${v.blocked}`;
+      opt.textContent = `${name} ${size}   can't load: ${why}`;
     } else if (v.gguf && !d.gguf_ready) {
       opt.disabled = true;
-      opt.textContent = `${v.label} — ${size} — needs the GGUF plugin`;
+      opt.textContent = `${name} ${size}   needs the GGUF plugin`;
     } else if (d.budget_gb > 0 && v.size_gb > d.budget_gb) {
-      opt.textContent = `${v.label} — ${size} — too big for this machine`;
+      opt.textContent = `${name} ${size}   too big for this machine`;
     } else {
-      opt.textContent = `${v.label} — ${size}`;
+      opt.textContent = `${name} ${size}`;
     }
     if (d.best_variant && v.name === d.best_variant.name) {
       opt.selected = true;
@@ -246,7 +253,7 @@ function renderQuants(d) {
   }
 
   el.quantNote.textContent = d.best_variant
-    ? `${d.best_variant.label} is the biggest this machine can serve.`
+    ? `${d.best_variant.display || d.best_variant.label} is the biggest this machine can serve.`
     : "None of these can be served on this machine.";
 }
 
