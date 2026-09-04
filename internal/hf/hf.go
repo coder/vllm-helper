@@ -3,6 +3,7 @@
 package hf
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,16 @@ var (
 	// baseURL is the Hub root; tests point it at a local server.
 	baseURL = "https://huggingface.co"
 )
+
+// get issues a GET bound to ctx, so a caller that has given up stops the
+// request instead of leaving it running.
+func get(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return httpClient.Do(req)
+}
 
 type Model struct {
 	ID          string   `json:"id"`
@@ -88,9 +99,9 @@ func (m Model) QuantTags() []string {
 }
 
 // Lookup fetches one model's metadata by repo id.
-func Lookup(repo string) (Model, error) {
+func Lookup(ctx context.Context, repo string) (Model, error) {
 	var m Model
-	resp, err := httpClient.Get(baseURL + "/api/models/" + repo)
+	resp, err := get(ctx, baseURL+"/api/models/"+repo)
 	if err != nil {
 		return m, err
 	}
@@ -111,8 +122,13 @@ func Lookup(repo string) (Model, error) {
 }
 
 // WhoAmI validates a Hub token and returns the account name it belongs to.
-func WhoAmI(token string) (string, error) {
-	req, _ := http.NewRequest("GET", baseURL+"/api/whoami-v2", nil)
+func WhoAmI(ctx context.Context, token string) (string, error) {
+	// Built by hand rather than via get: this is the one request that
+	// carries a header.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/whoami-v2", nil)
+	if err != nil {
+		return "", err
+	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -135,11 +151,11 @@ func WhoAmI(token string) (string, error) {
 }
 
 // Search queries the Hub for text-generation models, most-downloaded first.
-func Search(query string, limit int) ([]Model, error) {
+func Search(ctx context.Context, query string, limit int) ([]Model, error) {
 	u := fmt.Sprintf(
 		baseURL+"/api/models?search=%s&filter=text-generation&sort=downloads&direction=-1&limit=%d",
 		url.QueryEscape(query), limit)
-	resp, err := httpClient.Get(u)
+	resp, err := get(ctx, u)
 	if err != nil {
 		return nil, err
 	}
@@ -398,8 +414,8 @@ func oneCopyOfRoot(files []treeEntry) int64 {
 // components of one model, as in text_encoder/ plus vae/ plus transformer/, and
 // have to be added up. Guessing wrong that way round would report a vision
 // tower as if it were the whole model.
-func WeightsSize(repo string) (Weights, error) {
-	files, err := repoTree(repo)
+func WeightsSize(ctx context.Context, repo string) (Weights, error) {
+	files, err := repoTree(ctx, repo)
 	if err != nil {
 		return Weights{}, err
 	}
@@ -427,7 +443,10 @@ func WeightsSize(repo string) (Weights, error) {
 			// a GGUF-quantized transformer/ plus vae/ pipeline is still one
 			// model, and reading it as a choice would report the VAE.
 			if quantFolder.MatchString(dir) || (isGGUF(f.Path) && !componentFolders.MatchString(dir)) {
-				alternatives[dir] = true
+				// Present means "an alternative"; true means "holds GGUF".
+				// A folder named awq/ or fp16/ is an alternative too, and
+				// calling it GGUF would answer the wrong question about it.
+				alternatives[dir] = alternatives[dir] || isGGUF(f.Path)
 			}
 		case isGGUF(f.Path):
 			// Root GGUFs are one quant per name, minus any shard suffix. The
@@ -507,12 +526,13 @@ func pickSmallest(candidates map[string]int64, display map[string]string, parts 
 			shown = d
 		}
 		label := quantLabel(shown, repo)
+		inFolder, isFolder := folders[name]
 		v := Variant{
 			Name:    shown,
 			Label:   label,
 			Display: shortLabel(label),
 			SizeGB:  float64(size) / 1e9,
-			GGUF:    isGGUF(shown) || folders[name],
+			GGUF:    isGGUF(shown) || inFolder,
 		}
 		// Which layouts vLLM can be pointed at is not a judgement about
 		// quality: it addresses a GGUF quant by name, and on every released
@@ -520,8 +540,10 @@ func pickSmallest(candidates map[string]int64, display map[string]string, parts 
 		// quant in a folder is fetched and then reported missing, and a
 		// split one loads partial weights. Both are worse than refusing.
 		switch {
-		case folders[name]:
+		case isFolder && inFolder:
 			v.Blocked = "in a subfolder, which vLLM's GGUF plugin cannot address"
+		case isFolder:
+			v.Blocked = "in a subfolder, which vLLM cannot be pointed at"
 		case parts[name] > 1:
 			v.Blocked = "split across files, which vLLM's GGUF plugin cannot load"
 		}
@@ -592,12 +614,12 @@ func isWeightFile(path string) bool {
 // out of pages is an error rather than a short answer: a truncated listing
 // undercounts, and an undercount is the one wrong answer that tells someone a
 // model fits when it does not.
-func repoTree(repo string) ([]treeEntry, error) {
+func repoTree(ctx context.Context, repo string) ([]treeEntry, error) {
 	next := baseURL + "/api/models/" + repo + "/tree/main?recursive=true"
 	var all []treeEntry
 	seen := map[string]bool{}
 	for page := 0; page < maxTreePages; page++ {
-		entries, link, err := treePage(next)
+		entries, link, err := treePage(ctx, next)
 		if err != nil {
 			return nil, err
 		}
@@ -615,8 +637,8 @@ func repoTree(repo string) ([]treeEntry, error) {
 	return nil, fmt.Errorf("hub tree: %s has more than %d pages", repo, maxTreePages)
 }
 
-func treePage(u string) ([]treeEntry, string, error) {
-	resp, err := httpClient.Get(u)
+func treePage(ctx context.Context, u string) ([]treeEntry, string, error) {
+	resp, err := get(ctx, u)
 	if err != nil {
 		return nil, "", err
 	}
@@ -674,9 +696,9 @@ type DetectedFlags struct {
 // out of any literal "vllm serve" snippet. Topology flags (parallelism,
 // host, port, served-model-name) are deliberately ignored: they describe
 // someone else's deployment, not the model.
-func DetectFlags(repo string) (DetectedFlags, error) {
+func DetectFlags(ctx context.Context, repo string) (DetectedFlags, error) {
 	var d DetectedFlags
-	resp, err := httpClient.Get(baseURL + "/" + repo + "/raw/main/README.md")
+	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/README.md")
 	if err != nil {
 		return d, err
 	}
@@ -702,7 +724,7 @@ func DetectFlags(repo string) (DetectedFlags, error) {
 	// Model cards routinely paste a snippet from a bigger sibling model, so
 	// the advertised context can exceed what this model actually supports.
 	// vLLM refuses to start in that case, so clamp to the real ceiling.
-	if limit, err := ContextLimit(repo); err == nil {
+	if limit, err := ContextLimit(ctx, repo); err == nil {
 		d.MaxModelLen = clampContext(d.MaxModelLen, limit)
 	}
 	return d, nil
@@ -711,8 +733,8 @@ func DetectFlags(repo string) (DetectedFlags, error) {
 // ContextLimit reads max_position_embeddings from a model's config.json --
 // the ceiling vLLM validates --max-model-len against. Returns 0 when the
 // field is absent.
-func ContextLimit(repo string) (int, error) {
-	resp, err := httpClient.Get(baseURL + "/" + repo + "/raw/main/config.json")
+func ContextLimit(ctx context.Context, repo string) (int, error) {
+	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/config.json")
 	if err != nil {
 		return 0, err
 	}
@@ -762,8 +784,8 @@ var systemMessagePositionRe = regexp.MustCompile(
 // ok is false (with empty patched and nil err) if the model's template
 // doesn't have this issue -- the caller should just use the model's own
 // bundled template as normal in that case, not add --chat-template at all.
-func DetectChatTemplatePatch(repo string) (patched string, ok bool, err error) {
-	resp, err := httpClient.Get(baseURL + "/" + repo + "/raw/main/chat_template.jinja")
+func DetectChatTemplatePatch(ctx context.Context, repo string) (patched string, ok bool, err error) {
+	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/chat_template.jinja")
 	if err != nil {
 		return "", false, err
 	}

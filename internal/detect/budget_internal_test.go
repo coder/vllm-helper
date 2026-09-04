@@ -104,6 +104,47 @@ func TestDiscreteVRAMIsBudgetedAgainstTheCardNotTheHost(t *testing.T) {
 	}
 }
 
+// The budget has to be measured against the pool Pool() names, because that
+// pool is what callers draw against. A caller charging installed RAM under a
+// budget derived from VRAM is describing two different machines.
+func TestTheBudgetIsMeasuredAgainstThePoolItReports(t *testing.T) {
+	tests := []struct {
+		name     string
+		hw       Hardware
+		wantPool int64
+		wantKind string
+	}{
+		{
+			// A 24 GiB card in a 256 GiB host. The weights land in VRAM,
+			// so the host's memory says nothing about whether they fit.
+			name:     "discrete card",
+			hw:       Hardware{TotalMemBytes: bi(256), GPUMemBytes: bi(24), CUDA: true},
+			wantPool: bi(24),
+			wantKind: "vram",
+		},
+		{
+			name:     "unified memory",
+			hw:       Hardware{TotalMemBytes: unifiedTotal, Unified: true, CUDA: true},
+			wantPool: unifiedTotal,
+			wantKind: "ram",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pool, kind := tt.hw.Pool()
+			if pool != tt.wantPool || kind != tt.wantKind {
+				t.Fatalf("Pool() = %.1f GiB of %s, want %.1f GiB of %s",
+					float64(pool)/gibibyte, kind, float64(tt.wantPool)/gibibyte, tt.wantKind)
+			}
+			budget, _ := tt.hw.Budget(0)
+			if budget <= 0 || budget >= pool {
+				t.Errorf("budget %.1f GiB is not bounded by the %.1f GiB of %s it will be loaded into",
+					float64(budget)/gibibyte, float64(pool)/gibibyte, kind)
+			}
+		})
+	}
+}
+
 func TestASmallMachineIsNotPromisedMoreThanItHas(t *testing.T) {
 	// 70% of 8 GiB was 5.6 GB, which no CUDA context and Python runtime will
 	// ever leave room for. Refusing outright is the honest answer.

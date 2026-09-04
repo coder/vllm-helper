@@ -120,6 +120,11 @@ el.form.addEventListener("submit", async (e) => {
 
 let selected = null;
 
+// Whether the service can be controlled from here, filled by the status
+// request the header already makes. Assumed available until told otherwise,
+// so a slow status never leaves a usable button disabled.
+let serviceControl = { ok: true, reason: "" };
+
 function select(btn, repo) {
   document
     .querySelectorAll(".hit[aria-current]")
@@ -459,7 +464,14 @@ async function inspect(repo) {
         "You already have a profile for this model, so its saved settings are used rather than fresh ones.";
       el.pullNote.hidden = false;
     }
-    el.pull.disabled = false;
+    // Pulling ends in a restart, so it needs the same permission the machine
+    // page's buttons do. Offering it without that produces a 403 on click;
+    // saying why up front is the behaviour the rest of the panel promises.
+    el.pull.disabled = !serviceControl.ok;
+    if (!serviceControl.ok) {
+      el.pullNote.textContent = serviceControl.reason;
+      el.pullNote.hidden = false;
+    }
     el.loading.hidden = true;
     el.body.hidden = false;
   } catch (err) {
@@ -508,6 +520,10 @@ el.pull.addEventListener("click", async () => {
   }
 });
 
-fillChrome();
+fillChrome().then((s) => {
+  if (s) {
+    serviceControl = { ok: !!s.privileged, reason: s.priv_reason || "" };
+  }
+});
 fillBudget();
 el.input.focus();
