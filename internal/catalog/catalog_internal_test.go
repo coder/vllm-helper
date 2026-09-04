@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
+	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/vllm"
 )
 
@@ -332,5 +334,139 @@ func TestAConfiglessRepoFallsBackToItsBaseModel(t *testing.T) {
 	}
 	if d.MaxContext != 40960 {
 		t.Errorf("MaxContext = %d, want 40960", d.MaxContext)
+	}
+}
+
+// The write path, not just the estimate. A sliding-window model's cache has to
+// come out sized for its real cost per token: gpt-oss-120b is 18 full-attention
+// layers plus 18 sliding ones at a window of 128, and counting all 36 as full
+// wrote a profile reserving twice what the context needed. Measured on a GB10,
+// the doubled figure reserved 38.7 GB where 19.3 GB buys the same 4x131k.
+func TestPrepareProfileSizesASlidingWindowModelCorrectly(t *testing.T) {
+	types := make([]string, 36)
+	for i := range types {
+		if i%2 == 0 {
+			types[i] = "sliding_attention"
+		} else {
+			types[i] = "full_attention"
+		}
+	}
+	cfg, err := json.Marshal(map[string]any{
+		"model_type": "gpt_oss", "num_hidden_layers": 36,
+		"num_attention_heads": 64, "num_key_value_heads": 8, "head_dim": 64,
+		"sliding_window": 128, "layer_types": types,
+		"max_position_embeddings": 131072, "torch_dtype": "bfloat16",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "config.json") {
+			w.Write(cfg)
+			return
+		}
+		fmt.Fprint(w, "# no serve snippet")
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+
+	var arch hf.Arch
+	if err := json.Unmarshal(cfg, &arch); err != nil {
+		t.Fatal(err)
+	}
+	// The machine this was measured on, not whichever runs the tests.
+	hw := detect.Hardware{TotalMemBytes: 127600592 * 1024, Unified: true}
+	const weights = 65_200_000_000 // gpt-oss-120b on disk
+
+	plan, maxLen := planCache(hw, arch, weights, profile.DefaultMaxModelLen, 0)
+	if plan.KVCacheBytes == 0 {
+		t.Fatal("no KV cache size planned for a model whose shape is fully known")
+	}
+	if maxLen != 131072 {
+		t.Errorf("sized for %d tokens of context, want the model's own 131072", maxLen)
+	}
+
+	// What one token really costs, half the layers capped at their window.
+	perLayer := int64(2 * 8 * 64 * 2)
+	perToken := perLayer * (18*int64(maxLen) + 18*128) / int64(maxLen)
+	wantTokens := int64(detect.DefaultContextTarget) * int64(maxLen)
+
+	if got := plan.KVCacheBytes / perToken; got < wantTokens*95/100 || got > wantTokens*105/100 {
+		t.Errorf("reserved %d bytes = %d tokens, want about %d (%dx a full context)",
+			plan.KVCacheBytes, got, wantTokens, detect.DefaultContextTarget)
+	}
+	// The bug: sizing as though every layer held the whole context. Measured
+	// on a GB10, that reserved 38.7 GB where 19.3 GB buys the same context.
+	if doubled := perLayer * 36 * wantTokens; plan.KVCacheBytes >= doubled {
+		t.Errorf("reserved %d bytes, no better than counting all 36 layers full (%d)",
+			plan.KVCacheBytes, doubled)
+	}
+	if plan.KVCacheBytes > 22e9 {
+		t.Errorf("reserved %.1f GB, want about 19.3", float64(plan.KVCacheBytes)/1e9)
+	}
+}
+
+// A plan given no weight believes the model is free and hands its room to the
+// cache. Every pull without a quant choice used to do exactly that.
+//
+// It only shows up once the wanted context costs more than the machine has
+// spare: below that the target decides the size and the weight never enters
+// the arithmetic, which is why a 40k-context case would pass either way.
+func TestTheModelsOwnWeightIsPartOfThePlan(t *testing.T) {
+	const ctx = 262144
+	arch := hf.Arch{
+		NumHiddenLayers: 28, NumKeyValueHeads: 8, HeadDim: 128,
+		MaxPositionEmbed: ctx, TorchDtype: "bfloat16",
+	}
+	hw := detect.Hardware{TotalMemBytes: 127600592 * 1024, Unified: true}
+
+	small, _ := planCache(hw, arch, 2e9, ctx, 0)
+	large, _ := planCache(hw, arch, 100e9, ctx, 0)
+	if small.KVCacheBytes == 0 {
+		t.Fatal("no cache planned for a 2 GB model on a 128 GB machine")
+	}
+	if large.KVCacheBytes >= small.KVCacheBytes {
+		t.Errorf("a 100 GB model was planned %.1f GB of cache, no less than a 2 GB one at %.1f GB",
+			float64(large.KVCacheBytes)/1e9, float64(small.KVCacheBytes)/1e9)
+	}
+	// And the weights plus their cache still have to fit the machine.
+	committed := 100e9 + float64(large.KVCacheBytes)
+	if ceiling := large.MemUtilization * float64(hw.TotalMemBytes); committed > ceiling {
+		t.Errorf("100 GB model plus %.1f GB of cache exceeds the %.1f GB ceiling",
+			float64(large.KVCacheBytes)/1e9, ceiling/1e9)
+	}
+}
+
+// The planner above can only weigh a model it is told about. A pull with no
+// quant choice has nothing naming a size, so the weights have to be measured
+// -- otherwise the plan is handed 0 and reserves the model's own room for its
+// cache. That was every safetensors pull.
+func TestAPullWithoutAQuantChoiceStillMeasuresTheWeights(t *testing.T) {
+	var mu sync.Mutex
+	weighed := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/tree/"):
+			mu.Lock()
+			weighed = true
+			mu.Unlock()
+			fmt.Fprint(w, `[{"type":"file","path":"model.safetensors","size":65200000000}]`)
+		case strings.HasSuffix(r.URL.Path, "config.json"):
+			fmt.Fprint(w, `{"model_type":"qwen3","num_hidden_layers":28,
+			                "num_key_value_heads":8,"head_dim":128,
+			                "max_position_embeddings":262144}`)
+		default:
+			fmt.Fprint(w, "# no serve snippet")
+		}
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+
+	PrepareProfile(config.Dirs{Data: t.TempDir()}, "org/big-model", nil, vllm.Caps{}, 0)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !weighed {
+		t.Error("the pull planned a KV cache without ever measuring the model it has to fit around")
 	}
 }

@@ -296,38 +296,26 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 		Source:      "vllm-helper new",
 	}
 
-	// Size the cache rather than letting vLLM fill whatever is left. Falls
-	// back to vLLM's profiling when the shape could not be read.
+	// Size the cache rather than letting vLLM fill whatever is left.
 	maxLen, _ := strconv.Atoi(p.Opts.MaxModelLen)
 	if maxLen == 0 {
 		maxLen = profile.DefaultMaxModelLen
 	}
 	arch, _ := hf.Config(configRepoFor(repo, choice))
-	if n := arch.MaxContext(); n > 0 && n < maxLen {
-		// Asking for more context than the model was trained for is how
-		// vLLM refuses to start, and the card's snippet is not always right
-		// about this. Clamp before sizing: a sliding-window model's cost
-		// per token depends on the context it is given.
-		maxLen = n
-		p.Opts.MaxModelLen = strconv.Itoa(n)
+	cache, clamped := planCache(detect.Probe(), arch, weightBytes(repo, choice), maxLen, contextTarget)
+	if clamped != maxLen {
+		p.Opts.MaxModelLen = strconv.Itoa(clamped)
 	}
-	if kv := arch.KVBytesPerToken(maxLen); kv > 0 {
-		var weights int64
-		if choice != nil {
-			weights = int64(choice.Variant.SizeGB * 1e9)
-		}
-		plan := detect.Probe().PlanFor(weights, kv, maxLen, contextTarget)
-		if plan.KVCacheBytes > 0 {
-			p.Opts.KVCacheBytes = plan.KVCacheBytes
-			p.Notes = append(p.Notes, fmt.Sprintf(
-				"Sized the KV cache at %.1f GB, which is %s of context. "+
-					"Left to itself vLLM would claim everything free, which on a shared "+
-					"memory pool is taken from the OS.",
-				float64(plan.KVCacheBytes)/1e9, tokenCount(plan.Tokens)))
-		}
-		if plan.Note != "" {
-			p.Notes = append(p.Notes, plan.Note)
-		}
+	if cache.KVCacheBytes > 0 {
+		p.Opts.KVCacheBytes = cache.KVCacheBytes
+		p.Notes = append(p.Notes, fmt.Sprintf(
+			"Sized the KV cache at %.1f GB, which is %s of context. "+
+				"Left to itself vLLM would claim everything free, which on a shared "+
+				"memory pool is taken from the OS.",
+			float64(cache.KVCacheBytes)/1e9, tokenCount(cache.Tokens)))
+	}
+	if cache.Note != "" {
+		p.Notes = append(p.Notes, cache.Note)
 	}
 	// Only the card's own flags decide this. What we added says nothing about
 	// whether the author documented how to serve the model, which is what the
@@ -342,6 +330,39 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 		p.Opts.Status = "NOT YET VERIFIED -- no flags auto-detected, check the model card by hand"
 	}
 	return p
+}
+
+// planCache sizes the KV cache for one model, and reports the context length it
+// was sized for -- clamped to what the model was trained for, since asking for
+// more is how vLLM refuses to start and a sliding-window model's cost per token
+// depends on the answer.
+//
+// Pure so the sizing can be checked against a machine other than this one.
+func planCache(hw detect.Hardware, arch hf.Arch, weights int64, maxLen, target int) (detect.Plan, int) {
+	if n := arch.MaxContext(); n > 0 && n < maxLen {
+		maxLen = n
+	}
+	kv := arch.KVBytesPerToken(maxLen)
+	if kv <= 0 {
+		// Nothing known about the shape, so leave it to vLLM's profiling
+		// rather than guess: a wrong cache size is worse than a slow one.
+		return detect.Plan{}, maxLen
+	}
+	return hw.PlanFor(weights, kv, maxLen, target), maxLen
+}
+
+// weightBytes is what the model will occupy. A chosen quant names its own size;
+// otherwise it has to be measured, and a plan given 0 believes the weights are
+// free and hands their room to the cache.
+func weightBytes(repo string, choice *Choice) int64 {
+	if choice != nil {
+		return int64(choice.Variant.SizeGB * 1e9)
+	}
+	w, err := hf.WeightsSize(repo)
+	if err != nil {
+		return 0
+	}
+	return int64(w.SizeGB * 1e9)
 }
 
 // configRepoFor names the repo holding the config.json for a model's shape.
