@@ -103,7 +103,7 @@ func TestPrepareProfileAppliesAQuantChoice(t *testing.T) {
 		Variant:   hf.Variant{Name: "m-Q8_0.gguf", Label: "Q8_0", GGUF: true},
 		BaseModel: "Qwen/Qwen3-32B",
 	}
-	p := PrepareProfile(dirs, "bartowski/Qwen_Qwen3-32B-GGUF", choice, vllm.Caps{})
+	p := PrepareProfile(dirs, "bartowski/Qwen_Qwen3-32B-GGUF", choice, vllm.Caps{}, 0)
 
 	if want := "bartowski/Qwen_Qwen3-32B-GGUF:Q8_0"; p.Opts.Repo != want {
 		t.Errorf("Repo = %q, want %q", p.Opts.Repo, want)
@@ -118,7 +118,7 @@ func TestPrepareProfileAppliesAQuantChoice(t *testing.T) {
 	}
 
 	// No choice means the repo's default, unchanged.
-	plain := PrepareProfile(dirs, "Qwen/Qwen3-32B", nil, vllm.Caps{})
+	plain := PrepareProfile(dirs, "Qwen/Qwen3-32B", nil, vllm.Caps{}, 0)
 	if plain.Opts.Repo != "Qwen/Qwen3-32B" {
 		t.Errorf("Repo = %q, want the bare repo when nothing was chosen", plain.Opts.Repo)
 	}
@@ -157,7 +157,7 @@ func TestNotesDoNotCreditTheCardForOurOwnFlags(t *testing.T) {
 		BaseModel: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
 	}
 	// A repo with no README snippet, which is the usual case for GGUF.
-	p := PrepareProfile(dirs, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", choice, vllm.Caps{})
+	p := PrepareProfile(dirs, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", choice, vllm.Caps{}, 0)
 
 	// The flag still has to reach vLLM -- the plugin cannot start without it.
 	if !strings.Contains(p.Opts.ExtraArgs, "--tokenizer Qwen/Qwen3-Coder-30B-A3B-Instruct") {
@@ -228,7 +228,7 @@ func TestInspectFetchesTheArchConcurrently(t *testing.T) {
 	m.CardData.BaseModel = json.RawMessage(`"org/demo"`)
 
 	start := time.Now()
-	d := Inspect(m, 84, vllm.Caps{})
+	d := Inspect(m, 84, vllm.Caps{}, 0)
 	elapsed := time.Since(start)
 
 	if !overlapped {
@@ -288,7 +288,7 @@ func TestTheReposOwnConfigBeatsItsBaseModels(t *testing.T) {
 	m := hf.Model{ID: "Qwen/Qwen3-0.6B"}
 	m.CardData.BaseModel = json.RawMessage(`["Qwen/Qwen3-0.6B-Base"]`)
 
-	d := Inspect(m, 84, vllm.Caps{})
+	d := Inspect(m, 84, vllm.Caps{}, 0)
 	if d.MaxContext != 40960 {
 		t.Errorf("MaxContext = %d, want 40960 from the repo's own config", d.MaxContext)
 	}
@@ -326,7 +326,7 @@ func TestAConfiglessRepoFallsBackToItsBaseModel(t *testing.T) {
 	m := hf.Model{ID: "someone/demo-GGUF"}
 	m.CardData.BaseModel = json.RawMessage(`"org/base"`)
 
-	d := Inspect(m, 84, vllm.Caps{})
+	d := Inspect(m, 84, vllm.Caps{}, 0)
 	if d.KVBytesPerToken != 2*28*8*128*2 {
 		t.Errorf("KVBytesPerToken = %d, want the base model's shape", d.KVBytesPerToken)
 	}

@@ -150,10 +150,12 @@ func runInspect(args []string, jsonOut bool) error {
 // just means there is no budget to measure against.
 func inspectModel(m hf.Model, cfg *config.Config) catalog.Detail {
 	var override string
+	var target int
 	if cfg != nil {
 		override = cfg.ModelBudgetGB()
+		target = cfg.KVContextTarget()
 	}
-	return catalog.Inspect(m, detect.BudgetGB(override), vllmCaps(cfg))
+	return catalog.Inspect(m, detect.BudgetGB(override), vllmCaps(cfg), target)
 }
 
 // thousands renders a token count the way people say it: 262144 as "262k".

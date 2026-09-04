@@ -56,7 +56,7 @@ func pickMemFit(hw detect.Hardware, availMB int, want string, kvPinned bool) (va
 	case hw.Unified:
 		ceiling := maxUnifiedMemUtilization
 		if kvPinned {
-			if m := hw.PlanFor(0, 0, 0).MemUtilization; m > ceiling {
+			if m := hw.PlanFor(0, 0, 0, 0).MemUtilization; m > ceiling {
 				ceiling = m
 			}
 		}

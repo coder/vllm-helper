@@ -103,7 +103,7 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 			ch <- result{err: err}
 			return
 		}
-		ch <- result{d: catalog.Inspect(m, s.budget(), s.caps())}
+		ch <- result{d: catalog.Inspect(m, s.budget(), s.caps(), s.cfg.KVContextTarget())}
 	}()
 
 	select {
@@ -164,7 +164,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 				"error": "could not re-read " + repo + " from HuggingFace: " + err.Error()})
 			return
 		}
-		d := catalog.Inspect(m, s.budget(), s.caps())
+		d := catalog.Inspect(m, s.budget(), s.caps(), s.cfg.KVContextTarget())
 		v, ok := catalog.FindVariant(d.All, want)
 		switch {
 		case !ok:
@@ -203,7 +203,7 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		out.Notes = append(out.Notes,
 			"Profile '"+name+"' already existed -- switching to it with its saved settings.")
 	} else {
-		plan := catalog.PrepareProfile(s.cfg.Dirs, repo, choice, s.caps())
+		plan := catalog.PrepareProfile(s.cfg.Dirs, repo, choice, s.caps(), s.cfg.KVContextTarget())
 		out.Notes = append(out.Notes, plan.Notes...)
 		if _, err := profile.Create(s.cfg.Dirs, plan.Opts); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

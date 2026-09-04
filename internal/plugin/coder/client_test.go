@@ -38,7 +38,7 @@ func newClient(t *testing.T, status int, respBody string, got *capture) *coder.C
 		_, _ = io.WriteString(w, respBody)
 	}))
 	t.Cleanup(srv.Close)
-	return coder.NewClient(srv.URL, "session-token", "provider-uuid")
+	return coder.NewClient(srv.URL, "session-token", "provider-uuid", "default")
 }
 
 func TestRequestShape(t *testing.T) {
@@ -203,7 +203,7 @@ func TestUnreachableDeployment(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 
-	if err := coder.NewClient(url, "tok", "prov").Check(); err == nil {
+	if err := coder.NewClient(url, "tok", "prov", "default").Check(); err == nil {
 		t.Error("Check should fail when nothing is listening")
 	}
 }
