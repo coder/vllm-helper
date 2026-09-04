@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -70,7 +71,7 @@ func runRestart(o watchOpts) error {
 		return fmt.Errorf("the active profile can't be loaded (%w) -- switch to another one", err)
 	}
 	// Regenerate active.env so 'edit'/'set' changes take effect.
-	if err := writeActiveEnv(cfg, p); err != nil {
+	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err
 	}
 

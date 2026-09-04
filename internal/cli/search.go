@@ -8,44 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/coder/vllm-helper/internal/catalog"
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/hf"
-	"github.com/coder/vllm-helper/internal/vllm"
 )
-
-// searchResult is the machine-readable shape of one search hit.
-type searchResult struct {
-	ID        string   `json:"id"`
-	URL       string   `json:"url"`
-	License   string   `json:"license"`
-	Downloads int64    `json:"downloads"`
-	Likes     int64    `json:"likes"`
-	CreatedAt string   `json:"created_at"`
-	QuantTags []string `json:"quant_tags"`
-}
-
-// modelDetail is the machine-readable shape of `inspect`: everything we
-// can learn about serving one model on this machine.
-type modelDetail struct {
-	searchResult
-	SizeGB float64 `json:"size_gb"` // 0 = unknown
-	// SizeError says why the size is missing when the Hub could not be read,
-	// as opposed to a repo that simply has no servable weights.
-	SizeError string `json:"size_error,omitempty"`
-	// Variants is how many complete copies of the model the repo holds, so
-	// 1 means SizeGB is the whole story and more means it is the smallest of
-	// them. Absent when SizeGB is unknown, since then there was nothing to
-	// count.
-	Variants      int     `json:"variants,omitempty"`
-	BudgetGB      float64 `json:"budget_gb"`             // 0 = unknown (no config)
-	FitsBudget    *bool   `json:"fits_budget,omitempty"` // absent when either side is unknown
-	DetectedFlags string  `json:"detected_flags"`
-	MaxModelLen   string  `json:"detected_max_model_len,omitempty"`
-	// DroppedFlags explains anything the card asked for that the installed
-	// vLLM won't take, so it's visible before pulling rather than as a
-	// crash loop afterwards.
-	DroppedFlags []string `json:"dropped_flags,omitempty"`
-}
 
 // cmdSearch searches HuggingFace and walks the user through picking a
 // model: a numbered result list, then a detail view with a live size check
@@ -77,9 +43,9 @@ func runSearch(args []string, jsonOut bool) error {
 		return fmt.Errorf("search request failed (network or rate limit): %w", err)
 	}
 	if jsonOut {
-		out := make([]searchResult, 0, len(models))
+		out := make([]catalog.Result, 0, len(models))
 		for _, m := range models {
-			out = append(out, toSearchResult(m))
+			out = append(out, catalog.ToResult(m))
 		}
 		return printJSON(out)
 	}
@@ -123,7 +89,7 @@ func runSearch(args []string, jsonOut bool) error {
 		}
 		m := models[n-1]
 		fmt.Println()
-		printModelDetail(gatherModelDetail(m, cfg))
+		printModelDetail(inspectModel(m, cfg))
 		fmt.Println()
 
 		if confirm(fmt.Sprintf("Pull %s and switch to it?", m.ID), false) {
@@ -161,7 +127,7 @@ func runInspect(args []string, jsonOut bool) error {
 	if err != nil && !errors.Is(err, config.ErrNotConfigured) {
 		return err
 	}
-	d := gatherModelDetail(m, cfg)
+	d := inspectModel(m, cfg)
 	if jsonOut {
 		return printJSON(d)
 	}
@@ -169,51 +135,17 @@ func runInspect(args []string, jsonOut bool) error {
 	return nil
 }
 
-func toSearchResult(m hf.Model) searchResult {
-	return searchResult{
-		ID:        m.ID,
-		URL:       "https://huggingface.co/" + m.ID,
-		License:   m.License(),
-		Downloads: m.Downloads,
-		Likes:     m.Likes,
-		CreatedAt: m.CreatedAt,
-		QuantTags: m.QuantTags(),
-	}
-}
-
-// gatherModelDetail runs the live checks (weight size vs budget, flag
-// detection) for one model. cfg may be nil.
-//
-// A model whose size could not be read keeps FitsBudget unset rather than
-// guessing, so nothing downstream claims it fits.
-func gatherModelDetail(m hf.Model, cfg *config.Config) modelDetail {
-	d := modelDetail{searchResult: toSearchResult(m)}
+// inspectModel measures a model against this machine. cfg may be nil, which
+// just means there is no budget to measure against.
+func inspectModel(m hf.Model, cfg *config.Config) catalog.Detail {
+	var budget float64
 	if cfg != nil {
-		d.BudgetGB, _ = strconv.ParseFloat(cfg.ModelBudgetGB(), 64)
+		budget, _ = strconv.ParseFloat(cfg.ModelBudgetGB(), 64)
 	}
-	// A failed measurement is not the same as a repo with nothing to measure:
-	// the pagination guards report an error precisely so a short listing is
-	// not mistaken for a small model, and swallowing it here would undo that.
-	if w, err := hf.WeightsSize(m.ID); err != nil {
-		d.SizeError = err.Error()
-	} else if w.SizeGB > 0 {
-		d.SizeGB = w.SizeGB
-		d.Variants = w.Variants
-		if d.BudgetGB > 0 {
-			fits := w.SizeGB <= d.BudgetGB
-			d.FitsBudget = &fits
-		}
-	}
-	if flags, err := hf.DetectFlags(m.ID); err == nil {
-		// Validate here too: seeing that a card's parser won't work on this
-		// machine is most useful before pulling tens of gigabytes.
-		d.DetectedFlags, d.DroppedFlags = vllm.Check(flags.ExtraArgs, vllmCaps(cfg))
-		d.MaxModelLen = flags.MaxModelLen
-	}
-	return d
+	return catalog.Inspect(m, budget, vllmCaps(cfg))
 }
 
-func printModelDetail(d modelDetail) {
+func printModelDetail(d catalog.Detail) {
 	fmt.Println(d.ID)
 	fmt.Println(d.URL)
 	fmt.Printf("  license:    %s\n", d.License)
@@ -239,8 +171,18 @@ func printModelDetail(d modelDetail) {
 		fmt.Println("  size:       unknown (no servable weights found -- an adapter or projector-only repo, or check the model card)")
 	case d.FitsBudget == nil:
 		fmt.Printf("  size:       %.1f GB  (no budget configured -- run 'vllm-helper setup'%s)\n", d.SizeGB, of)
+	case *d.FitsBudget && d.Best != nil:
+		// Lead with the one worth running rather than the one that merely
+		// proves something here fits, which is the smallest and so also the
+		// worst quant in the repo.
+		fmt.Printf("  size:       %.1f GB at %s  (biggest of %d quants that fits the ~%.0fGB budget; smallest is %.1f GB)\n",
+			d.Best.SizeGB, d.Best.Label, d.Variants, d.BudgetGB, d.SizeGB)
 	case *d.FitsBudget:
 		fmt.Printf("  size:       %.1f GB  (fits under the ~%.0fGB budget%s)\n", d.SizeGB, d.BudgetGB, of)
+	case d.Variants > 1:
+		// Every quant was measured and the smallest still doesn't fit, so
+		// there is no smaller one to go and look for.
+		fmt.Printf("  size:       %.1f GB  (TOO BIG for this machine -- and it is the smallest of %d quants here, so try a different repo)\n", d.SizeGB, d.Variants)
 	default:
 		fmt.Printf("  size:       %.1f GB  (TOO BIG for this machine -- look for a smaller quant%s)\n", d.SizeGB, of)
 	}
@@ -252,4 +194,42 @@ func printModelDetail(d modelDetail) {
 	for _, w := range d.DroppedFlags {
 		fmt.Printf("  dropped:    %s\n", w)
 	}
+	printVariants(d)
+}
+
+// printVariants lists the other copies of a model in a repo.
+//
+// Worth the space because the size above is the smallest, which is the safe
+// answer to "could anything here run" and simultaneously the worst thing to
+// actually serve: bartowski/Qwen_Qwen3-32B-GGUF measures 9.0 GB at IQ2_XXS
+// while its Q8_0 is 34.8 GB and fits an 84 GB budget nearly twice over. A
+// reader who only sees the smallest will write the repo off, or run a 2-bit
+// quant without ever knowing there was a choice.
+func printVariants(d catalog.Detail) {
+	if len(d.All) < 2 {
+		return
+	}
+	fmt.Println()
+	fmt.Printf("  %d quants in this repo:\n", len(d.All))
+	for _, v := range d.All {
+		mark := "   "
+		switch {
+		case d.Best != nil && v.Name == d.Best.Name:
+			mark = "  >"
+		case d.BudgetGB > 0 && v.SizeGB > d.BudgetGB:
+			mark = "  x"
+		}
+		fmt.Printf("%s %-14s %6.1f GB\n", mark, v.Label, v.SizeGB)
+	}
+	if d.Best != nil {
+		fmt.Printf("    > = biggest that fits your ~%.0fGB budget", d.BudgetGB)
+		if d.BudgetGB > 0 {
+			fmt.Print(";  x = too big")
+		}
+		fmt.Println()
+	}
+	// Saying which one gets served matters more than the list itself: a
+	// profile records the repo, so what runs is whatever vLLM resolves --
+	// not necessarily the one measured above.
+	fmt.Println("    Pulling this repo does not pick one of these -- see issue #25.")
 }

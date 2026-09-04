@@ -5,15 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/coder/vllm-helper/internal/catalog"
 	"github.com/coder/vllm-helper/internal/config"
-	"github.com/coder/vllm-helper/internal/hf"
-	"github.com/coder/vllm-helper/internal/plugin"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -184,45 +183,13 @@ func pullAndSwitch(cfg *config.Config, repo string, opts watchOpts) error {
 	}
 
 	fmt.Println("Pulling new model:", repo)
-	fmt.Println("Checking the model's README for known vLLM serving flags...")
-	detected, _ := hf.DetectFlags(repo)
-	// A card prescribes flags for whatever vLLM its author ran. Drop the
-	// ones this build won't accept before they reach a profile, or the
-	// first switch is a crash loop.
-	extraArgs := checkExtraArgs(detected.ExtraArgs, vllmCaps(cfg))
-
-	fmt.Println("Checking the model's chat template for known crash patterns...")
-	patchedTemplate, needsPatch, err := hf.DetectChatTemplatePatch(repo)
-	if err != nil {
-		fmt.Println("Chat template check failed, continuing without it:", err)
-	} else if needsPatch {
-		tmplPath := filepath.Join(cfg.Dirs.Data, "chat-templates", name+".jinja")
-		if err := os.MkdirAll(filepath.Dir(tmplPath), 0o755); err != nil {
-			fmt.Println("Couldn't create chat-templates dir, continuing without the patch:", err)
-		} else if err := os.WriteFile(tmplPath, []byte(patchedTemplate), 0o644); err != nil {
-			fmt.Println("Couldn't write patched template, continuing without it:", err)
-		} else {
-			fmt.Println("This model's bundled template crashes if a system-role message isn't")
-			fmt.Println("first in the conversation (common with agent harnesses like Coder Agents).")
-			fmt.Println("Patched a local copy:", tmplPath)
-			extraArgs = strings.TrimSpace(extraArgs + " --chat-template " + tmplPath)
-		}
+	fmt.Println("Checking the model's README for known vLLM serving flags, and its")
+	fmt.Println("chat template for known crash patterns...")
+	plan := catalog.PrepareProfile(cfg.Dirs, repo, vllmCaps(cfg))
+	for _, n := range plan.Notes {
+		fmt.Println(n)
 	}
-
-	createOpts := profile.CreateOpts{
-		Repo:        repo,
-		MaxModelLen: detected.MaxModelLen,
-		ExtraArgs:   extraArgs,
-		Source:      "vllm-helper new",
-	}
-	if extraArgs != "" {
-		fmt.Println("Auto-detected from the model card:", extraArgs)
-		createOpts.Status = "NOT YET VERIFIED -- flags auto-detected from README"
-	} else {
-		fmt.Println("No vllm serve snippet found in the model's README -- check its HF card by")
-		fmt.Println("hand and edit the profile if it needs specific flags.")
-		createOpts.Status = "NOT YET VERIFIED -- no flags auto-detected, check the model card by hand"
-	}
+	createOpts := plan.Opts
 	fmt.Printf("Saving it as profile '%s' for next time.\n", name)
 	p, err = profile.Create(cfg.Dirs, createOpts)
 	if err != nil {
@@ -257,11 +224,7 @@ func runRemove(args []string) error {
 	if name == cfg.ActiveProfile() {
 		return fmt.Errorf("'%s' is the currently active model -- switch to something else first", name)
 	}
-	plugin.Dispatch(context.Background(), os.Stderr, plugin.EventRemoved, plugin.State{
-		Config:  cfg,
-		Name:    name,
-		BaseURL: localBaseURL(cfg),
-	})
+	control.NotifyRemoved(context.Background(), cfg, name, os.Stderr)
 	if err := profile.Remove(cfg.Dirs, name); err != nil {
 		return err
 	}
@@ -273,7 +236,7 @@ func runRemove(args []string) error {
 // record the active profile, sync Coder, restart the service, and watch
 // the boot according to opts.
 func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) error {
-	if err := writeActiveEnv(cfg, p); err != nil {
+	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err
 	}
 	// Warn, never refuse: profiles get hand-edited and vLLM gets upgraded
@@ -291,18 +254,17 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	}
 
 	fmt.Println()
-	plugin.Dispatch(context.Background(), os.Stderr, plugin.EventActivating, plugin.State{
-		Config:  cfg,
-		Name:    p.Name,
-		Profile: p,
-		BaseURL: localBaseURL(cfg),
-	})
-
-	fmt.Println()
-	fmt.Printf("Restarting %s (this reloads the model -- can take several minutes,\n", cfg.ServiceName())
-	fmt.Println("longer if the model isn't cached on disk yet)...")
-	if err := svc(cfg).Restart(); err != nil {
-		return fmt.Errorf("restarting service: %w", err)
+	// The banner belongs to the restart rather than before it, so that a
+	// plugin taking its time doesn't leave "Restarting..." on screen with
+	// nothing happening yet.
+	restart := func() error {
+		fmt.Println()
+		fmt.Printf("Restarting %s (this reloads the model -- can take several minutes,\n", cfg.ServiceName())
+		fmt.Println("longer if the model isn't cached on disk yet)...")
+		return svc(cfg).Restart()
+	}
+	if err := control.NotifyAndRestart(context.Background(), cfg, p, os.Stderr, restart); err != nil {
+		return err
 	}
 
 	if !opts.follow && !opts.wait {
@@ -313,40 +275,6 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	}
 	fmt.Println()
 	return watchBoot(cfg, p.Name, opts)
-}
-
-// writeActiveEnv assembles state/active.env from config.env + secrets.env +
-// the profile (same layering as the bash implementation, and the output
-// stays bash-sourceable) and records the active profile name.
-func writeActiveEnv(cfg *config.Config, p *profile.Profile) error {
-	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
-		return err
-	}
-	var b strings.Builder
-	appendFile := func(f *config.EnvFile) {
-		if f == nil {
-			return
-		}
-		for _, line := range f.Lines {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-				continue
-			}
-			b.WriteString(line + "\n")
-		}
-	}
-	appendFile(cfg.File)
-	appendFile(cfg.Secrets)
-	appendFile(p.File)
-
-	tmp := cfg.Dirs.ActiveEnvFile() + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, cfg.Dirs.ActiveEnvFile()); err != nil {
-		return err
-	}
-	return os.WriteFile(cfg.Dirs.ActiveProfileFile(), []byte(p.Name+"\n"), 0o644)
 }
 
 // statusReport is the machine-readable shape of `status`.
@@ -382,25 +310,12 @@ func gatherStatus(cfg *config.Config) statusReport {
 			r.Model = m
 		}
 	}
-	r.HTTPStatus, r.Healthy = probeHealth(cfg.Port())
+	r.HTTPStatus, r.Healthy = control.ProbeHealth(cfg.Port())
 	if r.Crashed {
 		// Only worth the journalctl call when there's a failure to explain.
-		r.LastLog = lastMeaningfulLine(svc(cfg).LastLogs(40))
+		r.LastLog = control.LastMeaningfulLine(svc(cfg).LastLogs(40))
 	}
 	return r
-}
-
-// lastMeaningfulLine picks the line most likely to say why the server died.
-// A Python traceback ends with the exception, and vLLM's fatal startup
-// errors are one-liners, so the last non-blank line is nearly always it.
-func lastMeaningfulLine(logs string) string {
-	lines := strings.Split(logs, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if line := strings.TrimSpace(lines[i]); line != "" {
-			return line
-		}
-	}
-	return ""
 }
 
 func newStatusCmd() *cobra.Command {

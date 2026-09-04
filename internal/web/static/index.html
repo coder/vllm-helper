@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>vllm-helper</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="wordmark">vllm&#8209;helper</span>
+      <span class="bar-host" data-host>&nbsp;</span>
+      <nav class="tabs">
+        <a class="tab" href="/" aria-current="page">Machine</a>
+        <a class="tab" href="/models">Add model</a>
+      </nav>
+      <span class="bar-build" data-build>&nbsp;</span>
+    </header>
+
+    <main>
+      <!-- The machine, as one object: what it is serving and what that
+           costs it. Everything else on the page is secondary to this. -->
+      <section class="now" aria-labelledby="now-title">
+        <p class="phase" data-phase-label>Connecting</p>
+        <h1 class="model" id="now-title" data-model>&nbsp;</h1>
+        <p class="profile-line" data-profile></p>
+
+        <div class="rail" data-rail hidden>
+          <div class="rail-track">
+            <div class="rail-used" data-rail-used></div>
+            <div class="rail-budget" data-rail-budget><span>budget</span></div>
+          </div>
+          <dl class="rail-legend">
+            <div>
+              <dt>in use</dt>
+              <dd data-used>&mdash;</dd>
+            </div>
+            <div>
+              <dt>budget</dt>
+              <dd data-budget>&mdash;</dd>
+            </div>
+            <div>
+              <dt>total</dt>
+              <dd data-total>&mdash;</dd>
+            </div>
+            <div>
+              <dt>gpu</dt>
+              <dd data-gpu>&mdash;</dd>
+            </div>
+          </dl>
+        </div>
+
+        <p class="detail" data-detail></p>
+        <pre class="failure" data-failure hidden></pre>
+        <div class="notice" data-privilege hidden></div>
+        <div class="notice notice-error" data-error hidden></div>
+
+        <div class="now-actions">
+          <button class="btn" data-restart>Restart</button>
+          <button class="btn btn-quiet" data-stop>Stop</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="models-title">
+        <h2 class="section-title" id="models-title">
+          Models <span class="count" data-model-count></span>
+        </h2>
+        <ul class="models" data-models></ul>
+      </section>
+
+      <section aria-labelledby="log-title">
+        <h2 class="section-title" id="log-title">
+          Log
+          <label class="follow">
+            <input type="checkbox" data-follow checked />
+            follow
+          </label>
+        </h2>
+        <pre class="log" data-log tabindex="0">Loading&#8230;</pre>
+      </section>
+    </main>
+
+    <script src="/common.js"></script>
+    <script src="/machine.js"></script>
+  </body>
+</html>

@@ -11,6 +11,22 @@ the fact.
 
 ### Added
 
+- `vllm-helper serve` runs a web panel for the machine: the model that's
+  loaded, whether it's serving or still coming up, how much memory is in use
+  against what this hardware can give a model, the other saved profiles with a
+  switch button, and the server log. It's a control plane only — inference
+  still goes straight to vLLM, so the panel is never in the path of a request
+  and can't affect one. Listens on localhost unless `--listen` says otherwise,
+  and every request needs the token printed at startup. Switching and stopping
+  need permission to control the service; where that's missing the panel says
+  so and disables those buttons rather than failing when they're pressed.
+- The panel can find and add models, not just switch between saved ones. An
+  "Add model" page searches HuggingFace, and picking a result measures it
+  against this machine — weight size against the budget, model-card flags
+  against the installed vLLM — before saving anything. Pulling saves a profile
+  and switches to it, and saved models can be removed from the same list they
+  are switched from. The judgements behind all of that now live in one place
+  shared with the CLI, so the two cannot disagree about whether a model fits.
 - `vllm-helper upgrade` replaces the binary from a published release, checking
   the download against the release's checksum before writing it. `--check`
   reports what's available without installing it.
@@ -41,6 +57,14 @@ the fact.
 
 ### Changed
 
+- `inspect`, `search` and the panel now list every quantization a repo holds
+  and lead with the biggest one that fits, instead of reporting only the
+  smallest. The smallest is the right answer to "could anything here run" and
+  the worst thing to actually serve — a 32B repo measured at 9.0 GB was being
+  presented as a good fit for an 84 GB machine when that figure was its 2-bit
+  quant and its 8-bit one was 34.8 GB. Quants too large for the machine are
+  marked as such, and a repo whose smallest quant still doesn't fit now says
+  so rather than advising you to look for a smaller one that isn't there.
 - Coder sync is now a plugin (`internal/plugin/coder`) behind a small
   interface, rather than being wired through the CLI by hand. An integration
   declares its own configuration, contributes its own commands, and opts into

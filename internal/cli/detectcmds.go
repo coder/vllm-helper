@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/plugin"
@@ -546,7 +547,7 @@ func adoptInto(cfg *config.Config) error {
 		}
 	}
 
-	if err := writeActiveEnv(cfg, p); err != nil {
+	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err
 	}
 	fmt.Printf("Marked '%s' as the active profile.\n", name)
