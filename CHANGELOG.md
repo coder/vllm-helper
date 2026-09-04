@@ -31,9 +31,10 @@ the fact.
   switch button, and the server log. It's a control plane only — inference
   still goes straight to vLLM, so the panel is never in the path of a request
   and can't affect one. Listens on localhost unless `--listen` says otherwise,
-  and every request needs the token printed at startup. Switching and stopping
-  need permission to control the service; where that's missing the panel says
-  so and disables those buttons rather than failing when they're pressed.
+  and every request needs the token printed at startup. Anything that controls
+  the service — switching, pulling, stopping — needs permission to do so;
+  where that's missing the panel says so and disables those buttons rather than
+  failing when they're pressed.
 - The panel can find and add models, not just switch between saved ones. An
   "Add model" page searches HuggingFace, and picking a result measures it
   against this machine — weight size against the budget, model-card flags
@@ -144,52 +145,6 @@ the fact.
 
 ### Fixed
 
-- Two models with the same name but different owners no longer share a profile.
-  Profile names come from the model half of a repo path, so `unsloth/Qwen3-8B`
-  and `Qwen/Qwen3-8B` both wanted `qwen3-8b`: pulling the second reused the
-  first and switched to weights nobody had asked for, reporting success. The
-  saved `MODEL` is checked before a profile is reused, and a name held by a
-  different model is refused rather than borrowed.
-- The panel's memory rail is drawn against the memory a model is actually
-  loaded into. On a machine with a discrete card the budget comes from VRAM
-  while the rail measured installed RAM, so a 24 GB budget sat at a tenth of
-  the way along a 256 GB axis and the card's own usage was never shown. Both
-  now come from the same pool, and usage is left blank where nothing measures
-  it rather than filled in from the host's figure.
-- The panel and the CLI agree on the memory budget again. `MODEL_BUDGET_GB` was
-  honoured everywhere except the machine endpoint, so setting it left the page
-  header showing one limit and the verdict beside it comparing against another.
-- Switching, pulling, removing, restarting and stopping are serialized. Two
-  tabs, or one impatient double click, could write the same `active.env.tmp` at
-  once and race its rename, or restart a profile another request had just
-  removed.
-- A profile removed from the panel now reports what its integrations said. A
-  Coder entry that could not be deleted outlives the profile it points at, and
-  the output that would have said so was being collected and dropped.
-- The panel probes for permission to stop the service as well as restart it. A
-  sudoers rule granting only `restart` lit up a Stop button that then failed
-  with a bare exit status, which is the thing the check exists to prevent. On
-  macOS, system scope is reported as needing root rather than asked about
-  through a `systemctl` the machine does not have.
-- A status refresh straight after a switch no longer answers from the previous
-  process's cached health, which could report the new model as serving before
-  it had loaded and then poll slowly enough to hide the wait.
-- HuggingFace requests stop when the caller gives up. An inspection that timed
-  out left its tree walk running, so a slow repo could keep working long after
-  the page had been told to try again.
-- The token in the startup URL is exchanged for a cookie and then redirected
-  away, instead of relying on the page to strip it, so it does not survive in
-  request logs or referrers.
-- Refusals from `/api/` are JSON, so the page shows what to do about them
-  instead of a bare "401 Unauthorized".
-- The "Pull and switch" button is disabled, with the reason shown, when the
-  panel cannot control the service. It was offered regardless and failed with a
-  403 on click.
-- The status line no longer reports a stale failure reason beside a healthy
-  server: a unit that crashed once and recovered read `http 200 · exit-code`.
-- A failed profile fetch no longer wedges the model list. The active profile
-  was recorded before the request that used it, so one failure left the old
-  list on screen and every later poll skipped the rebuild.
 - Installing the GGUF plugin from the panel no longer holds a request open for
   the whole build. It builds from source, so that request stayed open for
   minutes and browsers drop those — after which the page could not tell a
