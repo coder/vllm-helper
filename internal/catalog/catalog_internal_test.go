@@ -252,3 +252,85 @@ func TestInspectFetchesTheArchConcurrently(t *testing.T) {
 		t.Errorf("recommended %s from a repo where nothing can load", d.Best.Label)
 	}
 }
+
+// A repo that names a base model is still described by its own config. Reading
+// the base model's instead reports the wrong shape: Qwen3-0.6B names
+// Qwen3-0.6B-Base, which was trained for 32k of context where the released
+// model does 40k, and sizing a KV cache to the wrong number is how a profile
+// ends up either starved or wasteful.
+func TestTheReposOwnConfigBeatsItsBaseModels(t *testing.T) {
+	var mu sync.Mutex
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "config.json"):
+			mu.Lock()
+			asked = append(asked, r.URL.Path)
+			mu.Unlock()
+			if strings.Contains(r.URL.Path, "-Base") {
+				fmt.Fprint(w, `{"model_type":"qwen3","num_hidden_layers":28,
+				                "num_key_value_heads":8,"head_dim":128,
+				                "max_position_embeddings":32768}`)
+				return
+			}
+			fmt.Fprint(w, `{"model_type":"qwen3","num_hidden_layers":28,
+			                "num_key_value_heads":8,"head_dim":128,
+			                "max_position_embeddings":40960}`)
+		case strings.Contains(r.URL.Path, "/tree/"):
+			fmt.Fprint(w, `[{"type":"file","path":"model.safetensors","size":1500000000}]`)
+		default:
+			fmt.Fprint(w, `# no serve snippet`)
+		}
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+
+	m := hf.Model{ID: "Qwen/Qwen3-0.6B"}
+	m.CardData.BaseModel = json.RawMessage(`["Qwen/Qwen3-0.6B-Base"]`)
+
+	d := Inspect(m, 84, vllm.Caps{})
+	if d.MaxContext != 40960 {
+		t.Errorf("MaxContext = %d, want 40960 from the repo's own config", d.MaxContext)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, p := range asked {
+		if strings.Contains(p, "-Base") {
+			t.Errorf("fetched the base model's config (%s) when the repo has its own", p)
+		}
+	}
+}
+
+// GGUF repos genuinely ship no config, and there the base model is the only
+// description of the model available.
+func TestAConfiglessRepoFallsBackToItsBaseModel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "config.json"):
+			if !strings.Contains(r.URL.Path, "org/base") {
+				http.NotFound(w, r)
+				return
+			}
+			fmt.Fprint(w, `{"model_type":"qwen3","num_hidden_layers":28,
+			                "num_key_value_heads":8,"head_dim":128,
+			                "max_position_embeddings":40960}`)
+		case strings.Contains(r.URL.Path, "/tree/"):
+			fmt.Fprint(w, `[{"type":"file","path":"m-Q8_0.gguf","size":1500000000}]`)
+		default:
+			fmt.Fprint(w, `# no serve snippet`)
+		}
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+
+	m := hf.Model{ID: "someone/demo-GGUF"}
+	m.CardData.BaseModel = json.RawMessage(`"org/base"`)
+
+	d := Inspect(m, 84, vllm.Caps{})
+	if d.KVBytesPerToken != 2*28*8*128*2 {
+		t.Errorf("KVBytesPerToken = %d, want the base model's shape", d.KVBytesPerToken)
+	}
+	if d.MaxContext != 40960 {
+		t.Errorf("MaxContext = %d, want 40960", d.MaxContext)
+	}
+}
