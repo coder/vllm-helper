@@ -1,6 +1,9 @@
 package detect
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Figures below come from vLLM's memory profiler on a DGX Spark (GB10, 121.69
 // GiB visible), read out of the service journal. They are the reason the
@@ -11,6 +14,8 @@ import "testing"
 const unifiedTotal = 127600592 * 1024
 
 func gib(f float64) float64 { return f * gibibyte }
+
+func bi(f float64) int64 { return int64(f * gibibyte) }
 
 func TestTheBudgetLeavesRoomForWhatVLLMActuallyUses(t *testing.T) {
 	// Every start this machine logged, as (weights loaded, total consumed
@@ -26,7 +31,7 @@ func TestTheBudgetLeavesRoomForWhatVLLMActuallyUses(t *testing.T) {
 		{"Nemotron-30B BF16", 58.93, 64.34},
 		{"Ornith-35B", 65.53, 71.24},
 	}
-	budget, _ := Budget(unifiedTotal, 0, 0, true)
+	budget, _ := Hardware{TotalMemBytes: unifiedTotal, Unified: true, CUDA: true}.Budget(0)
 	for _, r := range runs {
 		if gib(r.weights) > float64(budget) {
 			continue // too big for this machine; nothing to check
@@ -51,7 +56,7 @@ func TestTheBudgetFitsInTheMachine(t *testing.T) {
 	for _, total := range []int64{
 		8 * gibibyte, 16 * gibibyte, 32 * gibibyte, 64 * gibibyte, unifiedTotal, 512 * gibibyte,
 	} {
-		budget, _ := Budget(total, 0, 0, true)
+		budget, _ := Hardware{TotalMemBytes: total, Unified: true, CUDA: true}.Budget(0)
 		w := float64(budget)
 		committed := w*(1+activationFraction) + runtimeReserve + graphReserve + defaultBaseline(float64(total))
 		if committed > float64(total) {
@@ -65,8 +70,8 @@ func TestABusyMachineDoesNotGetABudgetOfNothing(t *testing.T) {
 	// Probing while our own service is up reads 111 of 121 GiB in use. Taken
 	// as an OS baseline that would leave nothing, and every model on the Hub
 	// would be reported as too big -- on the machine that was serving one.
-	busy, _ := Budget(unifiedTotal, 0, 111*gibibyte, true)
-	idle, _ := Budget(unifiedTotal, 0, 0, true)
+	busy, _ := Hardware{TotalMemBytes: unifiedTotal, Unified: true, CUDA: true}.Budget(111 * gibibyte)
+	idle, _ := Hardware{TotalMemBytes: unifiedTotal, Unified: true, CUDA: true}.Budget(0)
 	if busy != idle {
 		t.Errorf("a loaded model changed the budget: busy %.1f GiB, idle %.1f GiB",
 			float64(busy)/gibibyte, float64(idle)/gibibyte)
@@ -76,8 +81,8 @@ func TestABusyMachineDoesNotGetABudgetOfNothing(t *testing.T) {
 func TestAMeasuredBaselineIsUsedWhenItLooksIdle(t *testing.T) {
 	// vLLM reported 5.5-6.0 GiB in use before loading anything. A machine
 	// that lean should be rewarded for it.
-	lean, _ := Budget(unifiedTotal, 0, 5.5*gibibyte, true)
-	estimated, _ := Budget(unifiedTotal, 0, 0, true)
+	lean, _ := Hardware{TotalMemBytes: unifiedTotal, Unified: true, CUDA: true}.Budget(5.5 * gibibyte)
+	estimated, _ := Hardware{TotalMemBytes: unifiedTotal, Unified: true, CUDA: true}.Budget(0)
 	if lean <= estimated {
 		t.Errorf("measured-idle budget %.1f GiB should beat the %.1f GiB estimate",
 			float64(lean)/gibibyte, float64(estimated)/gibibyte)
@@ -87,7 +92,7 @@ func TestAMeasuredBaselineIsUsedWhenItLooksIdle(t *testing.T) {
 func TestDiscreteVRAMIsBudgetedAgainstTheCardNotTheHost(t *testing.T) {
 	// 24 GiB card in a 128 GiB host. The weights land in VRAM, so the host's
 	// memory says nothing about whether they fit.
-	got, reason := Budget(128*gibibyte, 24*gibibyte, 0, false)
+	got, reason := Hardware{TotalMemBytes: 128 * gibibyte, GPUMemBytes: 24 * gibibyte, CUDA: true}.Budget(0)
 	if float64(got) >= 24*gibibyte {
 		t.Errorf("budget %.1f GiB does not fit a 24 GiB card", float64(got)/gibibyte)
 	}
@@ -102,14 +107,14 @@ func TestDiscreteVRAMIsBudgetedAgainstTheCardNotTheHost(t *testing.T) {
 func TestASmallMachineIsNotPromisedMoreThanItHas(t *testing.T) {
 	// 70% of 8 GiB was 5.6 GB, which no CUDA context and Python runtime will
 	// ever leave room for. Refusing outright is the honest answer.
-	got, _ := Budget(8*gibibyte, 0, 0, true)
+	got, _ := Hardware{TotalMemBytes: 8 * gibibyte, Unified: true, CUDA: true}.Budget(0)
 	if float64(got) > 2*gibibyte {
 		t.Errorf("8 GiB machine offered a %.1f GiB budget", float64(got)/gibibyte)
 	}
 }
 
 func TestAnUnmeasurableMachineSaysSoRatherThanGuessing(t *testing.T) {
-	got, reason := Budget(0, 0, 0, true)
+	got, reason := Hardware{TotalMemBytes: 0, Unified: true, CUDA: true}.Budget(0)
 	if got != 0 || reason == "" {
 		t.Errorf("got %d, %q; want 0 and an explanation", got, reason)
 	}
@@ -130,5 +135,39 @@ func TestTheOverrideWins(t *testing.T) {
 		if got := BudgetGB(in); got != float64(Probe().BudgetBytes)/gigabyte {
 			t.Errorf("BudgetGB(%q) = %v, want the probed budget", in, got)
 		}
+	}
+}
+
+// A machine with no CUDA runs vLLM's CPU backend, which holds no context and
+// captures no graphs. Charging it for both refused small models on machines
+// that can serve them: a 7 GB box, which is a standard CI runner, came out at
+// a budget of zero.
+func TestACPUOnlyMachineIsNotChargedForCUDA(t *testing.T) {
+	for _, total := range []int64{bi(7), bi(8), bi(16)} {
+		cpu, reason := Hardware{TotalMemBytes: total}.Budget(0)
+		gpu, _ := Hardware{TotalMemBytes: total, Unified: true, CUDA: true}.Budget(0)
+
+		if cpu <= 0 {
+			t.Errorf("%.0f GiB CPU-only machine got no budget at all", float64(total)/gibibyte)
+		}
+		if cpu <= gpu {
+			t.Errorf("%.0f GiB: CPU-only budget %.2f GiB is no better than the CUDA one at %.2f",
+				float64(total)/gibibyte, float64(cpu)/gibibyte, float64(gpu)/gibibyte)
+		}
+		if reason == "" {
+			t.Error("no reason given")
+		}
+	}
+}
+
+// Refusing is a real answer, and has to read as one rather than as a budget
+// that happens to be zero.
+func TestAMachineThatCannotServeSaysSo(t *testing.T) {
+	got, reason := Hardware{TotalMemBytes: bi(3), Unified: true, CUDA: true}.Budget(0)
+	if got != 0 {
+		t.Errorf("budget %.2f GiB on a 3 GiB machine", float64(got)/gibibyte)
+	}
+	if !strings.Contains(reason, "too little memory") {
+		t.Errorf("reason = %q, want it to say the machine cannot serve a model", reason)
 	}
 }
