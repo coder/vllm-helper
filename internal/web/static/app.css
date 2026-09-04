@@ -777,6 +777,14 @@ input:focus-visible {
   color: var(--content-secondary);
 }
 
+/* A second line under the verdict, quieter than the reason above it: it
+   qualifies the answer rather than giving it. */
+.verdict-context {
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--border-default);
+  font-size: 0.8125rem;
+}
+
 .verdict[data-fit="yes"] {
   border-left-color: var(--content-success);
 }

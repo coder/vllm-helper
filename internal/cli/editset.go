@@ -20,6 +20,7 @@ var standardProfileKeys = map[string]bool{
 	"MODEL":                  true,
 	"MAX_MODEL_LEN":          true,
 	"GPU_MEMORY_UTILIZATION": true,
+	"KV_CACHE_MEMORY_BYTES":  true,
 	"EXTRA_ARGS":             true,
 }
 

@@ -156,6 +156,14 @@ func inspectModel(m hf.Model, cfg *config.Config) catalog.Detail {
 	return catalog.Inspect(m, detect.BudgetGB(override), vllmCaps(cfg))
 }
 
+// thousands renders a token count the way people say it: 262144 as "262k".
+func thousands(n int64) string {
+	if n < 1000 {
+		return strconv.FormatInt(n, 10)
+	}
+	return fmt.Sprintf("%.0fk", float64(n)/1000)
+}
+
 func printModelDetail(d catalog.Detail, cfg *config.Config) {
 	fmt.Println(d.ID)
 	fmt.Println(d.URL)
@@ -196,6 +204,16 @@ func printModelDetail(d catalog.Detail, cfg *config.Config) {
 		fmt.Printf("  size:       %.1f GB  (TOO BIG for this machine -- and it is the smallest of %d quants here, so try a different repo)\n", d.SizeGB, d.Variants)
 	default:
 		fmt.Printf("  size:       %.1f GB  (TOO BIG for this machine -- look for a smaller quant%s)\n", d.SizeGB, of)
+	}
+	// What "fits" actually buys, which is the question the size line is
+	// usually standing in for.
+	if d.ContextTokens > 0 {
+		full := ""
+		if d.MaxContext > 0 {
+			full = fmt.Sprintf(", %.1fx its %s max", float64(d.ContextTokens)/float64(d.MaxContext), thousands(int64(d.MaxContext)))
+		}
+		fmt.Printf("  context:    ~%s tokens in %.1f GB of KV cache%s\n",
+			thousands(d.ContextTokens), d.KVCacheGB, full)
 	}
 	if d.DetectedFlags != "" {
 		fmt.Printf("  vllm flags: %s (auto-detected, will be pre-filled)\n", d.DetectedFlags)

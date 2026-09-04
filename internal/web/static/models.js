@@ -154,6 +154,18 @@ function renderVerdict(d) {
       p.textContent = sub;
       el.verdict.append(p);
     }
+    // "Fits" on its own is a weaker answer than people read it as: a model can
+    // fit and still have room for only a fraction of one request. Say what the
+    // remaining memory actually buys.
+    if (fit === "yes" && d.context_tokens) {
+      const c = document.createElement("span");
+      c.className = "verdict-context";
+      const full = d.max_context
+        ? ` — ${(d.context_tokens / d.max_context).toFixed(1)}× its ${fmtCount(d.max_context)} maximum`
+        : "";
+      c.textContent = `Room for about ${fmtCount(d.context_tokens)} tokens of context in ${d.kv_cache_gb.toFixed(1)} GB of KV cache${full}.`;
+      el.verdict.append(c);
+    }
   };
 
   if (d.size_error) {

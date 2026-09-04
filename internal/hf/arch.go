@@ -20,7 +20,98 @@ type Arch struct {
 	NumLocalExperts  int `json:"num_local_experts"`
 	NRoutedExperts   int `json:"n_routed_experts"`
 	NumExpertsPerTok int `json:"num_experts_per_tok"`
+
+	// The shape of the KV cache. HeadDim is read, never derived: Qwen3-0.6B
+	// declares head_dim 128 while hidden_size/num_attention_heads is 64, and
+	// halving the per-token cost is the direction that ends in an OOM.
+	NumHiddenLayers   int    `json:"num_hidden_layers"`
+	NumAttentionHeads int    `json:"num_attention_heads"`
+	NumKeyValueHeads  int    `json:"num_key_value_heads"`
+	HeadDim           int    `json:"head_dim"`
+	HiddenSize        int    `json:"hidden_size"`
+	MaxPositionEmbed  int    `json:"max_position_embeddings"`
+	TorchDtype        string `json:"torch_dtype"`
+	// LayerTypes names each layer for hybrids. Nemotron-H is 52 layers of
+	// which only a handful attend; counting them all would overstate the
+	// cache several times over.
+	LayerTypes []string `json:"layer_types"`
+
+	// TextConfig carries the language model's shape on multimodal repos,
+	// where the top level describes the wrapper instead.
+	TextConfig *Arch `json:"text_config"`
 }
+
+// text returns the sub-config describing the language model, which on a
+// multimodal repo is where the attention shape actually lives.
+func (a Arch) text() Arch {
+	if a.TextConfig != nil && a.TextConfig.NumHiddenLayers > 0 {
+		return *a.TextConfig
+	}
+	return a
+}
+
+// attentionLayers counts the layers that hold a KV cache.
+//
+// Hybrids interleave attention with Mamba or recurrent layers that hold none,
+// and say so in layer_types. Using num_hidden_layers for those overstates the
+// cache by the ratio of the two -- 52 against 4 on nemotron_h.
+func (a Arch) attentionLayers() int {
+	if n := len(a.LayerTypes); n > 0 {
+		attn := 0
+		for _, t := range a.LayerTypes {
+			if strings.Contains(strings.ToLower(t), "attention") {
+				attn++
+			}
+		}
+		if attn > 0 {
+			return attn
+		}
+	}
+	return a.NumHiddenLayers
+}
+
+// kvDtypeBytes is the width of one cached element. Every dtype vLLM stores a
+// KV cache in is 2 bytes wide unless the cache itself is quantised, which is a
+// separate flag we do not set.
+func kvDtypeBytes(dtype string) int {
+	switch strings.ToLower(dtype) {
+	case "float32", "float", "fp32":
+		return 4
+	default:
+		return 2
+	}
+}
+
+// KVBytesPerToken is what one token of context costs in KV cache.
+//
+//	2 (K and V) * layers * kv_heads * head_dim * dtype_bytes
+//
+// Validated against this project's DGX Spark to the byte: Qwen3-0.6B gives
+// 2*28*8*128*2 = 114,688 B/token, and vLLM reported 952,784 tokens in 101.77
+// GiB, which is the same number.
+//
+// Returns 0 when the config did not say enough, which callers must treat as
+// "unknown" rather than "free".
+func (a Arch) KVBytesPerToken() int64 {
+	t := a.text()
+	layers, heads, dim := t.attentionLayers(), t.NumKeyValueHeads, t.HeadDim
+	if heads == 0 {
+		heads = t.NumAttentionHeads // no grouped-query attention
+	}
+	if dim == 0 && t.NumAttentionHeads > 0 && t.HiddenSize > 0 {
+		// Only as a last resort, and only when the config omitted head_dim
+		// entirely -- deriving over a declared value is the OOM above.
+		dim = t.HiddenSize / t.NumAttentionHeads
+	}
+	if layers <= 0 || heads <= 0 || dim <= 0 {
+		return 0
+	}
+	return 2 * int64(layers) * int64(heads) * int64(dim) * int64(kvDtypeBytes(t.TorchDtype))
+}
+
+// MaxContext is the longest context this model was trained for, or 0 if the
+// config did not say.
+func (a Arch) MaxContext() int { return a.text().MaxPositionEmbed }
 
 // MoE reports whether this is a mixture-of-experts model.
 //

@@ -9,12 +9,15 @@
 package catalog
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/vllm"
@@ -92,6 +95,15 @@ type Detail struct {
 	// vLLM won't take, so it's visible before pulling rather than as a
 	// crash loop afterwards.
 	DroppedFlags []string `json:"dropped_flags,omitempty"`
+	// KVBytesPerToken is what one token of context costs in KV cache, and
+	// MaxContext the longest the model was trained for. Both 0 when the
+	// config could not be read.
+	KVBytesPerToken int64 `json:"kv_bytes_per_token,omitempty"`
+	MaxContext      int   `json:"max_context,omitempty"`
+	// ContextTokens is how much context this machine can hold for the model
+	// once weights and overhead are paid for, and KVCacheGB what that costs.
+	ContextTokens int64   `json:"context_tokens,omitempty"`
+	KVCacheGB     float64 `json:"kv_cache_gb,omitempty"`
 }
 
 // ToResult converts a Hub model into a search hit.
@@ -130,15 +142,19 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
 	//
 	// Only for repos that name a base model, which in practice means GGUF
 	// ones -- a normal repo has nothing to look up and pays nothing.
-	archCh := make(chan hf.Arch, 1)
-	if d.BaseModel != "" {
-		go func() {
-			a, _ := hf.Config(d.BaseModel)
-			archCh <- a
-		}()
-	} else {
-		archCh <- hf.Arch{}
+	//
+	// The same config also carries the attention shape, which is what a KV
+	// cache costs per token, so one request answers both questions. GGUF
+	// repos keep theirs in the base model; everything else has its own.
+	configRepo := d.BaseModel
+	if configRepo == "" {
+		configRepo = m.ID
 	}
+	archCh := make(chan hf.Arch, 1)
+	go func() {
+		a, _ := hf.Config(configRepo)
+		archCh <- a
+	}()
 
 	// A failed measurement is not the same as a repo with nothing to measure:
 	// the pagination guards report an error precisely so a short listing is
@@ -155,7 +171,12 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
 		// a quant that cannot load is neither recommended nor selectable.
 		// The alternative is finding out from a crash loop, by which point
 		// the model that was serving has already been stopped.
-		if ok, why := hf.GGUFServable(<-archCh); !ok {
+		arch := <-archCh
+		d.KVBytesPerToken = arch.KVBytesPerToken()
+		d.MaxContext = arch.MaxContext()
+		// Only a repo that publishes GGUF can be blocked by the plugin's
+		// mapping, and a safetensors MoE is served by vLLM directly.
+		if ok, why := hf.GGUFServable(arch); !ok && d.BaseModel != "" {
 			d.ArchBlocked = why
 			for i := range d.All {
 				if d.All[i].GGUF && d.All[i].Servable() {
@@ -173,6 +194,18 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
 			if best, ok := w.BestFit(d.BudgetGB, caps.SupportsGGUF()); ok && len(w.All) > 1 {
 				d.Best = &best
 			}
+		}
+
+		// How much context this machine can actually hold for it, which is
+		// the question "does it fit" is usually standing in for.
+		if d.KVBytesPerToken > 0 && d.MaxContext > 0 {
+			size := d.SizeGB
+			if d.Best != nil {
+				size = d.Best.SizeGB
+			}
+			plan := detect.Probe().PlanFor(int64(size*1e9), d.KVBytesPerToken, d.MaxContext)
+			d.ContextTokens = plan.Tokens
+			d.KVCacheGB = float64(plan.KVCacheBytes) / 1e9
 		}
 	}
 	if flags, err := hf.DetectFlags(m.ID); err == nil {
@@ -260,6 +293,42 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 		ExtraArgs:   strings.TrimSpace(extraFlags + " " + cardArgs),
 		Source:      "vllm-helper new",
 	}
+
+	// Size the KV cache for this model rather than letting vLLM fill
+	// whatever is left. Left alone, a 1.1 GB model on a 121 GiB machine took
+	// 101.77 GiB of cache -- 23 full contexts -- and pushed the desktop into
+	// swap. Needs the model's attention shape, so it degrades to vLLM's own
+	// profiling when the config could not be read.
+	maxLen, _ := strconv.Atoi(p.Opts.MaxModelLen)
+	if maxLen == 0 {
+		maxLen = profile.DefaultMaxModelLen
+	}
+	arch, _ := hf.Config(configRepoFor(repo, choice))
+	if kv := arch.KVBytesPerToken(); kv > 0 {
+		if n := arch.MaxContext(); n > 0 && n < maxLen {
+			// Asking for more context than the model was trained for is
+			// how vLLM refuses to start, and the card's snippet is not
+			// always right about this.
+			maxLen = n
+			p.Opts.MaxModelLen = strconv.Itoa(n)
+		}
+		var weights int64
+		if choice != nil {
+			weights = int64(choice.Variant.SizeGB * 1e9)
+		}
+		plan := detect.Probe().PlanFor(weights, kv, maxLen)
+		if plan.KVCacheBytes > 0 {
+			p.Opts.KVCacheBytes = plan.KVCacheBytes
+			p.Notes = append(p.Notes, fmt.Sprintf(
+				"Sized the KV cache at %.1f GB, which is %s of context. "+
+					"Left to itself vLLM would claim everything free, which on a shared "+
+					"memory pool is taken from the OS.",
+				float64(plan.KVCacheBytes)/1e9, tokenCount(plan.Tokens)))
+		}
+		if plan.Note != "" {
+			p.Notes = append(p.Notes, plan.Note)
+		}
+	}
 	// Only the card's own flags decide this. What we added says nothing about
 	// whether the author documented how to serve the model, which is what the
 	// status is for.
@@ -273,6 +342,24 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 		p.Opts.Status = "NOT YET VERIFIED -- no flags auto-detected, check the model card by hand"
 	}
 	return p
+}
+
+// configRepoFor names the repo holding the config.json that describes a
+// model's shape. GGUF builds keep theirs in the base model they were converted
+// from, since GGUF publishers largely ship none of their own.
+func configRepoFor(repo string, choice *Choice) string {
+	if choice != nil && choice.Variant.GGUF && choice.BaseModel != "" {
+		return choice.BaseModel
+	}
+	return repo
+}
+
+// tokenCount renders a context length the way people say it.
+func tokenCount(n int64) string {
+	if n >= 1000 {
+		return fmt.Sprintf("about %.0fk tokens", float64(n)/1000)
+	}
+	return fmt.Sprintf("%d tokens", n)
 }
 
 // allGGUF reports whether every copy in a repo is GGUF, which makes the repo
