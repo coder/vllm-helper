@@ -130,6 +130,56 @@ func TestPrepareProfileAppliesAQuantChoice(t *testing.T) {
 	}
 }
 
+// gpt-oss ships no vllm serve snippet, so nothing was detected and the profile
+// was written with an empty EXTRA_ARGS. Serving it that way answers plain chat
+// normally but returns an empty message for anything with tools, which reads as
+// the model refusing to work rather than as a missing flag.
+func TestAHarmonyProfileIsWrittenWithItsParsers(t *testing.T) {
+	// The repo decides the architecture, so one server answers for both by
+	// reading the path it was asked for.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		harmony := strings.Contains(r.URL.Path, "gpt-oss")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "config.json") && harmony:
+			fmt.Fprint(w, `{"model_type":"gpt_oss","num_hidden_layers":36,
+			                "num_key_value_heads":8,"head_dim":64,
+			                "max_position_embeddings":131072}`)
+		case strings.HasSuffix(r.URL.Path, "config.json"):
+			fmt.Fprint(w, `{"model_type":"qwen3","num_hidden_layers":28,
+			                "num_key_value_heads":8,"head_dim":128,
+			                "max_position_embeddings":40960}`)
+		case strings.Contains(r.URL.Path, "/tree/"):
+			fmt.Fprint(w, `[{"type":"file","path":"model.safetensors","size":1500000000}]`)
+		default:
+			fmt.Fprint(w, `# no serve snippet`)
+		}
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+	// A harmony model also fetches its vocab, which must not reach the real
+	// internet from a test.
+	defer swapEncodingsURL(srv.URL + "/encodings/")()
+
+	dirs := config.Dirs{Data: t.TempDir()}
+	p := PrepareProfile(context.Background(), dirs, "openai/gpt-oss-120b", nil, spark, 0)
+	for _, want := range []string{
+		"--tool-call-parser openai",
+		"--enable-auto-tool-choice",
+		"--reasoning-parser openai_gptoss",
+	} {
+		if !strings.Contains(p.Opts.ExtraArgs, want) {
+			t.Errorf("ExtraArgs = %q, want it to contain %q", p.Opts.ExtraArgs, want)
+		}
+	}
+
+	// A model that does not speak harmony has no use for them, and naming a
+	// parser that does not match the model is how #23 produced empty reasoning.
+	q := PrepareProfile(context.Background(), dirs, "Qwen/Qwen3-32B", nil, spark, 0)
+	if strings.Contains(q.Opts.ExtraArgs, "parser") {
+		t.Errorf("ExtraArgs = %q, want no parser flags on a model that isn't harmony", q.Opts.ExtraArgs)
+	}
+}
+
 // Case matters to publishers and not to people.
 func TestFindVariantIsCaseInsensitive(t *testing.T) {
 	all := []hf.Variant{{Label: "Q8_0"}, {Label: "UD-Q2_K_XL"}}

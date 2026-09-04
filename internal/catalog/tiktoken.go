@@ -6,7 +6,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/vllm"
 )
 
 // harmonyEncodings are the vocab files the harmony tokenizer reads, by the
@@ -25,6 +29,71 @@ func swapEncodingsURL(url string) func() {
 // needsHarmony reports whether a model tokenizes with harmony, which reads its
 // vocab from disk rather than from the model repo.
 func needsHarmony(modelType string) bool { return modelType == "gpt_oss" }
+
+// Parser names for harmony output, best first. They have moved between
+// releases, so which one is real is a question for the installed vLLM rather
+// than something to hardcode.
+var (
+	harmonyToolParsers      = []string{"openai", "openai_gptoss", "gpt_oss"}
+	harmonyReasoningParsers = []string{"openai_gptoss", "gpt_oss", "openai"}
+)
+
+// harmonyServeFlags reports the flags a harmony model needs before a client can
+// use it, and says what it added.
+//
+// A harmony model emits its tool calls and its thinking as channels in its own
+// format rather than as JSON. Without parsers for them vLLM has nothing to turn
+// that into tool_calls, and drops the message: content "", tool_calls null,
+// finish_reason "stop". Plain chat still answers normally, so it reads as the
+// model ignoring the request rather than as a missing flag. Measured on a DGX
+// Spark serving gpt-oss-120b, where a tool request generated 47 tokens and
+// returned nothing at all.
+//
+// present is what has already been asked for. Anything named there wins: the
+// card's author knows the model, and this is only filling a gap.
+func harmonyServeFlags(caps vllm.Caps, present string) (flags []string, notes []string) {
+	// Every flag below is gated on this vLLM registering both the option and
+	// the parser name, so an unreadable registry adds nothing on its own and
+	// needs no separate guard. Guessing a name into a profile would trade a
+	// model that answers plainly for one that will not start.
+	asked := map[string]bool{}
+	if args, err := config.SplitArgs(present); err == nil {
+		for _, a := range args {
+			name, _, _ := strings.Cut(a, "=")
+			asked[name] = true
+		}
+	}
+
+	pick := func(candidates []string, registered func(string) bool) string {
+		for _, name := range candidates {
+			if registered(name) {
+				return name
+			}
+		}
+		return ""
+	}
+
+	if !asked["--tool-call-parser"] && caps.HasFlag("--tool-call-parser") {
+		if name := pick(harmonyToolParsers, caps.HasToolParser); name != "" {
+			flags = append(flags, "--tool-call-parser", name)
+			// vLLM refuses to start with a tool parser and no way to reach it.
+			if !asked["--enable-auto-tool-choice"] && caps.HasFlag("--enable-auto-tool-choice") {
+				flags = append(flags, "--enable-auto-tool-choice")
+			}
+			notes = append(notes, "Added --tool-call-parser "+name+" and --enable-auto-tool-choice. "+
+				"This model reports tool calls in its own format, and without a parser for it vLLM "+
+				"returns an empty message instead, which looks like the model ignoring the request.")
+		}
+	}
+	if !asked["--reasoning-parser"] && caps.HasFlag("--reasoning-parser") {
+		if name := pick(harmonyReasoningParsers, caps.HasReasoningParser); name != "" {
+			flags = append(flags, "--reasoning-parser", name)
+			notes = append(notes, "Added --reasoning-parser "+name+
+				", which separates this model's thinking from its answer.")
+		}
+	}
+	return flags, notes
+}
 
 // ensureHarmonyEncodings downloads the vocab files if they are missing.
 //

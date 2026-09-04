@@ -329,6 +329,12 @@ func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *
 		if note := ensureHarmonyEncodings(dirs.Data); note != "" {
 			p.Notes = append(p.Notes, note)
 		}
+		// Harmony is a wire format as well as a tokenizer: the parsers that
+		// read it are what turn the model's output into an answer.
+		if flags, notes := harmonyServeFlags(caps, p.Opts.ExtraArgs); len(flags) > 0 {
+			p.Opts.ExtraArgs = strings.TrimSpace(p.Opts.ExtraArgs + " " + strings.Join(flags, " "))
+			p.Notes = append(p.Notes, notes...)
+		}
 	}
 	// Only the card's own flags decide this. What we added says nothing about
 	// whether the author documented how to serve the model, which is what the

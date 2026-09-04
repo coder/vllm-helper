@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/coder/vllm-helper/internal/vllm"
 )
 
 // setup creates the encodings directory and points vLLM at it, but nothing
@@ -65,6 +67,59 @@ func TestOnlyHarmonyModelsNeedTheVocab(t *testing.T) {
 	} {
 		if got := needsHarmony(arch); got != want {
 			t.Errorf("needsHarmony(%q) = %v, want %v", arch, got, want)
+		}
+	}
+}
+
+// spark is what a DGX Spark running vLLM 0.27.1 reports, which is where the
+// empty-message failure was measured.
+var spark = vllm.Caps{
+	ToolParsers:      []string{"hermes", "openai", "pythonic"},
+	ReasoningParsers: []string{"deepseek_r1", "openai_gptoss", "qwen3"},
+	Flags:            []string{"--tool-call-parser", "--reasoning-parser", "--enable-auto-tool-choice"},
+}
+
+// Without these flags vLLM has no way to read a harmony model's tool calls, so
+// it returns content "", tool_calls null and finish_reason "stop" -- 47 tokens
+// generated and nothing handed back. Plain chat still answers, which is what
+// makes it read as the model ignoring the request.
+func TestAHarmonyModelGetsTheParsersThatMakeItUsable(t *testing.T) {
+	flags, notes := harmonyServeFlags(spark, "")
+	got := strings.Join(flags, " ")
+	want := "--tool-call-parser openai --enable-auto-tool-choice --reasoning-parser openai_gptoss"
+	if got != want {
+		t.Errorf("harmony flags = %q, want %q", got, want)
+	}
+	if len(notes) != 2 {
+		t.Errorf("got %d notes, want one per flag pair: %v", len(notes), notes)
+	}
+}
+
+// The card's author knows the model. Filling a gap is help; overriding a
+// deliberate choice is a different thing, and would also pass the same flag
+// twice.
+func TestAParserTheCardAlreadyNamedIsLeftAlone(t *testing.T) {
+	flags, _ := harmonyServeFlags(spark, "--tool-call-parser hermes")
+	got := strings.Join(flags, " ")
+	if strings.Contains(got, "--tool-call-parser") {
+		t.Errorf("overrode the card's tool parser: %q", got)
+	}
+	if !strings.Contains(got, "--reasoning-parser openai_gptoss") {
+		t.Errorf("the gap that was left should still be filled: %q", got)
+	}
+}
+
+// A name is only worth writing if this vLLM registers it. Parser names move
+// between releases, and a profile naming one that is gone will not start at
+// all -- strictly worse than the empty answers it was meant to fix.
+func TestNoParserIsNamedThatThisVLLMDoesNotRegister(t *testing.T) {
+	for _, caps := range []vllm.Caps{
+		{}, // introspection failed: we could not ask
+		{Flags: []string{"--tool-call-parser", "--reasoning-parser"}},                  // registries empty
+		{ToolParsers: []string{"openai"}, ReasoningParsers: []string{"openai_gptoss"}}, // flags unreadable
+	} {
+		if flags, _ := harmonyServeFlags(caps, ""); len(flags) > 0 {
+			t.Errorf("named a parser without confirming it exists: %v (caps %+v)", flags, caps)
 		}
 	}
 }
