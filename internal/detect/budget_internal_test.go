@@ -171,10 +171,14 @@ func TestTheOverrideWins(t *testing.T) {
 		}
 	}
 	// Garbage and zero fall back to the machine rather than rejecting
-	// everything on the Hub.
+	// everything on the Hub. Asked of the parsing rather than by comparing two
+	// BudgetGB calls: each one probes, the probe reads memory in use right now,
+	// and on a busy machine the two readings differ enough to cross the
+	// baseline ceiling and return different budgets. That comparison failed on
+	// a CI runner while passing everywhere quiet.
 	for _, in := range []string{"", "  ", "abc", "0", "-5"} {
-		if got := BudgetGB(in); got != float64(Probe().BudgetBytes)/gigabyte {
-			t.Errorf("BudgetGB(%q) = %v, want the probed budget", in, got)
+		if v, ok := overrideGB(in); ok {
+			t.Errorf("overrideGB(%q) = %v, accepted; want a fall back to the machine", in, v)
 		}
 	}
 }
