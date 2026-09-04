@@ -145,16 +145,10 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) De
 	// Only for repos that name a base model, which in practice means GGUF
 	// ones -- a normal repo has nothing to look up and pays nothing.
 	//
-	// The same config also carries the attention shape, which is what a KV
-	// cache costs per token, so one request answers both questions.
-	//
-	// The repo's own config wins whenever it has one. Deferring to the base
-	// model instead reads the wrong model's shape: Qwen3-0.6B names
-	// Qwen3-0.6B-Base as its base, and that one was trained for 32k context
-	// where the released model does 40k. The base model is a fallback for
-	// repos that ship no config at all, which in practice means GGUF -- and
-	// there the 404 comes back fast, so the second request costs little and
-	// only happens when it is the only way to learn anything.
+	// The same config carries the attention shape, so one request answers
+	// both questions. The repo's own config wins: a released model often
+	// credits a base trained for a different context length. Base is a
+	// fallback for repos that ship none, which in practice means GGUF.
 	archCh := make(chan hf.Arch, 1)
 	go func() {
 		a, _ := hf.Config(m.ID)
@@ -302,11 +296,8 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 		Source:      "vllm-helper new",
 	}
 
-	// Size the KV cache for this model rather than letting vLLM fill
-	// whatever is left. Left alone, a 1.1 GB model on a 121 GiB machine took
-	// 101.77 GiB of cache -- 23 full contexts -- and pushed the desktop into
-	// swap. Needs the model's attention shape, so it degrades to vLLM's own
-	// profiling when the config could not be read.
+	// Size the cache rather than letting vLLM fill whatever is left. Falls
+	// back to vLLM's profiling when the shape could not be read.
 	maxLen, _ := strconv.Atoi(p.Opts.MaxModelLen)
 	if maxLen == 0 {
 		maxLen = profile.DefaultMaxModelLen
@@ -352,9 +343,8 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 	return p
 }
 
-// configRepoFor names the repo holding the config.json that describes a
-// model's shape. GGUF builds keep theirs in the base model they were converted
-// from, since GGUF publishers largely ship none of their own.
+// configRepoFor names the repo holding the config.json for a model's shape.
+// GGUF builds keep theirs in the base model they were converted from.
 func configRepoFor(repo string, choice *Choice) string {
 	if choice != nil && choice.Variant.GGUF && choice.BaseModel != "" {
 		return choice.BaseModel

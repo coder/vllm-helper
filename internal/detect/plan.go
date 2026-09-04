@@ -1,41 +1,27 @@
 package detect
 
-// DefaultContextTarget is how much context a profile is sized for, expressed
-// as a multiple of one full-length request.
-//
-// Four rather than one because a server holding exactly one context can serve
-// exactly one request, and rather than "whatever is left" because that is the
-// behaviour this replaced: a 1.1 GB model was given 101.77 GiB of KV cache --
-// 23 full contexts -- on a 121 GiB machine, and spent the difference pushing
-// the desktop into swap.
-//
-// It is a default rather than a rule because the right number is a property of
-// the workload, not the hardware: a single-user box wants fewer and a shared
-// endpoint wants more, and neither can be read off the machine.
+// DefaultContextTarget is how many full-length requests a KV cache is sized to
+// hold. Four rather than "whatever is left", which is what this replaced: a
+// 1.5 GB model took 101.77 GiB of cache, 23 full contexts, on a 121 GiB box.
+// A default rather than a rule -- the right number is a property of the
+// workload, so KV_CONTEXT_TARGET overrides it.
 const DefaultContextTarget = 4
 
 // Plan is how a specific model should be launched on this machine.
 type Plan struct {
-	// KVCacheBytes is what to pass to --kv-cache-memory-bytes, or 0 when the
-	// model's shape could not be read and vLLM's own profiling should stand.
+	// KVCacheBytes is --kv-cache-memory-bytes, or 0 to leave vLLM to profile.
 	KVCacheBytes int64
 	// MemUtilization is the ceiling for --gpu-memory-utilization.
 	MemUtilization float64
-	// Tokens is how much context KVCacheBytes buys, for explaining the
-	// choice. 0 when unknown.
+	// Tokens is how much context KVCacheBytes buys; 0 when unknown.
 	Tokens int64
-	// Note explains the sizing in one line, or is empty when there is
-	// nothing worth saying.
+	// Note explains the sizing, or is empty when there is nothing to say.
 	Note string
 }
 
-// PlanFor sizes the KV cache and the memory ceiling for one model.
-//
-// weightBytes and kvPerToken come from the Hub; maxLen is the context the
-// profile will be started with. A zero kvPerToken means the config did not say
-// enough, and the plan then sets no KV size at all rather than guessing: vLLM's
-// own profiling is a worse answer than this one but a far better answer than a
-// wrong number.
+// PlanFor sizes the KV cache and the memory ceiling for one model. A zero
+// kvPerToken means the config did not say enough, and the plan then sets no KV
+// size at all: vLLM's own profiling beats a guess.
 func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen, contextTarget int) Plan {
 	if contextTarget <= 0 {
 		contextTarget = DefaultContextTarget
@@ -48,11 +34,9 @@ func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen, contextTarget i
 		return Plan{}
 	}
 
-	// The ceiling is everything vLLM may touch: the machine minus what the
-	// OS is holding, minus a margin for the drift between our reading and
-	// vLLM's own at startup. This is what --gpu-memory-utilization should
-	// have always been -- a safety limit -- rather than the KV sizing knob
-	// it became by default.
+	// The ceiling is everything vLLM may touch: the machine minus the OS,
+	// minus a margin for drift between our reading and vLLM's at startup.
+	// A safety limit, which is what this flag should always have been.
 	baseline := defaultBaseline(pool)
 	if h.BaselineGB > 0 && h.BaselineGB*gigabyte < baselineCeiling*pool {
 		baseline = h.BaselineGB * gigabyte
@@ -71,13 +55,12 @@ func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen, contextTarget i
 		return p
 	}
 
-	// Everything vLLM needs that is not KV cache. Weights are known exactly
-	// here, so the estimate is much tighter than the budget's.
+	// Everything that is not KV cache. Weights are known exactly here, so
+	// this is tighter than the budget's estimate.
 	overhead := float64(weightBytes)*(1+activationFraction) + runtimeReserve + graphReserve
 	spare := pool*util - overhead
 	if spare < float64(kvFloor) {
-		// Not enough room for the cache we would want. Say so and leave
-		// vLLM to profile it, which at least fails loudly rather than
+		// Leave vLLM to profile it, which fails loudly rather than
 		// quietly serving one truncated request.
 		p.Note = "this model leaves little room for a KV cache -- vLLM will size it, and may not start"
 		return p

@@ -191,3 +191,24 @@ func TestTheOrganizationIsNotAssumed(t *testing.T) {
 		}
 	}
 }
+
+// A misconfigured organization and a deployment too old to have the route
+// both answer 404, and the fallback then fails too. Blaming only the retired
+// path sends the reader looking at CODER_URL and their token, which is the
+// diagnosis that already cost real time once.
+func TestABadOrganizationIsNamedInTheError(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
+	}))
+	defer srv.Close()
+
+	err := coder.NewClient(srv.URL, "tok", "prov", "no-such-org").Check()
+	if err == nil {
+		t.Fatal("a deployment serving neither route reported success")
+	}
+	if !strings.Contains(err.Error(), "CODER_ORGANIZATION") ||
+		!strings.Contains(err.Error(), "no-such-org") {
+		t.Errorf("error does not name the organization as a suspect: %v", err)
+	}
+}

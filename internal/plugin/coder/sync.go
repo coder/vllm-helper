@@ -211,10 +211,8 @@ func activate(cfg *config.Config, p *profile.Profile) {
 	}
 	state := ids(cfg)
 
-	// A saved ID can name an entry that no longer exists -- deleted in
-	// Coder's UI, or left behind by a different deployment. Recreating is
-	// what was wanted either way, and refusing would leave the picker
-	// permanently stale with only an HTTP 404 to explain it.
+	// A saved ID can name an entry that no longer exists. Recreating is what
+	// was wanted; refusing would leave the picker permanently stale.
 	id := state.Get(p.Name)
 	if id != "" {
 		fmt.Printf("Coder sync: updating model-config for '%s'...\n", p.Name)
@@ -244,13 +242,9 @@ func activate(cfg *config.Config, p *profile.Profile) {
 	fmt.Printf("Coder sync: '%s' is now the only enabled/default model in Coder Agents.\n", p.Name)
 }
 
-// disableOthers turns off every other profile's entry, because vLLM serves one
-// model at a time and any other entry names something this machine cannot
-// answer for right now. (Not about is_default -- Coder enforces a single
-// default itself.)
-//
-// An entry that has already gone is forgotten rather than reported: the goal
-// is that it not be selectable, and a deleted entry meets that.
+// disableOthers turns off every other profile's entry: vLLM serves one model
+// at a time, so any other entry names something this machine cannot answer
+// for. An entry that has already gone is forgotten rather than reported.
 func disableOthers(cfg *config.Config, client *Client, state *config.EnvFile, keep string) *config.EnvFile {
 	profiles, _ := profile.List(cfg.Dirs)
 	dropped := false

@@ -227,15 +227,15 @@ func TestInspectFetchesTheArchConcurrently(t *testing.T) {
 	m := hf.Model{ID: "unsloth/demo-GGUF"}
 	m.CardData.BaseModel = json.RawMessage(`"org/demo"`)
 
-	start := time.Now()
 	d := Inspect(m, 84, vllm.Caps{}, 0)
-	elapsed := time.Since(start)
 
+	// Overlap is the whole claim, and it is deterministic: a sequential
+	// implementation can never have two requests in flight at once. An
+	// elapsed-time bound was here too and measured the same thing less
+	// reliably -- it failed under a loaded test suite, where wall clock says
+	// more about the other packages than about this one.
 	if !overlapped {
 		t.Error("the config fetch did not overlap the others -- it is costing a round trip")
-	}
-	if elapsed > 250*time.Millisecond {
-		t.Errorf("Inspect took %v against three 80ms requests, which is close to sequential", elapsed)
 	}
 
 	// And the answer is the point: every quant is refused, with a reason
