@@ -158,6 +158,18 @@ func inspectModel(m hf.Model, cfg *config.Config) catalog.Detail {
 	return catalog.Inspect(m, detect.BudgetGB(override), vllmCaps(cfg), target)
 }
 
+// firstClause keeps the head of a reason. Repeating a full sentence on every
+// row buries the column that differs, and when a whole repo is blocked the
+// reason has already been given once above the list.
+func firstClause(reason string) string {
+	for _, sep := range []string{", ", " -- "} {
+		if head, _, ok := strings.Cut(reason, sep); ok {
+			return head
+		}
+	}
+	return reason
+}
+
 // display is the readable form of a variant's label. Never use it where the
 // exact label is needed -- it is what vLLM is given.
 func display(v hf.Variant) string {
@@ -268,7 +280,7 @@ func printVariants(d catalog.Detail) {
 		mark, note := "   ", ""
 		switch {
 		case !v.Servable():
-			mark, note = "  -", "  "+v.Blocked
+			mark, note = "  -", "  "+firstClause(v.Blocked)
 		case v.GGUF && !d.GGUFReady:
 			mark, note = "  -", "  needs the GGUF plugin"
 		case d.Best != nil && v.Name == d.Best.Name:
