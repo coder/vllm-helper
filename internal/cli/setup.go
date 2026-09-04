@@ -78,9 +78,10 @@ VLLM_BIN=%s
 SERVICE_SCOPE=%s
 SERVICE_NAME=%s
 
-# Rough budget for model weights on disk, used by 'vllm-helper search' to
-# flag models that won't fit. Auto-detected: %s.
-MODEL_BUDGET_GB=%d
+# Budget for model weights, used by 'vllm-helper search' to flag models that
+# won't fit. Measured from this machine on every run -- currently ~%d GB, being
+# %s. Uncomment only to override that.
+#MODEL_BUDGET_GB=%d
 
 # Where gpt-oss-style models find their tiktoken vocab files.
 TIKTOKEN_ENCODINGS_BASE=%s
@@ -91,7 +92,7 @@ TIKTOKEN_ENCODINGS_BASE=%s
 #CODER_URL=https://coder.example.com
 #CODER_AI_PROVIDER_ID=
 `, vllmBin, config.ServiceManager, config.DefaultServiceScope, config.DefaultServiceName,
-			hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"))
+			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"))
 		if err := os.WriteFile(dirs.ConfigFile(), []byte(content), 0o644); err != nil {
 			return err
 		}

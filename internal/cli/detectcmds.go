@@ -236,6 +236,9 @@ func renderDoctor(r doctorReport, yes bool) {
 	} else {
 		fmt.Println("  gpu:        no NVIDIA GPU visible (nvidia-smi missing or failed)")
 	}
+	if hw.BaselineGB > 0 {
+		fmt.Printf("  in use:     %.1f GB by the OS and everything else running\n", hw.BaselineGB)
+	}
 	fmt.Printf("  budget:     ~%d GB of model weights (%s)\n", hw.BudgetGB, hw.BudgetReason)
 	fmt.Println()
 

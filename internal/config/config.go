@@ -103,11 +103,16 @@ func (c *Config) get(key, def string) string {
 	return def
 }
 
-func (c *Config) Port() string          { return c.get("PORT", "8001") }
-func (c *Config) VLLMBin() string       { return c.get("VLLM_BIN", "") }
-func (c *Config) ServiceName() string   { return c.get("SERVICE_NAME", DefaultServiceName) }
-func (c *Config) ServiceScope() string  { return c.get("SERVICE_SCOPE", DefaultServiceScope) }
-func (c *Config) ModelBudgetGB() string { return c.get("MODEL_BUDGET_GB", "90") }
+func (c *Config) Port() string         { return c.get("PORT", "8001") }
+func (c *Config) VLLMBin() string      { return c.get("VLLM_BIN", "") }
+func (c *Config) ServiceName() string  { return c.get("SERVICE_NAME", DefaultServiceName) }
+func (c *Config) ServiceScope() string { return c.get("SERVICE_SCOPE", DefaultServiceScope) }
+
+// ModelBudgetGB is an override, empty when unset. The budget is a property of
+// the machine -- one that changes when RAM is added or the desktop is turned
+// off -- so the default is to measure it at each call rather than serve back a
+// number frozen into config.env at install time.
+func (c *Config) ModelBudgetGB() string { return c.get("MODEL_BUDGET_GB", "") }
 func (c *Config) APIKey() string        { return c.get("VLLM_API_KEY", "") }
 
 // UpdateChannel is where 'upgrade' looks for new builds: "stable" for tagged

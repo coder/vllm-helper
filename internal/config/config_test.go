@@ -126,7 +126,10 @@ func TestDefaultsMatchThePlatform(t *testing.T) {
 		want string
 	}{
 		{"port", cfg.Port(), "8001"},
-		{"model budget", cfg.ModelBudgetGB(), "90"},
+		// Empty rather than a number: an unset budget means "measure this
+		// machine", not "assume 90 GB", so that a config written on one box
+		// cannot quietly mis-describe another.
+		{"model budget", cfg.ModelBudgetGB(), ""},
 		{"service name", cfg.ServiceName(), config.DefaultServiceName},
 		{"service scope", cfg.ServiceScope(), config.DefaultServiceScope},
 	}
