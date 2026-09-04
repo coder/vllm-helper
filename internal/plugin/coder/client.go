@@ -149,13 +149,11 @@ func (c *Client) Check() error {
 	return c.do("GET", "", nil, nil)
 }
 
-// createResponse covers both shapes the API has returned for a create: the
-// older one replies with the entry itself, the newer one wraps it.
+// createResponse is the entry the API echoes back. Only the ID is read: the
+// rest is what we just sent, and decoding fields we do not use is how a client
+// breaks on a field that changed shape somewhere else in the payload.
 type createResponse struct {
-	ID    string `json:"id"`
-	Model struct {
-		ID string `json:"id"`
-	} `json:"model"`
+	ID string `json:"id"`
 }
 
 // Create posts a new model-config entry and returns its ID.
@@ -165,10 +163,13 @@ func (c *Client) Create(mc ModelConfig) (string, error) {
 	if err := c.do("POST", "", mc, &created); err != nil {
 		return "", err
 	}
-	if created.ID != "" {
-		return created.ID, nil
+	if created.ID == "" {
+		// The entry exists on the deployment but we cannot name it, so it
+		// can never be updated or disabled later. Better to say so than to
+		// record nothing and create a second one on the next sync.
+		return "", fmt.Errorf("coder API created the entry but returned no id")
 	}
-	return created.Model.ID, nil
+	return created.ID, nil
 }
 
 // Update patches an existing entry.

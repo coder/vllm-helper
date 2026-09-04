@@ -122,21 +122,39 @@ func TestAMissingEntryIsDistinguishable(t *testing.T) {
 	}
 }
 
-// Both generations have replied to a create with a different shape.
-func TestCreateReadsEitherResponseShape(t *testing.T) {
+// The create response echoes the whole entry back. Reading fields we do not
+// need is how the client broke once already: a speculative {"model":{"id":..}}
+// shape failed to decode the real reply, where "model" is the model's name.
+func TestCreateReadsTheIDOutOfTheFullEntry(t *testing.T) {
 	t.Parallel()
-	for _, body := range []string{`{"id":"abc"}`, `{"model":{"id":"abc"}}`} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, body)
-		}))
-		id, err := coder.NewClient(srv.URL, "tok", "prov").Create(coder.ModelConfig{Model: "m"})
-		srv.Close()
-		if err != nil {
-			t.Fatalf("Create: %v", err)
-		}
-		if id != "abc" {
-			t.Errorf("from %s got id %q, want abc", body, id)
-		}
+	const real = `{"id":"abc","organization_id":"org-1","ai_provider_id":"prov",
+	               "model":"Qwen/Qwen3-0.6B","display_name":"Qwen3 0.6B","enabled":false,
+	               "is_default":false,"context_limit":40960,"compression_threshold":70,
+	               "created_at":"2026-09-04T00:00:00Z"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, real)
+	}))
+	defer srv.Close()
+	id, err := coder.NewClient(srv.URL, "tok", "prov").Create(coder.ModelConfig{Model: "m"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if id != "abc" {
+		t.Errorf("got id %q, want abc", id)
+	}
+}
+
+// An entry we cannot name is one we can never update or disable, and staying
+// silent would create a duplicate on every later sync.
+func TestCreateWithoutAnIDIsAnError(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"model":"m"}`)
+	}))
+	defer srv.Close()
+	if _, err := coder.NewClient(srv.URL, "tok", "prov").Create(coder.ModelConfig{Model: "m"}); err == nil {
+		t.Error("a create that returned no id was reported as success")
 	}
 }
