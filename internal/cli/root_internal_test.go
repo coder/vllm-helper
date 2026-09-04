@@ -64,7 +64,7 @@ func TestUsageLinesNameTheirOperands(t *testing.T) {
 		"edit":       "<profile>",
 		"remove":     "<profile>",
 		"set":        "<profile> KEY=VALUE [KEY=VALUE ...]",
-		"coder-sync": "<activate|register|remove> <profile>",
+		"coder-sync": "<activate|register|remove|register-all|prune> [profile]",
 	}
 	for _, c := range newRootCmd().Commands() {
 		want, ok := wantOperands[c.Name()]

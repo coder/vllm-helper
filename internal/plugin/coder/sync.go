@@ -1,11 +1,13 @@
 package coder
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -25,7 +27,9 @@ const (
 const notConfigured = "Coder sync: not configured (" +
 	keyURL + "/" + keyToken + "/" + keyProviderID + "), skipping."
 
-const syncUsage = "usage: vllm-helper coder-sync <activate|register|remove> <profile>  |  coder-sync register-all"
+const syncUsage = "usage: vllm-helper coder-sync <activate|register|remove> <profile>\n" +
+	"       vllm-helper coder-sync register-all\n" +
+	"       vllm-helper coder-sync prune [--yes]"
 
 func init() { plugin.Register(Plugin{}) }
 
@@ -70,18 +74,112 @@ func (p Plugin) Check(_ context.Context, cfg *config.Config) error {
 }
 
 func (p Plugin) Commands() []*cobra.Command {
-	return []*cobra.Command{{
-		Use:   "coder-sync <activate|register|remove> <profile>",
+	c := &cobra.Command{
+		Use:   "coder-sync <activate|register|remove|register-all|prune> [profile]",
 		Short: "Manually sync a profile's Coder model entry",
 		// GroupID is left to the CLI, which owns how help is organised.
 		Example: "  vllm-helper coder-sync register qwen\n" +
-			"  vllm-helper coder-sync register-all",
+			"  vllm-helper coder-sync register-all\n" +
+			"  vllm-helper coder-sync prune",
 		Args: cobra.MaximumNArgs(2),
-		RunE: func(_ *cobra.Command, args []string) error { return run(args) },
-	}}
+		RunE: func(c *cobra.Command, args []string) error {
+			yes, _ := c.Flags().GetBool("yes")
+			return run(args, yes)
+		},
+	}
+	c.Flags().Bool("yes", false, "delete pruned entries without asking")
+	return []*cobra.Command{c}
 }
 
-func run(args []string) error {
+// prune deletes model entries on the configured provider that no local profile
+// accounts for.
+//
+// The provider names one endpoint, which is this machine, so an entry naming a
+// model this machine cannot serve is one the picker offers and the server then
+// refuses. They accumulate: a profile deleted outside vllm-helper, or -- as
+// happened here -- a provider whose address moved to a different box, leaving
+// the previous machine's models behind.
+//
+// Reports by default and only deletes when asked, since the entries are not
+// ours to assume about.
+func prune(cfg *config.Config, yes bool) error {
+	client := newClient(cfg)
+	if client == nil {
+		return errors.New(notConfigured)
+	}
+	entries, err := client.List()
+	if err != nil {
+		return err
+	}
+	profiles, err := profile.List(cfg.Dirs)
+	if err != nil {
+		return err
+	}
+	local := map[string]bool{}
+	for _, p := range profiles {
+		local[p.Model()] = true
+	}
+
+	var orphans []Entry
+	for _, e := range entries {
+		if !local[e.Model] {
+			orphans = append(orphans, e)
+		}
+	}
+	if len(orphans) == 0 {
+		fmt.Printf("Coder sync: all %d entries on this provider match a local profile.\n", len(entries))
+		return nil
+	}
+
+	fmt.Printf("%d entr%s on this provider name a model this machine does not serve:\n",
+		len(orphans), plural(len(orphans), "y", "ies"))
+	for _, o := range orphans {
+		state := ""
+		if o.Enabled {
+			// Worth calling out: a disabled entry is merely untidy, an
+			// enabled one is offered in the picker and then fails.
+			state = "  [enabled -- selectable, and will fail]"
+		}
+		fmt.Printf("  %s%s\n", o.Model, state)
+	}
+	if !yes && !confirmDelete() {
+		fmt.Println("Left alone. Re-run with --yes to delete them.")
+		return nil
+	}
+	for _, o := range orphans {
+		if err := client.Delete(o.ID); err != nil && !errors.Is(err, ErrNotFound) {
+			fmt.Fprintf(os.Stderr, "  failed to delete %s: %v\n", o.Model, err)
+			continue
+		}
+		fmt.Printf("  deleted %s\n", o.Model)
+	}
+	return nil
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// confirmDelete asks before removing entries. The CLI has its own prompt, but
+// a plugin importing the package that loads it would be a cycle -- and this is
+// the only place here that asks anything.
+func confirmDelete() bool {
+	fmt.Print("Delete them? [y/N] ")
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	}
+	return false
+}
+
+func run(args []string, yes bool) error {
 	if len(args) < 1 {
 		return errors.New(syncUsage)
 	}
@@ -93,6 +191,9 @@ func run(args []string) error {
 
 	if op == "register-all" {
 		return registerAll(cfg)
+	}
+	if op == "prune" {
+		return prune(cfg, yes)
 	}
 	if len(args) < 2 {
 		return errors.New(syncUsage)
