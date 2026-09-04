@@ -144,15 +144,21 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
 	// ones -- a normal repo has nothing to look up and pays nothing.
 	//
 	// The same config also carries the attention shape, which is what a KV
-	// cache costs per token, so one request answers both questions. GGUF
-	// repos keep theirs in the base model; everything else has its own.
-	configRepo := d.BaseModel
-	if configRepo == "" {
-		configRepo = m.ID
-	}
+	// cache costs per token, so one request answers both questions.
+	//
+	// The repo's own config wins whenever it has one. Deferring to the base
+	// model instead reads the wrong model's shape: Qwen3-0.6B names
+	// Qwen3-0.6B-Base as its base, and that one was trained for 32k context
+	// where the released model does 40k. The base model is a fallback for
+	// repos that ship no config at all, which in practice means GGUF -- and
+	// there the 404 comes back fast, so the second request costs little and
+	// only happens when it is the only way to learn anything.
 	archCh := make(chan hf.Arch, 1)
 	go func() {
-		a, _ := hf.Config(configRepo)
+		a, _ := hf.Config(m.ID)
+		if a.ModelType == "" && a.KVBytesPerToken() == 0 && d.BaseModel != "" {
+			a, _ = hf.Config(d.BaseModel)
+		}
 		archCh <- a
 	}()
 
