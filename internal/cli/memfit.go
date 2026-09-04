@@ -51,7 +51,7 @@ func pickMemFit(hw detect.Hardware, availMB int, want string) (value, msg string
 	case hw.GPUName != "" || hw.GPUMemGB > 0:
 		return want, "" // discrete VRAM: nothing else competes for it
 	default:
-		return clampMemUtilization(want, hw.TotalMemGB*1024, availMB)
+		return clampMemUtilization(want, hw.TotalMemMB(), availMB)
 	}
 }
 

@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coder/vllm-helper/internal/catalog"
 	"github.com/coder/vllm-helper/internal/control"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
 )
@@ -42,11 +42,8 @@ func repoParam(r *http.Request) (string, error) {
 	return repo, nil
 }
 
-// budget is the configured weights budget, or 0 when there isn't one.
-func (s *Server) budget() float64 {
-	gb, _ := strconv.ParseFloat(s.cfg.ModelBudgetGB(), 64)
-	return gb
-}
+// budget is this machine's weights budget, or the configured override.
+func (s *Server) budget() float64 { return detect.BudgetGB(s.cfg.ModelBudgetGB()) }
 
 type searchResponse struct {
 	Query   string           `json:"query"`

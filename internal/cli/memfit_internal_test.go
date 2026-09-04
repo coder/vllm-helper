@@ -85,7 +85,7 @@ func TestPickMemFit(t *testing.T) {
 	t.Parallel()
 
 	const gb = 1024
-	spark := detect.Hardware{TotalMemGB: 121, GPUName: "NVIDIA GB10", Unified: true}
+	spark := detect.Hardware{TotalMemBytes: 130 << 30, GPUName: "NVIDIA GB10", Unified: true}
 	tests := []struct {
 		name    string
 		hw      detect.Hardware
@@ -105,7 +105,7 @@ func TestPickMemFit(t *testing.T) {
 		},
 		{
 			name:  "discrete VRAM is left alone",
-			hw:    detect.Hardware{TotalMemGB: 64, GPUName: "NVIDIA RTX A6000", GPUMemGB: 48},
+			hw:    detect.Hardware{TotalMemBytes: 64 << 30, GPUName: "NVIDIA RTX A6000", GPUMemGB: 48},
 			want:  "0.95",
 			value: "0.95",
 		},
@@ -113,7 +113,7 @@ func TestPickMemFit(t *testing.T) {
 			// Issue #13: no GPU means the CPU backend, where the flag really
 			// does reserve system RAM and startup aborts without it.
 			name:    "cpu backend still clamps to what is free",
-			hw:      detect.Hardware{TotalMemGB: 15},
+			hw:      detect.Hardware{TotalMemBytes: 15 << 30},
 			availMB: 8 * gb,
 			want:    "0.85",
 			value:   "0.45",

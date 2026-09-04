@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/catalog"
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
 )
 
@@ -148,11 +149,11 @@ func runInspect(args []string, jsonOut bool) error {
 // inspectModel measures a model against this machine. cfg may be nil, which
 // just means there is no budget to measure against.
 func inspectModel(m hf.Model, cfg *config.Config) catalog.Detail {
-	var budget float64
+	var override string
 	if cfg != nil {
-		budget, _ = strconv.ParseFloat(cfg.ModelBudgetGB(), 64)
+		override = cfg.ModelBudgetGB()
 	}
-	return catalog.Inspect(m, budget, vllmCaps(cfg))
+	return catalog.Inspect(m, detect.BudgetGB(override), vllmCaps(cfg))
 }
 
 func printModelDetail(d catalog.Detail, cfg *config.Config) {

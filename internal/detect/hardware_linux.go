@@ -6,17 +6,25 @@ import (
 	"strings"
 )
 
-func totalMemGB() int {
+// totalMemBytes reports installed RAM. Bytes, not gigabytes: the budget
+// arithmetic mixes this with sizes read from the Hub, which are decimal, and
+// rounding to whole binary gigabytes here is how a 7.4% error crept into the
+// fit check.
+func totalMemBytes() int64 {
+	return meminfoBytes("MemTotal:")
+}
+
+func meminfoBytes(key string) int64 {
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
 		return 0
 	}
 	for line := range strings.SplitSeq(string(data), "\n") {
-		if rest, ok := strings.CutPrefix(line, "MemTotal:"); ok {
+		if rest, ok := strings.CutPrefix(line, key); ok {
 			fields := strings.Fields(rest)
 			if len(fields) >= 1 {
 				kb, _ := strconv.ParseInt(fields[0], 10, 64)
-				return int(kb / 1024 / 1024)
+				return kb * 1024
 			}
 		}
 	}
@@ -25,20 +33,7 @@ func totalMemGB() int {
 
 // AvailableMemMB reports memory that can be allocated right now.
 func AvailableMemMB() int {
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return 0
-	}
-	for line := range strings.SplitSeq(string(data), "\n") {
-		if rest, ok := strings.CutPrefix(line, "MemAvailable:"); ok {
-			fields := strings.Fields(rest)
-			if len(fields) >= 1 {
-				kb, _ := strconv.ParseInt(fields[0], 10, 64)
-				return int(kb / 1024)
-			}
-		}
-	}
-	return 0
+	return int(meminfoBytes("MemAvailable:") / (1 << 20))
 }
 
 // describeLocalGPU is a no-op on Linux: nvidia-smi already covers the GPUs
