@@ -284,6 +284,10 @@ main.discover {
   border-left-color: var(--content-link);
   font-family: var(--font-sans);
   padding-right: 2.25rem;
+  /* .notice sets pre-wrap for the machine text the other variants carry as a
+     single text node. This one has child elements, so that would render the
+     source's own indentation as blank lines. */
+  white-space: normal;
 }
 
 .notice-title {
