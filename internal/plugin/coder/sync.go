@@ -160,7 +160,8 @@ func newClient(cfg *config.Config) *Client {
 	if !(Plugin{}).Configured(cfg) {
 		return nil
 	}
-	return NewClient(cfg.Lookup(keyURL, ""), cfg.Lookup(keyToken, ""), cfg.Lookup(keyProviderID, ""))
+	return NewClient(cfg.Lookup(keyURL, ""), cfg.Lookup(keyToken, ""),
+		cfg.Lookup(keyProviderID, ""), cfg.CoderOrganization())
 }
 
 // modelConfig translates a profile into the entry Coder stores.

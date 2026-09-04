@@ -6,7 +6,9 @@ import "testing"
 // GiB visible), read out of the service journal. They are the reason the
 // constants are what they are, so they belong in the tests rather than only in
 // a commit message.
-const sparkTotal = 127600592 * 1024 // MemTotal, bytes
+// unifiedTotal is MemTotal from a 128 GB unified-memory machine: 2 GB is
+// carved off before the OS sees it, which is why the figure is not round.
+const unifiedTotal = 127600592 * 1024
 
 func gib(f float64) float64 { return f * gibibyte }
 
@@ -24,7 +26,7 @@ func TestTheBudgetLeavesRoomForWhatVLLMActuallyUses(t *testing.T) {
 		{"Nemotron-30B BF16", 58.93, 64.34},
 		{"Ornith-35B", 65.53, 71.24},
 	}
-	budget, _ := Budget(sparkTotal, 0, 0, true)
+	budget, _ := Budget(unifiedTotal, 0, 0, true)
 	for _, r := range runs {
 		if gib(r.weights) > float64(budget) {
 			continue // too big for this machine; nothing to check
@@ -36,7 +38,7 @@ func TestTheBudgetLeavesRoomForWhatVLLMActuallyUses(t *testing.T) {
 				r.name, predicted/gibibyte, r.consumed)
 		}
 		// And it must still leave a KV cache worth having.
-		spare := sparkTotal - gib(r.consumed) - defaultBaseline(sparkTotal)
+		spare := unifiedTotal - gib(r.consumed) - defaultBaseline(unifiedTotal)
 		if spare < kvFloor {
 			t.Errorf("%s: only %.1f GiB left for KV cache", r.name, spare/gibibyte)
 		}
@@ -47,7 +49,7 @@ func TestTheBudgetFitsInTheMachine(t *testing.T) {
 	// A budget that cannot itself be served is the bug this replaced: at the
 	// old 70%, a model exactly at budget plus overhead overflowed the box.
 	for _, total := range []int64{
-		8 * gibibyte, 16 * gibibyte, 32 * gibibyte, 64 * gibibyte, sparkTotal, 512 * gibibyte,
+		8 * gibibyte, 16 * gibibyte, 32 * gibibyte, 64 * gibibyte, unifiedTotal, 512 * gibibyte,
 	} {
 		budget, _ := Budget(total, 0, 0, true)
 		w := float64(budget)
@@ -63,8 +65,8 @@ func TestABusyMachineDoesNotGetABudgetOfNothing(t *testing.T) {
 	// Probing while our own service is up reads 111 of 121 GiB in use. Taken
 	// as an OS baseline that would leave nothing, and every model on the Hub
 	// would be reported as too big -- on the machine that was serving one.
-	busy, _ := Budget(sparkTotal, 0, 111*gibibyte, true)
-	idle, _ := Budget(sparkTotal, 0, 0, true)
+	busy, _ := Budget(unifiedTotal, 0, 111*gibibyte, true)
+	idle, _ := Budget(unifiedTotal, 0, 0, true)
 	if busy != idle {
 		t.Errorf("a loaded model changed the budget: busy %.1f GiB, idle %.1f GiB",
 			float64(busy)/gibibyte, float64(idle)/gibibyte)
@@ -74,8 +76,8 @@ func TestABusyMachineDoesNotGetABudgetOfNothing(t *testing.T) {
 func TestAMeasuredBaselineIsUsedWhenItLooksIdle(t *testing.T) {
 	// vLLM reported 5.5-6.0 GiB in use before loading anything. A machine
 	// that lean should be rewarded for it.
-	lean, _ := Budget(sparkTotal, 0, 5.5*gibibyte, true)
-	estimated, _ := Budget(sparkTotal, 0, 0, true)
+	lean, _ := Budget(unifiedTotal, 0, 5.5*gibibyte, true)
+	estimated, _ := Budget(unifiedTotal, 0, 0, true)
 	if lean <= estimated {
 		t.Errorf("measured-idle budget %.1f GiB should beat the %.1f GiB estimate",
 			float64(lean)/gibibyte, float64(estimated)/gibibyte)

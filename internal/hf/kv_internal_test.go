@@ -3,7 +3,7 @@ package hf
 import "testing"
 
 // Every figure below was read off a live config.json and, where noted,
-// confirmed against what vLLM then allocated on a DGX Spark.
+// confirmed against what vLLM then allocated on real hardware.
 func TestKVBytesPerTokenMatchesWhatVLLMAllocates(t *testing.T) {
 	tests := []struct {
 		name string

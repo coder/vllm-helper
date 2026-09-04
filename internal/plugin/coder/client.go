@@ -35,16 +35,13 @@ const (
 	routeExp = "/api/experimental/chats/model-configs"
 )
 
-// defaultOrg is the organization the models hang off. Coder resolves the
-// literal "default" server-side, which avoids having to look up a UUID that
-// single-organization deployments never needed to know.
-const defaultOrg = "default"
-
 type Client struct {
 	URL        string
 	Token      string
 	ProviderID string
-	HTTP       *http.Client
+	// Organization the model entries hang off, by name or UUID.
+	Organization string
+	HTTP         *http.Client
 
 	// route is resolved once, on first use, by asking the deployment which
 	// collection it serves. Cached because every sync makes several calls
@@ -53,12 +50,13 @@ type Client struct {
 	route     string
 }
 
-func NewClient(url, token, providerID string) *Client {
+func NewClient(url, token, providerID, organization string) *Client {
 	return &Client{
-		URL:        url,
-		Token:      token,
-		ProviderID: providerID,
-		HTTP:       &http.Client{Timeout: 15 * time.Second},
+		URL:          url,
+		Token:        token,
+		ProviderID:   providerID,
+		Organization: organization,
+		HTTP:         &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -86,7 +84,11 @@ type ModelConfig struct {
 // sends us to the pre-2.37 path.
 func (c *Client) resolveRoute() string {
 	c.routeOnce.Do(func() {
-		c.route = fmt.Sprintf(routeOrg, defaultOrg)
+		org := c.Organization
+		if org == "" {
+			org = "default"
+		}
+		c.route = fmt.Sprintf(routeOrg, org)
 		req, err := http.NewRequest("GET", c.URL+c.route, nil)
 		if err != nil {
 			return

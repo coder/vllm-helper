@@ -125,7 +125,9 @@ func ToResult(m hf.Model) Result {
 //
 // A model whose size could not be read keeps FitsBudget unset rather than
 // guessing, so nothing downstream claims it fits.
-func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
+// contextTarget is how many full-length requests to size a KV cache for; 0
+// takes detect's default.
+func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) Detail {
 	d := Detail{
 		Result:    ToResult(m),
 		BudgetGB:  budgetGB,
@@ -209,7 +211,7 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
 			if d.Best != nil {
 				size = d.Best.SizeGB
 			}
-			plan := detect.Probe().PlanFor(int64(size*1e9), d.KVBytesPerToken, d.MaxContext)
+			plan := detect.Probe().PlanFor(int64(size*1e9), d.KVBytesPerToken, d.MaxContext, contextTarget)
 			d.ContextTokens = plan.Tokens
 			d.KVCacheGB = float64(plan.KVCacheBytes) / 1e9
 		}
@@ -238,7 +240,7 @@ type Plan struct {
 // Nothing here is fatal. Every check that fails degrades to a note, because
 // the alternative -- refusing to save a profile because the Hub was slow --
 // helps nobody.
-func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Caps) Plan {
+func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
 	var p Plan
 	name := profile.NameFromRepo(repo)
 	model := repo
@@ -322,7 +324,7 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 		if choice != nil {
 			weights = int64(choice.Variant.SizeGB * 1e9)
 		}
-		plan := detect.Probe().PlanFor(weights, kv, maxLen)
+		plan := detect.Probe().PlanFor(weights, kv, maxLen, contextTarget)
 		if plan.KVCacheBytes > 0 {
 			p.Opts.KVCacheBytes = plan.KVCacheBytes
 			p.Notes = append(p.Notes, fmt.Sprintf(

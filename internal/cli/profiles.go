@@ -246,7 +246,7 @@ func pullAndSwitch(cfg *config.Config, repo string, choice *catalog.Choice, opts
 	fmt.Println("Pulling new model:", repo)
 	fmt.Println("Checking the model's README for known vLLM serving flags, and its")
 	fmt.Println("chat template for known crash patterns...")
-	plan := catalog.PrepareProfile(cfg.Dirs, repo, choice, vllmCaps(cfg))
+	plan := catalog.PrepareProfile(cfg.Dirs, repo, choice, vllmCaps(cfg), cfg.KVContextTarget())
 	for _, n := range plan.Notes {
 		fmt.Println(n)
 	}

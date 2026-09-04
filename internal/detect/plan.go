@@ -1,14 +1,18 @@
 package detect
 
-// ContextTarget is how much context a profile is sized for by default,
-// expressed as a multiple of one full-length request.
+// DefaultContextTarget is how much context a profile is sized for, expressed
+// as a multiple of one full-length request.
 //
 // Four rather than one because a server holding exactly one context can serve
 // exactly one request, and rather than "whatever is left" because that is the
-// behaviour this replaced: a 1.1 GB Qwen3-0.6B was given 101.77 GiB of KV
-// cache -- 952,784 tokens, 23 full contexts -- on a machine with 121 GiB, and
-// spent the difference pushing the desktop into swap.
-const ContextTarget = 4
+// behaviour this replaced: a 1.1 GB model was given 101.77 GiB of KV cache --
+// 23 full contexts -- on a 121 GiB machine, and spent the difference pushing
+// the desktop into swap.
+//
+// It is a default rather than a rule because the right number is a property of
+// the workload, not the hardware: a single-user box wants fewer and a shared
+// endpoint wants more, and neither can be read off the machine.
+const DefaultContextTarget = 4
 
 // Plan is how a specific model should be launched on this machine.
 type Plan struct {
@@ -32,7 +36,10 @@ type Plan struct {
 // enough, and the plan then sets no KV size at all rather than guessing: vLLM's
 // own profiling is a worse answer than this one but a far better answer than a
 // wrong number.
-func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen int) Plan {
+func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen, contextTarget int) Plan {
+	if contextTarget <= 0 {
+		contextTarget = DefaultContextTarget
+	}
 	pool := float64(h.TotalMemBytes)
 	if !h.Unified && h.GPUMemBytes > 0 {
 		pool = float64(h.GPUMemBytes)
@@ -76,7 +83,7 @@ func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen int) Plan {
 		return p
 	}
 
-	want := float64(ContextTarget) * float64(maxLen) * float64(kvPerToken)
+	want := float64(contextTarget) * float64(maxLen) * float64(kvPerToken)
 	if want > spare {
 		want = spare
 	}

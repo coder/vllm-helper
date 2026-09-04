@@ -36,7 +36,7 @@ func deployment(t *testing.T, serves string, seen *[]string) *coder.Client {
 		fmt.Fprint(w, `{"id":"new-id"}`)
 	}))
 	t.Cleanup(srv.Close)
-	return coder.NewClient(srv.URL, "tok", "provider-uuid")
+	return coder.NewClient(srv.URL, "tok", "provider-uuid", "default")
 }
 
 // The bug this fixes: against Coder 2.37 the client called the retired path
@@ -109,7 +109,7 @@ func TestAMissingEntryIsDistinguishable(t *testing.T) {
 		http.NotFound(w, r) // any specific entry is gone
 	}))
 	t.Cleanup(srv.Close)
-	c := coder.NewClient(srv.URL, "tok", "prov")
+	c := coder.NewClient(srv.URL, "tok", "prov", "default")
 
 	err := c.Update("stale-id", coder.ModelConfig{Model: "m", ContextLimit: 4096})
 	if !errors.Is(err, coder.ErrNotFound) {
@@ -136,7 +136,7 @@ func TestCreateReadsTheIDOutOfTheFullEntry(t *testing.T) {
 		fmt.Fprint(w, real)
 	}))
 	defer srv.Close()
-	id, err := coder.NewClient(srv.URL, "tok", "prov").Create(coder.ModelConfig{Model: "m"})
+	id, err := coder.NewClient(srv.URL, "tok", "prov", "default").Create(coder.ModelConfig{Model: "m"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -154,7 +154,40 @@ func TestCreateWithoutAnIDIsAnError(t *testing.T) {
 		fmt.Fprint(w, `{"model":"m"}`)
 	}))
 	defer srv.Close()
-	if _, err := coder.NewClient(srv.URL, "tok", "prov").Create(coder.ModelConfig{Model: "m"}); err == nil {
+	if _, err := coder.NewClient(srv.URL, "tok", "prov", "default").Create(coder.ModelConfig{Model: "m"}); err == nil {
 		t.Error("a create that returned no id was reported as success")
+	}
+}
+
+// A deployment with more than one organization has no "default" to fall back
+// on, so the organization has to come from configuration rather than being
+// assumed from whichever deployment happened to be tested against.
+func TestTheOrganizationIsNotAssumed(t *testing.T) {
+	t.Parallel()
+	var seen []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.URL.Path)
+		mu.Unlock()
+		if !strings.Contains(r.URL.Path, "/organizations/engineering/") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"new-id"}`)
+	}))
+	defer srv.Close()
+
+	c := coder.NewClient(srv.URL, "tok", "prov", "engineering")
+	if _, err := c.Create(coder.ModelConfig{Model: "m", ContextLimit: 4096}); err != nil {
+		t.Fatalf("Create against a named organization: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, p := range seen {
+		if strings.Contains(p, "/organizations/default/") {
+			t.Errorf("asked for the default organization (%s) despite one being configured", p)
+		}
 	}
 }
