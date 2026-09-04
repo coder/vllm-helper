@@ -20,16 +20,14 @@ import (
 	"time"
 )
 
-// ErrNotFound reports that the API has no such entry. Callers recover from it
-// rather than failing: a saved model-config ID outlives the entry it names
-// when someone deletes the model in Coder's UI, or when the deployment behind
-// CODER_URL changes, and re-creating is what the user wanted either way.
+// ErrNotFound reports that the API has no such entry. A saved ID outlives its
+// entry when the model is deleted in Coder's UI or CODER_URL changes; callers
+// recover by re-creating.
 var ErrNotFound = errors.New("no such entry")
 
-// The two places the model-config collection has lived. Newer deployments
-// serve only the first: Coder's router reserves the old path and answers it
-// with a 404 rather than letting it fall through, so a client that knows only
-// the old one fails with no hint that the route simply moved.
+// The two places the model-config collection has lived. Coder reserves the old
+// path and 404s it rather than letting it fall through, so a client that knows
+// only that one fails with no hint that the route moved.
 const (
 	routeOrg = "/api/v2/organizations/%s/chats/models"
 	routeExp = "/api/experimental/chats/model-configs"
@@ -43,11 +41,13 @@ type Client struct {
 	Organization string
 	HTTP         *http.Client
 
-	// route is resolved once, on first use, by asking the deployment which
-	// collection it serves. Cached because every sync makes several calls
-	// and the answer cannot change underneath a single command.
+	// route is resolved once by asking the deployment which collection it
+	// serves; a sync makes several calls and it cannot change under one.
 	routeOnce sync.Once
 	route     string
+	// fellBack records that the org-scoped path 404'd, which means either an
+	// old deployment or a bad organization -- indistinguishable by status.
+	fellBack bool
 }
 
 func NewClient(url, token, providerID, organization string) *Client {
@@ -60,12 +60,8 @@ func NewClient(url, token, providerID, organization string) *Client {
 	}
 }
 
-// ModelConfig is one entry in the deployment's model picker.
-//
-// The pointer fields are what the newer API calls optional: nil preserves the
-// stored value on a PATCH. They are always sent by the callers here, which
-// both APIs accept -- the older one required them, and the newer one treats an
-// explicit value as an explicit value.
+// ModelConfig is one entry in the deployment's model picker. Every field is
+// always sent, which both API generations accept.
 type ModelConfig struct {
 	ID           string `json:"id,omitempty"`
 	AIProviderID string `json:"ai_provider_id,omitempty"`
@@ -76,12 +72,9 @@ type ModelConfig struct {
 	IsDefault    bool   `json:"is_default"`
 }
 
-// resolveRoute asks the deployment which collection path it serves.
-//
-// A GET of the organization-scoped path answers definitively: anything but a
-// 404 means the route exists (401 and 403 say the path is real and the token
-// is not, which is a different problem and reported by Check). Only a 404
-// sends us to the pre-2.37 path.
+// resolveRoute asks the deployment which collection path it serves. Anything
+// but a 404 means the route exists -- 401 and 403 say the path is real and the
+// token is not, which Check reports separately.
 func (c *Client) resolveRoute() string {
 	c.routeOnce.Do(func() {
 		org := c.Organization
@@ -97,14 +90,11 @@ func (c *Client) resolveRoute() string {
 		req.Header.Set("Coder-Session-Token", c.Token)
 		resp, err := c.HTTP.Do(req)
 		if err != nil {
-			// Unreachable deployments are reported by the call that
-			// follows; guessing the older route here would only change
-			// which URL appears in that error.
-			return
+			return // the call that follows reports it
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusNotFound {
-			c.route = routeExp
+			c.route, c.fellBack = routeExp, true
 		}
 	})
 	return c.route
@@ -143,17 +133,25 @@ func (c *Client) do(method, path string, body any, out any) error {
 	return nil
 }
 
-// Check verifies the URL, token, and API availability by listing the
-// deployment's model-configs. It doesn't validate the provider ID (the API
-// has no cheap probe for that), but it catches the common failures: wrong
-// URL, expired token, or a Coder build with neither collection route.
+// Check verifies the URL, token and API availability. It does not validate the
+// provider ID -- the API has no cheap probe for that.
 func (c *Client) Check() error {
-	return c.do("GET", "", nil, nil)
+	err := c.do("GET", "", nil, nil)
+	if err != nil && c.fellBack {
+		// Both paths gone: on a deployment new enough to have moved the
+		// collection, a bad organization gives exactly this pair of 404s.
+		org := c.Organization
+		if org == "" {
+			org = "default"
+		}
+		return fmt.Errorf("%w (no model-config API found; if this deployment is recent, "+
+			"check CODER_ORGANIZATION -- %q did not resolve)", err, org)
+	}
+	return err
 }
 
-// createResponse is the entry the API echoes back. Only the ID is read: the
-// rest is what we just sent, and decoding fields we do not use is how a client
-// breaks on a field that changed shape somewhere else in the payload.
+// createResponse is the entry the API echoes back. Only the ID is read:
+// decoding fields we do not use is how this broke once already.
 type createResponse struct {
 	ID string `json:"id"`
 }
@@ -166,9 +164,8 @@ func (c *Client) Create(mc ModelConfig) (string, error) {
 		return "", err
 	}
 	if created.ID == "" {
-		// The entry exists on the deployment but we cannot name it, so it
-		// can never be updated or disabled later. Better to say so than to
-		// record nothing and create a second one on the next sync.
+		// An entry we cannot name can never be updated or disabled, and the
+		// next sync would create a second one.
 		return "", fmt.Errorf("coder API created the entry but returned no id")
 	}
 	return created.ID, nil
