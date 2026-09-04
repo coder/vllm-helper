@@ -1,6 +1,8 @@
 package hf
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -65,7 +67,7 @@ func status(code int) http.Handler {
 func TestLookup(t *testing.T) {
 	serveTestdata(t, map[string]string{"/api/models/" + repo: "model.json"})
 
-	m, err := Lookup(repo)
+	m, err := Lookup(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -106,7 +108,7 @@ func TestLookupFailures(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			newHub(t, tt.handler)
-			_, err := Lookup(repo)
+			_, err := Lookup(context.Background(), repo)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -123,7 +125,7 @@ func TestLookupFallsBackToTheRequestedRepo(t *testing.T) {
 	newHub(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"downloads":1}`))
 	}))
-	m, err := Lookup(repo)
+	m, err := Lookup(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -144,7 +146,7 @@ func TestSearch(t *testing.T) {
 		_, _ = w.Write(body)
 	}))
 
-	models, err := Search("qwen3 8b", 25)
+	models, err := Search(context.Background(), "qwen3 8b", 25)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -163,7 +165,7 @@ func TestSearch(t *testing.T) {
 
 func TestSearchNon200(t *testing.T) {
 	newHub(t, status(http.StatusTooManyRequests))
-	if _, err := Search("qwen", 5); err == nil || !strings.Contains(err.Error(), "HTTP 429") {
+	if _, err := Search(context.Background(), "qwen", 5); err == nil || !strings.Contains(err.Error(), "HTTP 429") {
 		t.Errorf("error = %v, want it to report HTTP 429", err)
 	}
 }
@@ -171,7 +173,7 @@ func TestSearchNon200(t *testing.T) {
 func TestWeightsSize(t *testing.T) {
 	serveTestdata(t, map[string]string{"/api/models/" + repo + "/tree/main": "tree.json"})
 
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -192,7 +194,7 @@ func TestWeightsSizeInSubfolder(t *testing.T) {
 		{"type":"file","path":"weights/model-00001-of-00002.safetensors","size":4000000000},
 		{"type":"file","path":"weights/model-00002-of-00002.safetensors","size":2500000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -213,7 +215,7 @@ func TestWeightsSizePicksSmallestVariant(t *testing.T) {
 		{"type":"file","path":"UD-IQ1_S/model-00002-of-00002.gguf","size":1000000000},
 		{"type":"file","path":"BF16/model.gguf","size":40000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -234,7 +236,7 @@ func TestWeightsSizePicksSmallestRootGGUF(t *testing.T) {
 		{"type":"file","path":"Qwen3-32B-IQ2_XXS.gguf","size":9000000000},
 		{"type":"file","path":"Qwen3-32B-Q4_K_M.gguf","size":20000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -254,7 +256,7 @@ func TestWeightsSizeSumsRootGGUFShards(t *testing.T) {
 		{"type":"file","path":"DeepSeek-UD-TQ1_0-00002-of-00002.gguf","size":2500000000},
 		{"type":"file","path":"DeepSeek-UD-IQ2_M.gguf","size":90000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -275,7 +277,7 @@ func TestWeightsSizeSkipsCompanionFiles(t *testing.T) {
 		{"type":"file","path":"gemma-3-27b-it-Q4_K_M.gguf","size":16000000000},
 		{"type":"file","path":"gemma-3-27b-it-IQ2_XXS.gguf","size":6500000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -296,7 +298,7 @@ func TestWeightsSizeDropsDuplicateRootCopies(t *testing.T) {
 		{"type":"file","path":"model-00001-of-00002.safetensors","size":10000000000},
 		{"type":"file","path":"model-00002-of-00002.safetensors","size":4500000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -311,7 +313,7 @@ func TestWeightsSizePrefersSafetensorsOverBin(t *testing.T) {
 		{"type":"file","path":"pytorch_model.bin","size":8000000000},
 		{"type":"file","path":"model.safetensors","size":8000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -328,7 +330,7 @@ func TestWeightsSizeSumsComponentFolders(t *testing.T) {
 		{"type":"file","path":"transformer/model.safetensors","size":23800000000},
 		{"type":"file","path":"vae/model.safetensors","size":170000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -348,7 +350,7 @@ func TestWeightsSizeSumsUppercaseGGUFShards(t *testing.T) {
 		{"type":"file","path":"MODEL-00001-OF-00002.GGUF","size":4000000000},
 		{"type":"file","path":"MODEL-00002-OF-00002.GGUF","size":2500000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -368,7 +370,7 @@ func TestWeightsSizeIgnoresDuplicateFormatFolder(t *testing.T) {
 		{"type":"file","path":"original/consolidated.00.pth","size":16000000000},
 		{"type":"file","path":"original/consolidated.01.bin","size":16000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -379,7 +381,7 @@ func TestWeightsSizeIgnoresDuplicateFormatFolder(t *testing.T) {
 
 func TestWeightsSizeWithoutWeightFiles(t *testing.T) {
 	serveTree(t, `[{"type":"file","path":"original/consolidated.pth","size":1000000}]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -400,7 +402,7 @@ func TestWeightsSizeFollowsPagination(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`[{"type":"file","path":"model-00002-of-00002.safetensors","size":2500000000}]`))
 	}))
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -417,7 +419,7 @@ func TestWeightsSizeStopsOnLoopingCursor(t *testing.T) {
 		w.Header().Set("Link", `<`+srv.URL+`/api/models/`+repo+`/tree/main?recursive=true&cursor=same>; rel="next"`)
 		_, _ = w.Write([]byte(`[{"type":"file","path":"model.safetensors","size":8000000000}]`))
 	}))
-	_, err := WeightsSize(repo)
+	_, err := WeightsSize(context.Background(), repo)
 	if err == nil {
 		t.Fatal("want an error when the cursor never advances, got none")
 	}
@@ -436,7 +438,7 @@ func TestWeightsSizeFailsRatherThanTruncate(t *testing.T) {
 		w.Header().Set("Link", fmt.Sprintf(`<%s/api/models/%s/tree/main?recursive=true&cursor=%d>; rel="next"`, srv.URL, repo, page))
 		_, _ = w.Write([]byte(fmt.Sprintf(`[{"type":"file","path":"shard-%d.safetensors","size":1000000000}]`, page)))
 	}))
-	if _, err := WeightsSize(repo); err == nil {
+	if _, err := WeightsSize(context.Background(), repo); err == nil {
 		t.Fatal("want an error when the repo exceeds the page budget, got none")
 	}
 }
@@ -450,7 +452,7 @@ func TestWeightsSizeReadsQuantNamedFolders(t *testing.T) {
 		{"type":"file","path":"fp8/model.safetensors","size":30000000000},
 		{"type":"file","path":"int4/model.safetensors","size":15000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -470,7 +472,7 @@ func TestWeightsSizeSumsGGUFComponentFolders(t *testing.T) {
 		{"type":"file","path":"text_encoder/t5-Q8_0.gguf","size":5000000000},
 		{"type":"file","path":"vae/vae-F16.gguf","size":300000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -490,7 +492,7 @@ func TestWeightsSizeIgnoresStrayRootFile(t *testing.T) {
 		{"type":"file","path":"pytorch_model-00001-of-00002.bin","size":90000000000},
 		{"type":"file","path":"pytorch_model-00002-of-00002.bin","size":50000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -507,7 +509,7 @@ func TestWeightsSizeComparesRootTensorsWithRootGGUFs(t *testing.T) {
 		{"type":"file","path":"model-Q4_K_M.gguf","size":20000000000},
 		{"type":"file","path":"model-Q8_0.gguf","size":35000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -527,7 +529,7 @@ func TestWeightsSizeKeepsQuantsBesideAnotherFolder(t *testing.T) {
 		{"type":"file","path":"UD-Q4_K_M/model.gguf","size":20000000000},
 		{"type":"file","path":"original/consolidated.safetensors","size":60000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -582,7 +584,7 @@ func TestContextLimit(t *testing.T) {
 			newHub(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(tt.body))
 			}))
-			got, err := ContextLimit(repo)
+			got, err := ContextLimit(context.Background(), repo)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected an error")
@@ -601,7 +603,7 @@ func TestContextLimit(t *testing.T) {
 
 func TestContextLimitMissingConfig(t *testing.T) {
 	newHub(t, status(http.StatusNotFound))
-	if _, err := ContextLimit(repo); err == nil {
+	if _, err := ContextLimit(context.Background(), repo); err == nil {
 		t.Error("expected an error when the model has no config.json")
 	}
 }
@@ -615,7 +617,7 @@ func TestDetectFlags(t *testing.T) {
 		"/" + repo + "/raw/main/config.json": "config.json",
 	})
 
-	d, err := DetectFlags(repo)
+	d, err := DetectFlags(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("DetectFlags: %v", err)
 	}
@@ -643,7 +645,7 @@ func TestDetectFlagsWithoutASnippetStillClampsContext(t *testing.T) {
 		"/" + repo + "/raw/main/README.md":   "README_no_snippet.md",
 		"/" + repo + "/raw/main/config.json": "config_small_context.json",
 	})
-	d, err := DetectFlags(repo)
+	d, err := DetectFlags(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("DetectFlags: %v", err)
 	}
@@ -661,7 +663,7 @@ func TestDetectFlagsWithoutASnippetOrConfig(t *testing.T) {
 	newHub(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("# A model card with no serving instructions.\n"))
 	}))
-	d, err := DetectFlags(repo)
+	d, err := DetectFlags(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("DetectFlags: %v", err)
 	}
@@ -672,7 +674,7 @@ func TestDetectFlagsWithoutASnippetOrConfig(t *testing.T) {
 
 func TestDetectFlagsMissingCard(t *testing.T) {
 	newHub(t, status(http.StatusNotFound))
-	if _, err := DetectFlags(repo); err == nil {
+	if _, err := DetectFlags(context.Background(), repo); err == nil {
 		t.Error("expected an error when the model card is missing")
 	}
 }
@@ -688,7 +690,7 @@ func TestWhoAmI(t *testing.T) {
 		_, _ = w.Write([]byte(`{"type":"user","name":"chris","fullname":"Chris"}`))
 	}))
 
-	name, err := WhoAmI("hf_good")
+	name, err := WhoAmI(context.Background(), "hf_good")
 	if err != nil {
 		t.Fatalf("WhoAmI: %v", err)
 	}
@@ -699,14 +701,14 @@ func TestWhoAmI(t *testing.T) {
 		t.Errorf("Authorization = %q, want a bearer token", gotAuth)
 	}
 
-	if _, err := WhoAmI("hf_bad"); err == nil || !strings.Contains(err.Error(), "401") {
+	if _, err := WhoAmI(context.Background(), "hf_bad"); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("error = %v, want the rejection reported as 401", err)
 	}
 }
 
 func TestWhoAmINon200(t *testing.T) {
 	newHub(t, status(http.StatusBadGateway))
-	if _, err := WhoAmI("hf_good"); err == nil || !strings.Contains(err.Error(), "HTTP 502") {
+	if _, err := WhoAmI(context.Background(), "hf_good"); err == nil || !strings.Contains(err.Error(), "HTTP 502") {
 		t.Errorf("error = %v, want it to report HTTP 502", err)
 	}
 }
@@ -729,7 +731,7 @@ func TestDetectChatTemplatePatch(t *testing.T) {
 			} else {
 				serveTestdata(t, map[string]string{"/" + repo + "/raw/main/chat_template.jinja": tt.file})
 			}
-			patched, ok, err := DetectChatTemplatePatch(repo)
+			patched, ok, err := DetectChatTemplatePatch(context.Background(), repo)
 			if err != nil {
 				t.Fatalf("DetectChatTemplatePatch: %v", err)
 			}
@@ -880,7 +882,7 @@ func TestWeightsSizeListsEveryVariant(t *testing.T) {
 		{"type":"file","path":"Qwen_Qwen3-32B-Q4_K_M.gguf","size":20000000000},
 		{"type":"file","path":"Qwen_Qwen3-32B-Q8_0.gguf","size":34000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -920,26 +922,26 @@ func TestBestFit(t *testing.T) {
 		{Label: "IQ2_XXS", SizeGB: 9},
 	}}
 
-	if v, ok := w.BestFit(84); !ok || v.Label != "bf16" {
+	if v, ok := w.BestFit(84, true); !ok || v.Label != "bf16" {
 		t.Errorf("BestFit(84) = %v/%v, want bf16: it fits, so nothing worse should be chosen", v.Label, ok)
 	}
-	if v, ok := w.BestFit(40); !ok || v.Label != "Q8_0" {
+	if v, ok := w.BestFit(40, true); !ok || v.Label != "Q8_0" {
 		t.Errorf("BestFit(40) = %v/%v, want Q8_0", v.Label, ok)
 	}
-	if v, ok := w.BestFit(10); !ok || v.Label != "IQ2_XXS" {
+	if v, ok := w.BestFit(10, true); !ok || v.Label != "IQ2_XXS" {
 		t.Errorf("BestFit(10) = %v/%v, want IQ2_XXS", v.Label, ok)
 	}
 	// Nothing fits is a fact the caller has to present, not one to paper
 	// over by handing back the smallest anyway.
-	if v, ok := w.BestFit(5); ok {
+	if v, ok := w.BestFit(5, true); ok {
 		t.Errorf("BestFit(5) = %v, want no fit: the smallest is still too big", v.Label)
 	}
 	// No budget means nothing to check against, so the safe pick is the
 	// smallest rather than the largest.
-	if v, ok := w.BestFit(0); !ok || v.Label != "IQ2_XXS" {
+	if v, ok := w.BestFit(0, true); !ok || v.Label != "IQ2_XXS" {
 		t.Errorf("BestFit(0) = %v/%v, want the smallest when the budget is unknown", v.Label, ok)
 	}
-	if _, ok := (Weights{}).BestFit(84); ok {
+	if _, ok := (Weights{}).BestFit(84, true); ok {
 		t.Error("BestFit on a repo with no variants should report no fit")
 	}
 }
@@ -970,7 +972,7 @@ func TestWeightsSizeCountsQuantFoldersBesideARootFile(t *testing.T) {
 		{"type":"file","path":"UD-IQ1_S/model.gguf","size":192000000000},
 		{"type":"file","path":"Q2_K/model.gguf","size":245000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -993,7 +995,7 @@ func TestWeightsSizeIgnoresFormatCopiesBesideRoot(t *testing.T) {
 		{"type":"file","path":"metal/model.bin","size":65000000000},
 		{"type":"file","path":"original/model.safetensors","size":65000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -1002,5 +1004,137 @@ func TestWeightsSizeIgnoresFormatCopiesBesideRoot(t *testing.T) {
 	}
 	if want := 65.0; got.SizeGB != want {
 		t.Errorf("SizeGB = %v, want %v (one copy, not three)", got.SizeGB, want)
+	}
+}
+
+// The Hub accepts base_model as either a single repo id or a list, and both
+// shapes appear in the wild -- bartowski writes a string, unsloth a list.
+func TestBaseModelAcceptsBothShapes(t *testing.T) {
+	for _, c := range []struct{ raw, want string }{
+		{`"Qwen/Qwen3-32B"`, "Qwen/Qwen3-32B"},
+		{`["deepseek-ai/DeepSeek-V3.1"]`, "deepseek-ai/DeepSeek-V3.1"},
+		{`["a/one","b/two"]`, "a/one"},
+		{`[]`, ""},
+		{`null`, ""},
+		{``, ""},
+		{`{"unexpected":"shape"}`, ""},
+	} {
+		var m Model
+		if c.raw != "" {
+			m.CardData.BaseModel = json.RawMessage(c.raw)
+		}
+		if got := m.BaseModel(); got != c.want {
+			t.Errorf("BaseModel() with %s = %q, want %q", c.raw, got, c.want)
+		}
+	}
+}
+
+// vLLM addresses a GGUF quant by name and can only do it for a single file at
+// a repo's root. Recommending anything else produces a model that downloads
+// and then fails to load, which is worse than not offering it -- the pull has
+// already restarted the service by then.
+func TestVariantsRecordWhatCannotBeServed(t *testing.T) {
+	serveTree(t, `[
+		{"type":"file","path":"m-Q8_0.gguf","size":34000000000},
+		{"type":"file","path":"m-bf16-00001-of-00002.gguf","size":40000000000},
+		{"type":"file","path":"m-bf16-00002-of-00002.gguf","size":25000000000},
+		{"type":"file","path":"UD-Q2_K_XL/model.gguf","size":20000000000}
+	]`)
+	got, err := WeightsSize(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("WeightsSize: %v", err)
+	}
+	by := map[string]Variant{}
+	for _, v := range got.All {
+		by[v.Label] = v
+	}
+	if v := by["Q8_0"]; !v.Servable() {
+		t.Errorf("Q8_0 should be servable, got %q", v.Blocked)
+	}
+	if v := by["bf16"]; v.Servable() {
+		t.Error("a split quant should not be offered: no released plugin can load one")
+	}
+	if v := by["UD-Q2_K_XL"]; v.Servable() {
+		t.Error("a subfolder quant should not be offered: the plugin's glob cannot see it")
+	}
+	for label, v := range by {
+		if !v.GGUF {
+			t.Errorf("%s should be marked GGUF", label)
+		}
+	}
+
+	// So the recommendation must be the biggest *servable* one, not the
+	// biggest. Ranking on size alone lands on the split bf16.
+	best, ok := got.BestFit(84, true)
+	if !ok || best.Label != "Q8_0" {
+		t.Errorf("BestFit = %q/%v, want Q8_0: bf16 is bigger but cannot load", best.Label, ok)
+	}
+	// And with no GGUF support at all, nothing here is servable.
+	if v, ok := got.BestFit(84, false); ok {
+		t.Errorf("BestFit without GGUF support = %q, want nothing", v.Label)
+	}
+}
+
+// The selector is what gets appended to a repo id, and only GGUF has one.
+func TestVariantSelector(t *testing.T) {
+	if s, ok := (Variant{Name: "m-Q8_0.gguf", Label: "Q8_0", GGUF: true}).Selector(); !ok || s != ":Q8_0" {
+		t.Errorf("Selector() = %q/%v, want :Q8_0", s, ok)
+	}
+	// Root safetensors are the repo itself; appending anything would break it.
+	if _, ok := (Variant{Name: "", Label: "default"}).Selector(); ok {
+		t.Error("root weights should have no selector")
+	}
+	if _, ok := (Variant{Name: "fp8", Label: "fp8"}).Selector(); ok {
+		t.Error("a non-GGUF variant has no selector -- vLLM has no way to address it")
+	}
+}
+
+// The MoE field was never standardised, so three families spell it three
+// ways. Missing one means a model that cannot load is offered as though it
+// can -- and the cost of that is a crash loop on a machine that was serving.
+func TestMoEDetectionCoversEverySpelling(t *testing.T) {
+	for name, a := range map[string]Arch{
+		"qwen/olmoe":      {NumExperts: 128},
+		"mixtral-derived": {NumLocalExperts: 8},
+		"deepseek":        {NRoutedExperts: 256},
+	} {
+		if !a.MoE() {
+			t.Errorf("%s: MoE() = false, want true", name)
+		}
+	}
+	if (Arch{ModelType: "qwen3"}).MoE() {
+		t.Error("a dense model was reported as MoE")
+	}
+}
+
+// vLLM's GGUF plugin maps fused expert weights for exactly two architectures.
+// Everything else MoE fails at load, after the restart, with one unmapped
+// parameter per layer.
+func TestGGUFServable(t *testing.T) {
+	// The two the plugin special-cases.
+	for _, mt := range []string{"olmoe", "OLMoE", "minimax_m2"} {
+		if ok, why := GGUFServable(Arch{ModelType: mt, NumExperts: 64}); !ok {
+			t.Errorf("%s should be servable, got %q", mt, why)
+		}
+	}
+
+	// The one that took the machine down.
+	ok, why := GGUFServable(Arch{ModelType: "qwen3_moe", NumExperts: 128})
+	if ok {
+		t.Fatal("qwen3_moe GGUF reported servable -- this is the crash-loop case")
+	}
+	if !strings.Contains(why, "safetensors") {
+		t.Errorf("the refusal should point at what to use instead, got %q", why)
+	}
+
+	// Dense models are unaffected: the mapping problem is about experts.
+	if ok, _ := GGUFServable(Arch{ModelType: "qwen3"}); !ok {
+		t.Error("a dense model was refused")
+	}
+	// And a config we could not read must not refuse anything. Guessing that
+	// a model is unservable because the Hub was slow would be worse than
+	// letting vLLM decide.
+	if ok, _ := GGUFServable(Arch{}); !ok {
+		t.Error("an unreadable config was treated as a refusal")
 	}
 }

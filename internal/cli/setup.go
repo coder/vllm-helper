@@ -78,20 +78,29 @@ VLLM_BIN=%s
 SERVICE_SCOPE=%s
 SERVICE_NAME=%s
 
-# Rough budget for model weights on disk, used by 'vllm-helper search' to
-# flag models that won't fit. Auto-detected: %s.
-MODEL_BUDGET_GB=%d
+# Budget for model weights, used by 'vllm-helper search' to flag models that
+# won't fit. Measured from this machine on every run -- currently ~%d GB, being
+# %s. Uncomment only to override that.
+#MODEL_BUDGET_GB=%d
 
 # Where gpt-oss-style models find their tiktoken vocab files.
 TIKTOKEN_ENCODINGS_BASE=%s
+
+# How many full-length requests each profile's KV cache is sized to hold.
+# Defaults to %d. A property of the workload rather than the machine: lower it
+# on a single-user box, raise it for a shared endpoint.
+#KV_CONTEXT_TARGET=%d
 
 # --- Optional: Coder Agents sync -------------------------------------------
 # If all three are set (token in secrets.env), every switch keeps a Coder
 # deployment's AI-model picker in sync with the active profile.
 #CODER_URL=https://coder.example.com
 #CODER_AI_PROVIDER_ID=
+# Only needed if the deployment has more than one organization.
+#CODER_ORGANIZATION=default
 `, vllmBin, config.ServiceManager, config.DefaultServiceScope, config.DefaultServiceName,
-			hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"))
+			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"),
+			detect.DefaultContextTarget, detect.DefaultContextTarget)
 		if err := os.WriteFile(dirs.ConfigFile(), []byte(content), 0o644); err != nil {
 			return err
 		}

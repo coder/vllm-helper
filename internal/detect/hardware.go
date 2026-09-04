@@ -23,14 +23,46 @@ func hasNVIDIADevice() bool {
 }
 
 // Hardware describes what we can serve models with on this machine.
+//
+// Gigabytes here are decimal, matching how the Hub reports model sizes and how
+// a machine's memory is advertised: a "128 GB" DGX Spark reads as 130 GB total
+// because 2 GB of its 128 GiB is carved off before Linux sees it. Comparing a
+// decimal model size against a binary budget is a silent 7.4% error in the
+// pessimistic direction, so the two must agree.
 type Hardware struct {
-	TotalMemGB   int    `json:"total_mem_gb"`  // system RAM
-	GPUName      string `json:"gpu_name"`      // e.g. "NVIDIA GB10", "" if no NVIDIA GPU visible
-	GPUMemGB     int    `json:"gpu_mem_gb"`    // VRAM reported by nvidia-smi; 0 if unknown/none
-	Unified      bool   `json:"unified"`       // GPU shares system memory (DGX Spark / GB10 / Grace)
-	BudgetGB     int    `json:"budget_gb"`     // recommended max GB of model weights on disk
-	BudgetReason string `json:"budget_reason"` // one-liner explaining the budget for the user
+	TotalMemBytes int64  `json:"total_mem_bytes"` // system RAM, exact
+	TotalMemGB    int    `json:"total_mem_gb"`    // system RAM, for display
+	GPUName       string `json:"gpu_name"`        // e.g. "NVIDIA GB10", "" if no NVIDIA GPU visible
+	GPUMemBytes   int64  `json:"gpu_mem_bytes"`   // VRAM reported by nvidia-smi; 0 if unknown/none
+	GPUMemGB      int    `json:"gpu_mem_gb"`      // VRAM, for display
+	Unified       bool   `json:"unified"`         // GPU shares system memory (DGX Spark / GB10 / Grace)
+	// CUDA reports an NVIDIA GPU vLLM could actually use. Without one it
+	// runs its CPU backend, which holds no CUDA context and captures no
+	// graphs, so it is budgeted differently.
+	CUDA         bool    `json:"cuda"`
+	BaselineGB   float64 `json:"baseline_gb"`   // what the OS is holding; 0 when it could not be measured
+	BudgetBytes  int64   `json:"budget_bytes"`  // recommended max model weights
+	BudgetGB     int     `json:"budget_gb"`     // the same, for display
+	BudgetReason string  `json:"budget_reason"` // one-liner explaining the budget for the user
 }
+
+// Pool reports the memory weights are actually loaded into, and which pool
+// that is. A discrete GPU uses its own VRAM; everything else uses system
+// memory. One definition, because a caller drawing installed RAM under a
+// budget measured against VRAM is comparing two different machines.
+func (h Hardware) Pool() (int64, string) {
+	if !h.Unified && h.GPUMemBytes > 0 {
+		return h.GPUMemBytes, "vram"
+	}
+	return h.TotalMemBytes, "ram"
+}
+
+// TotalMemMB reports installed RAM in mebibytes, the unit the CPU-backend
+// clamp works in because that is how vLLM's own memory readings arrive.
+func (h Hardware) TotalMemMB() int { return int(h.TotalMemBytes / (1 << 20)) }
+
+// decimalGB rounds bytes down to whole decimal gigabytes for display.
+func decimalGB(b int64) int { return int(float64(b) / gigabyte) }
 
 // unifiedNames are GPUs whose memory is the system's memory: Grace-Blackwell
 // (GB10 in the DGX Spark, GB200, GB300), Grace-Hopper, and the integrated
@@ -63,9 +95,13 @@ func isUnified(gpuName string, gpuMemGB, totalMemGB int, nvidiaDevice bool) bool
 // Probe inspects system memory and nvidia-smi (if present). Never fails --
 // missing pieces just degrade the result.
 func Probe() Hardware {
-	hw := Hardware{TotalMemGB: totalMemGB()}
+	hw := Hardware{TotalMemBytes: totalMemBytes()}
+	hw.TotalMemGB = decimalGB(hw.TotalMemBytes)
 
 	out, err := exec.Command("nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits").Output()
+	// Recorded before describeLocalGPU, which names an Apple SoC and would
+	// otherwise make GPUName look like evidence of CUDA.
+	hw.CUDA = err == nil || hasNVIDIADevice()
 	if err == nil {
 		line := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
 		parts := strings.Split(line, ",")
@@ -74,7 +110,8 @@ func Probe() Hardware {
 		}
 		if len(parts) >= 2 {
 			if mb, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
-				hw.GPUMemGB = mb / 1024
+				hw.GPUMemBytes = int64(mb) << 20
+				hw.GPUMemGB = decimalGB(hw.GPUMemBytes)
 			}
 		}
 	}
@@ -87,15 +124,17 @@ func Probe() Hardware {
 		describeLocalGPU(&hw)
 	}
 
-	switch {
-	case hw.Unified || hw.GPUMemGB == 0:
-		// Unified (or unknown GPU): weights + KV cache + OS all share RAM.
-		hw.BudgetGB = hw.TotalMemGB * 7 / 10
-		hw.BudgetReason = "~70% of unified/system memory (leaves room for KV cache and the OS)"
-	default:
-		// Discrete VRAM: weights must fit in VRAM with KV-cache headroom.
-		hw.BudgetGB = hw.GPUMemGB * 8 / 10
-		hw.BudgetReason = "~80% of discrete VRAM (leaves room for KV cache)"
+	// Memory in use right now, which Budget takes as the OS baseline when it
+	// looks like an idle reading and ignores when it does not.
+	var used int64
+	if avail := int64(AvailableMemMB()) << 20; avail > 0 && hw.TotalMemBytes > avail {
+		used = hw.TotalMemBytes - avail
+		if float64(used) < baselineCeiling*float64(hw.TotalMemBytes) {
+			hw.BaselineGB = float64(used) / gigabyte
+		}
 	}
+
+	hw.BudgetBytes, hw.BudgetReason = hw.Budget(used)
+	hw.BudgetGB = decimalGB(hw.BudgetBytes)
 	return hw
 }

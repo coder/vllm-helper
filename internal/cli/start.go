@@ -55,8 +55,16 @@ func runStart() error {
 	args := []string{bin, "serve", active.Get("MODEL"),
 		"--port", active.Get("PORT"),
 		"--max-model-len", active.Get("MAX_MODEL_LEN"),
-		"--gpu-memory-utilization", fitMemUtilization(active.Get("GPU_MEMORY_UTILIZATION")),
+		"--gpu-memory-utilization", fitMemUtilization(active.Get("GPU_MEMORY_UTILIZATION"), active.Get("KV_CACHE_MEMORY_BYTES") != ""),
 		"--api-key", active.Get("VLLM_API_KEY"),
+	}
+	// A deliberate cache size makes --gpu-memory-utilization what it should
+	// always have been -- a ceiling on what vLLM may touch -- rather than the
+	// knob that decides the cache. Note the flag is --kv-cache-memory-bytes:
+	// vLLM's own log prints "--kv-cache-memory=N", which only works because
+	// argparse accepts unambiguous prefixes, and is not a real option name.
+	if kv := active.Get("KV_CACHE_MEMORY_BYTES"); kv != "" {
+		args = append(args, "--kv-cache-memory-bytes", kv)
 	}
 	if extra := active.Get("EXTRA_ARGS"); extra != "" {
 		words, err := config.SplitArgs(extra)

@@ -71,24 +71,56 @@
             >
 
             <p class="detail-loading" data-detail-loading>
-              Measuring against this machine&#8230;
+              <span class="spinner" aria-hidden="true"></span>
+              <span data-detail-loading-text
+                >Measuring against this machine&#8230;</span
+              >
             </p>
 
             <div data-detail-body hidden>
-              <div class="verdict" data-verdict></div>
+              <!-- Announced on change: choosing a model in the list swaps
+                   this text without moving focus, so a screen reader would
+                   otherwise never hear the answer it asked for. -->
+              <div class="verdict" data-verdict aria-live="polite"></div>
               <dl class="facts" data-facts></dl>
               <div class="quants" data-quants hidden>
                 <h4 class="quants-title">
-                  Quants in this repo <span data-quants-count></span>
+                  <label for="quant-pick"
+                    >Quant <span data-quants-count></span
+                  ></label>
                 </h4>
-                <ul class="quant-list" data-quant-list></ul>
-                <p class="quants-note">
-                  Pulling saves the repo, not one of these &mdash; what gets
-                  served is whatever vLLM resolves.
-                </p>
+                <select
+                  class="quant-select"
+                  id="quant-pick"
+                  data-quant-select
+                ></select>
+                <p class="quants-note" data-quant-note></p>
               </div>
               <div class="notice" data-flags hidden></div>
               <div class="notice notice-warn" data-dropped hidden></div>
+
+              <!-- The same explain-then-offer the CLI does, in place of the
+                   pull button: on this machine there is nothing to pull until
+                   it is dealt with. The action leads, because a wall of
+                   warnings above a button pushes the button off the screen. -->
+              <div class="gguf" data-gguf hidden>
+                <p class="gguf-lead">
+                  This vLLM can&rsquo;t load GGUF &mdash; support moved out of
+                  vLLM core in 0.27.1.
+                </p>
+                <div class="gguf-actions">
+                  <button class="btn" data-gguf-install>
+                    Install the plugin
+                  </button>
+                  <span class="gguf-status" data-gguf-status></span>
+                </div>
+                <ul class="gguf-caveats" data-gguf-caveats></ul>
+                <details class="gguf-manual">
+                  <summary>Install it by hand instead</summary>
+                  <code class="gguf-cmd" data-gguf-cmd></code>
+                </details>
+                <pre class="gguf-log" data-gguf-log hidden></pre>
+              </div>
             </div>
 
             <div class="notice notice-error" data-detail-error hidden></div>

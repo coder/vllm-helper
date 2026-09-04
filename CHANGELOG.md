@@ -11,15 +11,30 @@ the fact.
 
 ### Added
 
+- Choosing which quantization to serve, for the GGUF repos that ship several.
+  `new --quant Q8_0` takes one by name, `search` asks with the best fit
+  preselected, and the panel offers a dropdown. The choice is written into the
+  profile as `MODEL=repo:QUANT`, along with the `--tokenizer` such a model
+  needs, so what runs is what was picked rather than whatever vLLM resolves.
+- `install-gguf` installs the plugin vLLM now needs to read GGUF at all,
+  into the interpreter that owns the configured vLLM rather than whatever
+  `pip` is on PATH. It says what the trade-offs are before installing:
+  vLLM calls its own GGUF support experimental, the plugin builds from
+  source, and a native quant is usually faster where one exists. The panel
+  offers the same thing in place of a pull button that could only fail,
+  with the command and caveats read from the machine so the two cannot
+  drift. Installing disturbs nothing that is running: the plugin is read
+  when an engine starts, so it applies from the next switch.
 - `vllm-helper serve` runs a web panel for the machine: the model that's
   loaded, whether it's serving or still coming up, how much memory is in use
   against what this hardware can give a model, the other saved profiles with a
   switch button, and the server log. It's a control plane only — inference
   still goes straight to vLLM, so the panel is never in the path of a request
   and can't affect one. Listens on localhost unless `--listen` says otherwise,
-  and every request needs the token printed at startup. Switching and stopping
-  need permission to control the service; where that's missing the panel says
-  so and disables those buttons rather than failing when they're pressed.
+  and every request needs the token printed at startup. Anything that controls
+  the service — switching, pulling, stopping — needs permission to do so;
+  where that's missing the panel says so and disables those buttons rather than
+  failing when they're pressed.
 - The panel can find and add models, not just switch between saved ones. An
   "Add model" page searches HuggingFace, and picking a result measures it
   against this machine — weight size against the budget, model-card flags
@@ -57,6 +72,20 @@ the fact.
 
 ### Changed
 
+- GGUF builds of mixture-of-experts models are marked unsupported rather than
+  offered. vLLM's GGUF plugin maps fused expert weights for two architectures
+  only (OLMoE and MiniMax-M2); every other MoE fails at load with one unmapped
+  parameter per layer — after the service has restarted, so the model that was
+  serving is already gone. The check reads the base model's `config.json`
+  concurrently with the work already being done, so it costs no extra wall
+  time, and the message names a safetensors quant as the way forward.
+- Quants vLLM has no way to load are marked as such instead of being offered.
+  It addresses a GGUF quant by name and only for a single file at a repo's
+  root, so split-file and per-quant-subfolder copies are listed but not
+  recommended, and a machine without the GGUF plugin is told so before a pull
+  rather than after the restart. This also stops the recommendation landing on
+  the least loadable entry: ranking on size alone picked bartowski's `bf16`,
+  which is both split and in a subfolder.
 - `inspect`, `search` and the panel now list every quantization a repo holds
   and lead with the biggest one that fits, instead of reporting only the
   smallest. The smallest is the right answer to "could anything here run" and
@@ -65,6 +94,10 @@ the fact.
   quant and its 8-bit one was 34.8 GB. Quants too large for the machine are
   marked as such, and a repo whose smallest quant still doesn't fit now says
   so rather than advising you to look for a smaller one that isn't there.
+  Pulling saves the chosen quant as `MODEL=repo:QUANT` wherever vLLM can be
+  pointed at it, which means a single GGUF file at the repo root. Quants split
+  across shards or filed under a per-quant subfolder are listed but cannot be
+  selected, and the list says so rather than leaving you to find out.
 - Coder sync is now a plugin (`internal/plugin/coder`) behind a small
   interface, rather than being wired through the CLI by hand. An integration
   declares its own configuration, contributes its own commands, and opts into
@@ -112,6 +145,30 @@ the fact.
 
 ### Fixed
 
+- gpt-oss models are set up so they can actually be used. Their cards carry no
+  `vllm serve` snippet, so nothing was detected and the profile was written with
+  no flags at all. Served that way the model answers ordinary chat normally but
+  returns an empty message for anything involving tools, which reads as the
+  model ignoring the request rather than as a missing flag. `new` now adds the
+  parsers that read this format, and fetches the vocab files the tokenizer
+  reads from disk, both only where the installed vLLM confirms them.
+- Installing the GGUF plugin from the panel no longer holds a request open for
+  the whole build. It builds from source, so that request stayed open for
+  minutes and browsers drop those — after which the page could not tell a
+  finished install from a lost one, and the model card only showed the truth
+  if you searched for it again. The install now runs on the server and the
+  page polls it, which also means a reload rejoins one already in progress
+  rather than offering to start a second.
+- The capability probe had stopped working wherever a vLLM plugin was
+  installed. vLLM logs plugin registration to stdout, so the probe's JSON was
+  no longer the only thing on the stream and parsing it yielded nothing —
+  which reads as "we could not ask", so model-card flag validation quietly
+  stopped running, nothing was cached, and an installed GGUF plugin was
+  reported as missing.
+- `inspect` and the panel's model detail were running `vllm --version` on
+  every call, before consulting the cache, and that imports vLLM. Measured at
+  10.1s per lookup on a DGX Spark against 0.4s of real work; now 0.25s once
+  warm, by reading the version from distribution metadata instead.
 - `new` no longer writes a context length the model can't support when its
   README has no `vllm serve` snippet. The clamp to the model's real
   `max_position_embeddings` sat behind an early return taken on exactly those

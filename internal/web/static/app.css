@@ -276,6 +276,63 @@ main.discover {
   color: var(--content-destructive);
 }
 
+/* A record of decisions, not a problem. Blue rather than amber or red, and
+   set in the body face: these are sentences to read once, where the rest of
+   the notices are terse machine facts. */
+.notice-note {
+  position: relative;
+  border-left-color: var(--content-link);
+  font-family: var(--font-sans);
+  padding-right: 2.25rem;
+  /* .notice sets pre-wrap for the machine text the other variants carry as a
+     single text node. This one has child elements, so that would render the
+     source's own indentation as blank lines. */
+  white-space: normal;
+}
+
+.notice-title {
+  margin: 0 0 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--content-primary);
+}
+
+.notice-list {
+  margin: 0;
+  padding-left: 1.125rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.notice-list li + li {
+  margin-top: 0.375rem;
+}
+
+.notice-dismiss {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.5rem;
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--content-secondary);
+  font-size: 1.125rem;
+  line-height: 1;
+  padding: 0.25rem 0.375rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.notice-dismiss:hover {
+  color: var(--content-primary);
+  background: var(--surface-tertiary);
+}
+
+.notice-dismiss:focus-visible {
+  outline: 2px solid var(--content-link);
+  outline-offset: 1px;
+}
+
 /* ---------- buttons ---------- */
 
 .now-actions {
@@ -455,31 +512,32 @@ input:focus-visible {
 
 /* ---------- nav ---------- */
 
+/* Links, not a control. These load new documents, so anything that looks like
+   a switch promises a transition the browser will not make. */
 .tabs {
+  align-self: baseline;
   display: flex;
-  gap: 0.25rem;
-  margin-left: 1rem;
+  gap: 1rem;
+  margin-left: 0.75rem;
 }
 
 .tab {
   color: var(--content-secondary);
-  font-size: 0.8125rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
   text-decoration: none;
-  padding: 0.25rem 0.625rem;
-  border-radius: var(--radius);
+  white-space: nowrap;
+  padding-bottom: 0.125rem;
+  border-bottom: 1px solid transparent;
 }
 
 .tab:hover {
   color: var(--content-primary);
-  background: var(--surface-secondary);
 }
 
-/* The current page is marked by weight and a rule rather than a filled pill:
-   the bar is chrome, and a bright control up here would compete with the
-   phase readout, which is the thing worth looking at. */
 .tab[aria-current="page"] {
   color: var(--content-primary);
-  box-shadow: inset 0 -2px 0 var(--content-link);
+  border-bottom-color: var(--border-secondary);
 }
 
 .tab:focus-visible {
@@ -703,6 +761,14 @@ input:focus-visible {
   color: var(--content-secondary);
 }
 
+/* A second line under the verdict, quieter than the reason above it: it
+   qualifies the answer rather than giving it. */
+.verdict-context {
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--border-default);
+  font-size: 0.8125rem;
+}
+
 .verdict[data-fit="yes"] {
   border-left-color: var(--content-success);
 }
@@ -800,40 +866,160 @@ input:focus-visible {
   letter-spacing: 0.04em;
 }
 
-.quant-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 12rem;
-  overflow-y: auto;
+.quant-select {
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius);
+  background: var(--surface-primary);
+  color: var(--content-primary);
   font-family: var(--font-mono);
   font-size: 0.75rem;
 }
 
-.quant-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.1875rem 0.375rem;
-  border-radius: 0.25rem;
-  color: var(--content-secondary);
+.quant-select:focus-visible {
+  outline: 2px solid var(--content-link);
+  outline-offset: -1px;
 }
 
-/* The one worth running is called out, since the list is otherwise a wall of
-   near-identical strings and the whole point is which to choose. */
-.quant-list li[data-pick="best"] {
-  background: var(--surface-tertiary);
-  color: var(--content-success);
-  font-weight: 600;
-}
-
-.quant-list li[data-pick="toobig"] {
+.quant-select option:disabled {
   color: var(--content-disabled);
-  text-decoration: line-through;
 }
 
 .quants-note {
   margin: 0.375rem 0 0;
   color: var(--content-disabled);
   font-size: 0.6875rem;
+}
+
+/* ---------- gguf offer ---------- */
+
+.gguf {
+  margin-top: 1rem;
+  padding: 0.875rem;
+  border: 1px solid var(--content-warning);
+  border-radius: var(--radius);
+  background: var(--surface-primary);
+}
+
+.gguf-lead {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--content-warning);
+}
+
+.gguf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.gguf-status {
+  flex: 1 1 100%;
+  font-size: 0.75rem;
+  color: var(--content-secondary);
+}
+
+.gguf-caveats {
+  margin: 0.75rem 0 0;
+  padding-left: 1.125rem;
+  font-size: 0.75rem;
+  color: var(--content-secondary);
+}
+
+.gguf-caveats li + li {
+  margin-top: 0.25rem;
+}
+
+.gguf-manual {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--content-secondary);
+}
+
+.gguf-manual summary {
+  cursor: pointer;
+}
+
+/* Wraps rather than scrolls: a venv path is long, this column is narrow, and
+   a command you have to drag sideways to read is one you cannot copy. */
+.gguf-cmd {
+  display: block;
+  margin-top: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.25rem;
+  background: var(--surface-tertiary);
+  color: var(--content-primary);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* Tail of a failed build. Bounded, because pip is verbose and the useful
+   part is at the end. */
+.gguf-log {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem;
+  max-height: 10rem;
+  overflow: auto;
+  border-radius: 0.25rem;
+  background: var(--surface-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- spinner ---------- */
+
+.detail-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Measuring a model reaches the Hub several times and can ask vLLM what it
+   supports, which imports torch. That is seconds, sometimes tens of them, and
+   a line of static text through it reads as a page that has stopped. */
+.spinner {
+  flex: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  border: 2px solid var(--surface-quaternary);
+  border-top-color: var(--content-link);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Respect a system setting that exists because motion makes some people ill;
+   a pulse still says "working" without rotating. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: pulse 1.4s ease-in-out infinite;
+    border-top-color: var(--surface-quaternary);
+    background: var(--content-link);
+  }
+  @keyframes pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+}
+
+/* The button says what it is doing, so it needs the same treatment. */
+.btn .spinner {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-width: 2px;
+  margin-right: 0.375rem;
+  vertical-align: -1px;
+  display: inline-block;
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -42,7 +43,10 @@ type doctorConfig struct {
 	ServiceState    string `json:"service_state"`
 	ServiceCrashed  bool   `json:"service_crashed"`
 	ServiceRestarts int    `json:"service_restarts"`
-	CoderConfigured bool   `json:"coder_sync_configured"`
+	BudgetOverride  string `json:"budget_override,omitempty"`
+	// HarmonyVocab reports whether the tiktoken vocab files are on disk.
+	HarmonyVocab    bool `json:"harmony_vocab"`
+	CoderConfigured bool `json:"coder_sync_configured"`
 }
 
 type toolchainCheck struct {
@@ -118,6 +122,8 @@ func gatherDoctor() doctorReport {
 			ServiceState:    health.State,
 			ServiceCrashed:  health.Crashed,
 			ServiceRestarts: health.NRestarts,
+			BudgetOverride:  cfg.ModelBudgetGB(),
+			HarmonyVocab:    hasHarmonyVocab(cfg.Dirs.Data),
 			CoderConfigured: cfg.CoderConfigured(),
 		}
 	}
@@ -214,13 +220,21 @@ func gatherHFToken(cfg *config.Config) hfTokenStatus {
 		return st
 	}
 	st.Present = true
-	account, err := hf.WhoAmI(token)
+	account, err := hf.WhoAmI(context.Background(), token)
 	if err != nil {
 		st.Error = err.Error()
 	} else {
 		st.Account = account
 	}
 	return st
+}
+
+// hasHarmonyVocab reports whether the tiktoken vocab files are present. Only
+// the o200k one is checked: it is the one gpt-oss reads, and a directory with
+// just the other is the same problem.
+func hasHarmonyVocab(dataDir string) bool {
+	st, err := os.Stat(filepath.Join(dataDir, "tiktoken-encodings", "o200k_base.tiktoken"))
+	return err == nil && st.Size() > 0
 }
 
 func renderDoctor(r doctorReport, yes bool) {
@@ -236,7 +250,15 @@ func renderDoctor(r doctorReport, yes bool) {
 	} else {
 		fmt.Println("  gpu:        no NVIDIA GPU visible (nvidia-smi missing or failed)")
 	}
+	if hw.BaselineGB > 0 {
+		fmt.Printf("  in use:     %.1f GB by the OS and everything else running\n", hw.BaselineGB)
+	}
 	fmt.Printf("  budget:     ~%d GB of model weights (%s)\n", hw.BudgetGB, hw.BudgetReason)
+	// An override silently replaces the figure above everywhere else, so
+	// showing only the measured one would make doctor disagree with search.
+	if r.Config != nil && r.Config.BudgetOverride != "" {
+		fmt.Printf("              overridden to %s GB by MODEL_BUDGET_GB in config.env\n", r.Config.BudgetOverride)
+	}
 	fmt.Println()
 
 	fmt.Println("CONFIG")
@@ -326,6 +348,11 @@ func renderDoctor(r doctorReport, yes bool) {
 		fmt.Printf("  hf token:   set (%s) but the Hub rejected it: %s\n", r.HFToken.Source, r.HFToken.Error)
 	default:
 		fmt.Printf("  hf token:   OK -- authenticated as %q (%s)\n", r.HFToken.Account, r.HFToken.Source)
+	}
+	if r.Config != nil && !r.Config.HarmonyVocab {
+		fmt.Println("  tiktoken:   no vocab files yet -- gpt-oss-style models read them from")
+		fmt.Println("              disk, and without them requests fail after a healthy start.")
+		fmt.Println("              Pulling such a model fetches them.")
 	}
 	fmt.Println()
 

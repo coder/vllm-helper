@@ -48,9 +48,16 @@ func runServe(cmd *cobra.Command, addr string) error {
 
 	handler := srv.Handler(web.Static())
 	// A token in the query string is exchanged for a cookie on first load,
-	// so it isn't repeated on every asset request.
+	// so it isn't repeated on every asset request. Once that cookie is set
+	// the address is redirected to itself without the token: the page strips
+	// it from the address bar too, but a redirect happens whether or not the
+	// script runs and keeps the secret out of anything logging request lines.
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		srv.SetCookie(w, r)
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if srv.SetCookie(w, r) && r.Method == http.MethodGet {
+			http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
+			return
+		}
 		handler.ServeHTTP(w, r)
 	})
 
@@ -64,10 +71,15 @@ func runServe(cmd *cobra.Command, addr string) error {
 	fmt.Println("  ", web.ListenURL(listener.Addr().String(), srv.Token()))
 	fmt.Println()
 	if !web.LoopbackOnly(addr) {
-		// Worth saying plainly: this is reachable from other machines, and
-		// the token is the only thing between them and a stop button.
-		fmt.Println("Reachable from the network. Anyone who has that URL can switch models")
-		fmt.Println("and stop the server, so treat it like a password.")
+		// Worth saying plainly: this is reachable from other machines, the
+		// token is the only thing between them and a stop button, and it
+		// crosses the network in the clear. No TLS here on purpose -- a
+		// self-signed certificate teaches people to click through warnings,
+		// and a real one belongs to whatever already terminates it.
+		fmt.Println("Reachable from the network over plain HTTP. Anyone who has that URL, or")
+		fmt.Println("who can read traffic on the way to it, can switch models and stop the")
+		fmt.Println("server. Treat it like a password, and put it behind a TLS proxy or a")
+		fmt.Println("private network rather than exposing it directly.")
 		fmt.Println()
 	}
 	fmt.Println("Ctrl+C to stop the panel. The model server is unaffected either way.")

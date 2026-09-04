@@ -3,6 +3,7 @@
 package hf
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +22,16 @@ var (
 	baseURL = "https://huggingface.co"
 )
 
+// get issues a GET bound to ctx, so a caller that has given up stops the
+// request instead of leaving it running.
+func get(ctx context.Context, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return httpClient.Do(req)
+}
+
 type Model struct {
 	ID          string   `json:"id"`
 	Downloads   int64    `json:"downloads"`
@@ -28,6 +39,37 @@ type Model struct {
 	PipelineTag string   `json:"pipeline_tag"`
 	CreatedAt   string   `json:"createdAt"`
 	Tags        []string `json:"tags"`
+	// CardData carries the card's YAML front matter. Only base_model is read
+	// from it, and it is typed loosely because the Hub accepts either a
+	// single repo id or a list of them.
+	CardData struct {
+		BaseModel json.RawMessage `json:"base_model"`
+	} `json:"cardData"`
+}
+
+// BaseModel is the model a derivative was made from -- the unquantized repo a
+// GGUF was converted from, in practice.
+//
+// It matters because vLLM's GGUF plugin resolves its HF config from the
+// tokenizer repo, and GGUF publishers largely ship no config.json: verified
+// live, bartowski/Qwen_Qwen3-32B-GGUF and both unsloth repos checked have
+// none. Without --tokenizer pointing somewhere that does, the server cannot
+// start. Deriving it from the repo name would be guesswork ("Qwen_Qwen3-32B"
+// -> "Qwen/Qwen3-32B" only by convention), so the card is asked instead.
+func (m Model) BaseModel() string {
+	raw := m.CardData.BaseModel
+	if len(raw) == 0 {
+		return ""
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		return one
+	}
+	var many []string
+	if json.Unmarshal(raw, &many) == nil && len(many) > 0 {
+		return many[0]
+	}
+	return ""
 }
 
 // License extracts the license tag ("license:apache-2.0" -> "apache-2.0").
@@ -57,9 +99,9 @@ func (m Model) QuantTags() []string {
 }
 
 // Lookup fetches one model's metadata by repo id.
-func Lookup(repo string) (Model, error) {
+func Lookup(ctx context.Context, repo string) (Model, error) {
 	var m Model
-	resp, err := httpClient.Get(baseURL + "/api/models/" + repo)
+	resp, err := get(ctx, baseURL+"/api/models/"+repo)
 	if err != nil {
 		return m, err
 	}
@@ -80,8 +122,13 @@ func Lookup(repo string) (Model, error) {
 }
 
 // WhoAmI validates a Hub token and returns the account name it belongs to.
-func WhoAmI(token string) (string, error) {
-	req, _ := http.NewRequest("GET", baseURL+"/api/whoami-v2", nil)
+func WhoAmI(ctx context.Context, token string) (string, error) {
+	// Built by hand rather than via get: this is the one request that
+	// carries a header.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/whoami-v2", nil)
+	if err != nil {
+		return "", err
+	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -104,11 +151,11 @@ func WhoAmI(token string) (string, error) {
 }
 
 // Search queries the Hub for text-generation models, most-downloaded first.
-func Search(query string, limit int) ([]Model, error) {
+func Search(ctx context.Context, query string, limit int) ([]Model, error) {
 	u := fmt.Sprintf(
 		baseURL+"/api/models?search=%s&filter=text-generation&sort=downloads&direction=-1&limit=%d",
 		url.QueryEscape(query), limit)
-	resp, err := httpClient.Get(u)
+	resp, err := get(ctx, u)
 	if err != nil {
 		return nil, err
 	}
@@ -130,10 +177,36 @@ type Variant struct {
 	// quant subfolder, or "" for weights sitting at the repo root.
 	Name string `json:"name"`
 	// Label is Name reduced to the part worth reading, so a list of them
-	// can be scanned: "Q8_0" rather than "Qwen_Qwen3-32B-Q8_0.gguf".
-	Label  string  `json:"label"`
-	SizeGB float64 `json:"size_gb"`
+	// can be scanned: "Q8_0" rather than "Qwen_Qwen3-32B-Q8_0.gguf". It is
+	// also the selector vLLM is given, so it cannot be abbreviated.
+	Label string `json:"label"`
+	// Display is Label shortened for a list or a dropdown. Some publishers
+	// name a quant after every per-tensor override it applies, which runs to
+	// 70 characters and hides the one part that differs.
+	Display string  `json:"display,omitempty"`
+	SizeGB  float64 `json:"size_gb"`
+	// GGUF marks a variant that needs vLLM's out-of-tree GGUF plugin.
+	GGUF bool `json:"gguf,omitempty"`
+	// Blocked says why vLLM cannot be pointed at this variant, and is empty
+	// when it can. Listing a quant that cannot be selected is worse than not
+	// listing it, because the sizes make it look like a live option.
+	Blocked string `json:"blocked,omitempty"`
 }
+
+// Selector is what to append to a repo id to serve this variant, and false
+// when the variant is the repo's own default and needs no suffix.
+//
+// vLLM addresses a GGUF quant by name -- "repo:Q8_0" -- not by filename or
+// path, so the label is what goes on the end.
+func (v Variant) Selector() (string, bool) {
+	if v.Name == "" || v.Name == "." || !v.GGUF {
+		return "", false
+	}
+	return ":" + v.Label, true
+}
+
+// Servable reports whether this variant can be selected at all.
+func (v Variant) Servable() bool { return v.Blocked == "" }
 
 // Weights describes the weight files found in a model repo.
 type Weights struct {
@@ -169,12 +242,59 @@ func quantLabel(name, repo string) string {
 	}
 
 	if _, model, ok := strings.Cut(repo, "/"); ok {
-		trimmed := strings.TrimPrefix(label, model)
-		if t := strings.Trim(trimmed, "-_."); t != "" {
+		// HasPrefix, not TrimPrefix: a miss leaves the label untouched, and
+		// trimming that would look like a successful strip.
+		if strings.HasPrefix(label, model) {
+			if t := strings.Trim(strings.TrimPrefix(label, model), "-_."); t != "" {
+				return t
+			}
+		}
+		// The prefix rarely matches exactly: a repo named deepseek-v4-gguf
+		// holds files called DeepSeek-V4-Pro-... So drop leading words the
+		// repo name already says, which by definition tell these variants
+		// apart from nothing.
+		if t := trimRepoWords(label, model); t != "" {
 			return t
 		}
 	}
 	return label
+}
+
+// trimRepoWords removes leading dash-separated words of label that also appear
+// in the repo's model name, case-insensitively.
+func trimRepoWords(label, model string) string {
+	known := map[string]bool{}
+	for _, w := range strings.FieldsFunc(strings.ToLower(model), isLabelSep) {
+		known[w] = true
+	}
+	words := strings.Split(label, "-")
+	i := 0
+	for i < len(words)-1 && known[strings.ToLower(words[i])] {
+		i++
+	}
+	if i == 0 {
+		return ""
+	}
+	return strings.Join(words[i:], "-")
+}
+
+func isLabelSep(r rune) bool { return r == '-' || r == '_' || r == '.' }
+
+// maxLabelWidth is how much of a label a list can show before the column stops
+// being scannable.
+const maxLabelWidth = 26
+
+// shortLabel elides the middle of an over-long label. The ends are what differ
+// between siblings -- the quant at the front, a date or revision at the back --
+// so the middle is the part that can go.
+func shortLabel(label string) string {
+	if len(label) <= maxLabelWidth {
+		return label
+	}
+	const ellipsis = "..."
+	keep := maxLabelWidth - len(ellipsis)
+	head := (keep + 1) / 2
+	return label[:head] + ellipsis + label[len(label)-(keep-head):]
 }
 
 // quantSuffix matches the precision marker at the end of a variant name --
@@ -294,8 +414,8 @@ func oneCopyOfRoot(files []treeEntry) int64 {
 // components of one model, as in text_encoder/ plus vae/ plus transformer/, and
 // have to be added up. Guessing wrong that way round would report a vision
 // tower as if it were the whole model.
-func WeightsSize(repo string) (Weights, error) {
-	files, err := repoTree(repo)
+func WeightsSize(ctx context.Context, repo string) (Weights, error) {
+	files, err := repoTree(ctx, repo)
 	if err != nil {
 		return Weights{}, err
 	}
@@ -305,6 +425,9 @@ func WeightsSize(repo string) (Weights, error) {
 	// Grouping keys are lowered so shards collapse together; quant names are
 	// conventionally upper case, so the name to show is kept alongside.
 	display := map[string]string{}
+	// parts counts how many files each root-GGUF candidate is made of, since
+	// a split quant is one vLLM cannot address on any released plugin.
+	parts := map[string]int{}
 	subdirs := map[string]int64{}
 	alternatives := map[string]bool{}
 	for _, f := range files {
@@ -320,13 +443,17 @@ func WeightsSize(repo string) (Weights, error) {
 			// a GGUF-quantized transformer/ plus vae/ pipeline is still one
 			// model, and reading it as a choice would report the VAE.
 			if quantFolder.MatchString(dir) || (isGGUF(f.Path) && !componentFolders.MatchString(dir)) {
-				alternatives[dir] = true
+				// Present means "an alternative"; true means "holds GGUF".
+				// A folder named awq/ or fp16/ is an alternative too, and
+				// calling it GGUF would answer the wrong question about it.
+				alternatives[dir] = alternatives[dir] || isGGUF(f.Path)
 			}
 		case isGGUF(f.Path):
 			// Root GGUFs are one quant per name, minus any shard suffix. The
 			// name is lowered so a repo shipping .GGUF still groups its shards.
 			key := ggufShard.ReplaceAllString(strings.ToLower(f.Path), ".gguf")
 			candidates[key] += f.Size
+			parts[key]++
 			if _, seen := display[key]; !seen {
 				display[key] = ggufShard.ReplaceAllString(f.Path, ".gguf")
 			}
@@ -369,7 +496,7 @@ func WeightsSize(repo string) (Weights, error) {
 	if len(candidates) == 0 {
 		return Weights{}, nil
 	}
-	return pickSmallest(candidates, display, repo), nil
+	return pickSmallest(candidates, display, parts, alternatives, repo), nil
 }
 
 // pickSmallest reports the smallest candidate, which is the one with any chance
@@ -381,7 +508,7 @@ func WeightsSize(repo string) (Weights, error) {
 // SizeGB stays the smallest for compatibility with the fit check, which asks
 // "could anything here run" and wants the conservative answer. Choosing what to
 // actually serve is a different question and wants All.
-func pickSmallest(candidates map[string]int64, display map[string]string, repo string) Weights {
+func pickSmallest(candidates map[string]int64, display map[string]string, parts map[string]int, folders map[string]bool, repo string) Weights {
 	var largest int64
 	for _, size := range candidates {
 		largest = max(largest, size)
@@ -398,11 +525,29 @@ func pickSmallest(candidates map[string]int64, display map[string]string, repo s
 		if d, ok := display[name]; ok {
 			shown = d
 		}
-		w.All = append(w.All, Variant{
-			Name:   shown,
-			Label:  quantLabel(shown, repo),
-			SizeGB: float64(size) / 1e9,
-		})
+		label := quantLabel(shown, repo)
+		inFolder, isFolder := folders[name]
+		v := Variant{
+			Name:    shown,
+			Label:   label,
+			Display: shortLabel(label),
+			SizeGB:  float64(size) / 1e9,
+			GGUF:    isGGUF(shown) || inFolder,
+		}
+		// Which layouts vLLM can be pointed at is not a judgement about
+		// quality: it addresses a GGUF quant by name, and on every released
+		// plugin that lookup is a non-recursive glob over one file. So a
+		// quant in a folder is fetched and then reported missing, and a
+		// split one loads partial weights. Both are worse than refusing.
+		switch {
+		case isFolder && inFolder:
+			v.Blocked = "in a subfolder, which vLLM's GGUF plugin cannot address"
+		case isFolder:
+			v.Blocked = "in a subfolder, which vLLM cannot be pointed at"
+		case parts[name] > 1:
+			v.Blocked = "split across files, which vLLM's GGUF plugin cannot load"
+		}
+		w.All = append(w.All, v)
 		if smallest < 0 || size < smallest {
 			smallest = size
 		}
@@ -419,20 +564,33 @@ func pickSmallest(candidates map[string]int64, display map[string]string, repo s
 // budget, since quantization trades quality for size and there is no reason to
 // take a worse one than the machine can hold.
 //
-// Returns false when nothing fits, rather than falling back to the smallest --
-// "the least bad option is still too big" is the caller's decision to make and
-// present, not something to paper over here.
+// ggufOK says whether this machine's vLLM can load GGUF at all. Both that and
+// the per-variant Blocked reason filter the candidates first, because ranking
+// on size alone reliably lands on something unloadable: the largest quant in a
+// GGUF repo is the one most likely to be split across files, and
+// bartowski/Qwen_Qwen3-32B-GGUF's biggest-that-fits is a bf16 that is both
+// split and in a subfolder.
+//
+// Returns false when nothing servable fits, rather than falling back to the
+// smallest -- "the least bad option is still too big" is the caller's decision
+// to make and present, not something to paper over here.
 //
 // A budget of 0 means unknown, in which case the largest is not a safe default:
 // with nothing to check it against, the conservative choice is the smallest.
-func (w Weights) BestFit(budgetGB float64) (Variant, bool) {
-	if len(w.All) == 0 {
+func (w Weights) BestFit(budgetGB float64, ggufOK bool) (Variant, bool) {
+	usable := make([]Variant, 0, len(w.All))
+	for _, v := range w.All {
+		if v.Servable() && (ggufOK || !v.GGUF) {
+			usable = append(usable, v)
+		}
+	}
+	if len(usable) == 0 {
 		return Variant{}, false
 	}
 	if budgetGB <= 0 {
-		return w.All[len(w.All)-1], true
+		return usable[len(usable)-1], true
 	}
-	for _, v := range w.All { // largest first
+	for _, v := range usable { // largest first
 		if v.SizeGB <= budgetGB {
 			return v, true
 		}
@@ -456,12 +614,12 @@ func isWeightFile(path string) bool {
 // out of pages is an error rather than a short answer: a truncated listing
 // undercounts, and an undercount is the one wrong answer that tells someone a
 // model fits when it does not.
-func repoTree(repo string) ([]treeEntry, error) {
+func repoTree(ctx context.Context, repo string) ([]treeEntry, error) {
 	next := baseURL + "/api/models/" + repo + "/tree/main?recursive=true"
 	var all []treeEntry
 	seen := map[string]bool{}
 	for page := 0; page < maxTreePages; page++ {
-		entries, link, err := treePage(next)
+		entries, link, err := treePage(ctx, next)
 		if err != nil {
 			return nil, err
 		}
@@ -479,8 +637,8 @@ func repoTree(repo string) ([]treeEntry, error) {
 	return nil, fmt.Errorf("hub tree: %s has more than %d pages", repo, maxTreePages)
 }
 
-func treePage(u string) ([]treeEntry, string, error) {
-	resp, err := httpClient.Get(u)
+func treePage(ctx context.Context, u string) ([]treeEntry, string, error) {
+	resp, err := get(ctx, u)
 	if err != nil {
 		return nil, "", err
 	}
@@ -538,9 +696,9 @@ type DetectedFlags struct {
 // out of any literal "vllm serve" snippet. Topology flags (parallelism,
 // host, port, served-model-name) are deliberately ignored: they describe
 // someone else's deployment, not the model.
-func DetectFlags(repo string) (DetectedFlags, error) {
+func DetectFlags(ctx context.Context, repo string) (DetectedFlags, error) {
 	var d DetectedFlags
-	resp, err := httpClient.Get(baseURL + "/" + repo + "/raw/main/README.md")
+	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/README.md")
 	if err != nil {
 		return d, err
 	}
@@ -566,7 +724,7 @@ func DetectFlags(repo string) (DetectedFlags, error) {
 	// Model cards routinely paste a snippet from a bigger sibling model, so
 	// the advertised context can exceed what this model actually supports.
 	// vLLM refuses to start in that case, so clamp to the real ceiling.
-	if limit, err := ContextLimit(repo); err == nil {
+	if limit, err := ContextLimit(ctx, repo); err == nil {
 		d.MaxModelLen = clampContext(d.MaxModelLen, limit)
 	}
 	return d, nil
@@ -575,8 +733,8 @@ func DetectFlags(repo string) (DetectedFlags, error) {
 // ContextLimit reads max_position_embeddings from a model's config.json --
 // the ceiling vLLM validates --max-model-len against. Returns 0 when the
 // field is absent.
-func ContextLimit(repo string) (int, error) {
-	resp, err := httpClient.Get(baseURL + "/" + repo + "/raw/main/config.json")
+func ContextLimit(ctx context.Context, repo string) (int, error) {
+	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/config.json")
 	if err != nil {
 		return 0, err
 	}
@@ -626,8 +784,8 @@ var systemMessagePositionRe = regexp.MustCompile(
 // ok is false (with empty patched and nil err) if the model's template
 // doesn't have this issue -- the caller should just use the model's own
 // bundled template as normal in that case, not add --chat-template at all.
-func DetectChatTemplatePatch(repo string) (patched string, ok bool, err error) {
-	resp, err := httpClient.Get(baseURL + "/" + repo + "/raw/main/chat_template.jinja")
+func DetectChatTemplatePatch(ctx context.Context, repo string) (patched string, ok bool, err error) {
+	resp, err := get(ctx, baseURL+"/"+repo+"/raw/main/chat_template.jinja")
 	if err != nil {
 		return "", false, err
 	}

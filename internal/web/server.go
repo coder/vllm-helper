@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,12 @@ type Server struct {
 	privileged bool
 	privReason string
 
+	// actionMu serializes everything that changes the service or the set of
+	// profiles. Two tabs, or one impatient double click, otherwise write the
+	// same active.env.tmp at once and race its rename, or restart a profile
+	// another request has just removed.
+	actionMu sync.Mutex
+
 	// The last health probe, reused for healthProbeTTL. Every probe is a
 	// request vLLM writes to its own access log, so the panel's polling is
 	// visible to anyone reading it -- and several open tabs must not turn
@@ -60,6 +67,54 @@ type Server struct {
 	healthAt   time.Time
 	healthCode int
 	healthOK   bool
+
+	// install tracks a GGUF plugin install, which builds from source and runs
+	// for minutes. It is deliberately not a blocking request: a POST held open
+	// that long is dropped by browsers and proxies, and the page it belongs to
+	// has no way to find out whether the work continued.
+	installMu sync.Mutex
+	install   installState
+}
+
+// installState is what a caller can learn about a background install.
+type installState struct {
+	Running bool
+	Done    bool
+	Err     string
+	Log     string
+	Started time.Time
+}
+
+// installStatus reports a copy of the current state.
+func (s *Server) installStatus() installState {
+	s.installMu.Lock()
+	defer s.installMu.Unlock()
+	return s.install
+}
+
+// beginInstall marks an install as started, refusing a second one. Returning
+// false means one is already running, which the caller reports rather than
+// queueing -- two pips writing to one site-packages is not something to do.
+func (s *Server) beginInstall() bool {
+	s.installMu.Lock()
+	defer s.installMu.Unlock()
+	if s.install.Running {
+		return false
+	}
+	s.install = installState{Running: true, Started: time.Now()}
+	return true
+}
+
+// finishInstall records the outcome for whoever polls next.
+func (s *Server) finishInstall(err error, log string) {
+	s.installMu.Lock()
+	defer s.installMu.Unlock()
+	s.install.Running = false
+	s.install.Done = true
+	s.install.Log = log
+	if err != nil {
+		s.install.Err = err.Error()
+	}
 }
 
 // healthProbeTTL bounds how often the vLLM endpoint is asked how it is. The
@@ -80,6 +135,18 @@ func (s *Server) health() (int, bool) {
 	code, ok := control.ProbeHealth(s.cfg.Port())
 	s.healthAt, s.healthCode, s.healthOK = time.Now(), code, ok
 	return code, ok
+}
+
+// forgetHealth drops the cached probe, so the next status request asks the
+// process that is actually running now.
+//
+// Without this a refresh straight after a switch can report the new profile as
+// serving on the old process's cached 200, pick the slow polling interval on
+// the strength of it, and hide the first seconds of a load that takes minutes.
+func (s *Server) forgetHealth() {
+	s.healthMu.Lock()
+	defer s.healthMu.Unlock()
+	s.healthAt = time.Time{}
 }
 
 // caps describes what the installed vLLM will accept, so a model card's flags
@@ -140,16 +207,36 @@ func checkPrivilege(cfg *config.Config) (bool, string) {
 	if os.Geteuid() == 0 {
 		return true, ""
 	}
-	// Ask sudo whether this exact command is permitted, rather than whether
-	// sudo works at all. A sensible rule grants only the three systemctl
-	// verbs the panel needs, and under such a rule `sudo -n true` fails --
-	// which would report the panel as powerless while its buttons would in
-	// fact have worked.
+	if runtime.GOOS != "linux" {
+		// launchd's system domain is root's, and there is no per-command
+		// rule to probe for the way there is with sudoers. Saying so beats
+		// asking systemctl about a machine that has none.
+		return false, fmt.Sprintf(
+			"%s runs in system scope, which belongs to root. Start the panel with sudo, "+
+				"or run the service in user scope.", cfg.ServiceName())
+	}
+	// Ask sudo whether these exact commands are permitted, rather than whether
+	// sudo works at all. A sensible rule grants only the systemctl verbs the
+	// panel needs, and under such a rule `sudo -n true` fails -- which would
+	// report the panel as powerless while its buttons would in fact have
+	// worked.
+	//
+	// Both verbs the panel offers are checked, because one answer drives both
+	// buttons: a rule granting restart alone would light up a Stop button that
+	// then fails with a bare exit status, which is the thing this check exists
+	// to prevent.
 	systemctl, err := exec.LookPath("systemctl")
 	if err != nil {
 		systemctl = "/usr/bin/systemctl"
 	}
-	if err := run("sudo", "-n", "-l", systemctl, "restart", cfg.ServiceName()); err == nil {
+	allowed := true
+	for _, verb := range []string{"restart", "stop"} {
+		if err := run("sudo", "-n", "-l", systemctl, verb, cfg.ServiceName()); err != nil {
+			allowed = false
+			break
+		}
+	}
+	if allowed {
 		return true, ""
 	}
 	return false, fmt.Sprintf(
@@ -170,6 +257,8 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/token", s.guard(s.handleToken))
 	mux.HandleFunc("GET /api/search", s.guard(s.handleSearch))
 	mux.HandleFunc("GET /api/inspect", s.guard(s.handleInspect))
+	mux.HandleFunc("GET /api/gguf", s.guard(s.handleGGUF))
+	mux.HandleFunc("POST /api/gguf/install", s.guard(s.handleInstallGGUF))
 	mux.HandleFunc("POST /api/pull", s.guard(s.handlePull))
 	mux.HandleFunc("POST /api/profiles/{name}/remove", s.guard(s.handleRemoveProfile))
 	mux.HandleFunc("POST /api/switch/{name}", s.guard(s.handleSwitch))
@@ -203,7 +292,7 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 		if !s.authorized(r) {
 			// No WWW-Authenticate: a browser password box can't help here,
 			// and the URL printed at startup already carries the token.
-			http.Error(w, "unauthorized -- open the URL printed by 'vllm-helper serve'", http.StatusUnauthorized)
+			denied(w, r, http.StatusUnauthorized, "unauthorized -- open the URL printed by 'vllm-helper serve'")
 			return
 		}
 		// Anything that changes state must carry the token in a header.
@@ -211,11 +300,24 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 		// the browser attaching the cookie; a cross-origin script cannot
 		// read the token, so it cannot set the header.
 		if r.Method != http.MethodGet && !tokenEqual(r.Header.Get(tokenHeader), s.token) {
-			http.Error(w, "this action needs the token in the "+tokenHeader+" header", http.StatusForbidden)
+			denied(w, r, http.StatusForbidden, "this action needs the token in the "+tokenHeader+" header")
 			return
 		}
 		next(w, r)
 	}
+}
+
+// denied refuses a request in the shape its caller can read. Under /api the
+// page's fetch helper reads {"error": ...} and shows it; a plain-text body
+// there is discarded and the user is left with "401 Unauthorized" instead of
+// the sentence that says what to do. A document request has no such helper,
+// so it keeps the plain-text body a browser will render.
+func denied(w http.ResponseWriter, r *http.Request, code int, msg string) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		writeJSON(w, code, map[string]string{"error": msg})
+		return
+	}
+	http.Error(w, msg, code)
 }
 
 const (

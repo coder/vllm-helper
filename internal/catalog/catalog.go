@@ -9,12 +9,16 @@
 package catalog
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/vllm"
@@ -71,15 +75,36 @@ type Detail struct {
 	// Best is the largest copy that fits the budget -- what someone would
 	// choose by hand, and what the verdict should be about. Absent when
 	// nothing fits or there is no budget to judge against.
-	Best          *hf.Variant `json:"best_variant,omitempty"`
-	BudgetGB      float64     `json:"budget_gb"`             // 0 = unknown (no config)
-	FitsBudget    *bool       `json:"fits_budget,omitempty"` // absent when either side is unknown
-	DetectedFlags string      `json:"detected_flags"`
-	MaxModelLen   string      `json:"detected_max_model_len,omitempty"`
+	Best *hf.Variant `json:"best_variant,omitempty"`
+	// NeedsGGUF is true when every copy in this repo is GGUF, so the repo as
+	// a whole is out of reach without vLLM's out-of-tree plugin.
+	NeedsGGUF bool `json:"needs_gguf,omitempty"`
+	// GGUFReady is whether this machine's vLLM can load GGUF at all.
+	GGUFReady bool `json:"gguf_ready"`
+	// ArchBlocked says why no GGUF build of this model can be served,
+	// whatever the machine or the quant -- set when the architecture itself
+	// is one the plugin cannot map.
+	ArchBlocked string `json:"arch_blocked,omitempty"`
+	// BaseModel is where a GGUF's tokenizer and config have to come from,
+	// since GGUF repos largely ship no config.json of their own.
+	BaseModel     string  `json:"base_model,omitempty"`
+	BudgetGB      float64 `json:"budget_gb"`             // 0 = unknown (no config)
+	FitsBudget    *bool   `json:"fits_budget,omitempty"` // absent when either side is unknown
+	DetectedFlags string  `json:"detected_flags"`
+	MaxModelLen   string  `json:"detected_max_model_len,omitempty"`
 	// DroppedFlags explains anything the card asked for that the installed
 	// vLLM won't take, so it's visible before pulling rather than as a
 	// crash loop afterwards.
 	DroppedFlags []string `json:"dropped_flags,omitempty"`
+	// KVBytesPerToken is what one token of context costs in KV cache, and
+	// MaxContext the longest the model was trained for. Both 0 when the
+	// config could not be read.
+	KVBytesPerToken int64 `json:"kv_bytes_per_token,omitempty"`
+	MaxContext      int   `json:"max_context,omitempty"`
+	// ContextTokens is how much context this machine can hold for the model
+	// once weights and overhead are paid for, and KVCacheGB what that costs.
+	ContextTokens int64   `json:"context_tokens,omitempty"`
+	KVCacheGB     float64 `json:"kv_cache_gb,omitempty"`
 }
 
 // ToResult converts a Hub model into a search hit.
@@ -101,29 +126,96 @@ func ToResult(m hf.Model) Result {
 //
 // A model whose size could not be read keeps FitsBudget unset rather than
 // guessing, so nothing downstream claims it fits.
-func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps) Detail {
-	d := Detail{Result: ToResult(m), BudgetGB: budgetGB}
+// contextTarget is how many full-length requests to size a KV cache for; 0
+// takes detect's default.
+func Inspect(ctx context.Context, m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) Detail {
+	d := Detail{
+		Result:    ToResult(m),
+		BudgetGB:  budgetGB,
+		BaseModel: m.BaseModel(),
+		// Only claim the plugin is missing when the registry was actually
+		// readable. An unreadable one means "we could not ask", and refusing
+		// a pull on that basis would be worse than letting it try.
+		GGUFReady: !caps.KnowsQuantizations() || caps.SupportsGGUF(),
+	}
+	// Whether a GGUF build of this architecture can be loaded at all needs the
+	// base model's config, which is a separate request. Started here and read
+	// after the weights have been measured, so it costs no wall time: both are
+	// network-bound and neither depends on the other.
+	//
+	// Only for repos that name a base model, which in practice means GGUF
+	// ones -- a normal repo has nothing to look up and pays nothing.
+	//
+	// The same config carries the attention shape, so one request answers
+	// both questions. The repo's own config wins: a released model often
+	// credits a base trained for a different context length. Base is a
+	// fallback for repos that ship none, which in practice means GGUF.
+	archCh := make(chan hf.Arch, 1)
+	go func() {
+		a, _ := hf.Config(ctx, m.ID)
+		if a.ModelType == "" && a.MaxContext() == 0 && d.BaseModel != "" {
+			a, _ = hf.Config(ctx, d.BaseModel)
+		}
+		archCh <- a
+	}()
+
 	// A failed measurement is not the same as a repo with nothing to measure:
 	// the pagination guards report an error precisely so a short listing is
 	// not mistaken for a small model, and swallowing it here would undo that.
-	if w, err := hf.WeightsSize(m.ID); err != nil {
+	if w, err := hf.WeightsSize(ctx, m.ID); err != nil {
 		d.SizeError = err.Error()
 	} else if w.SizeGB > 0 {
 		d.SizeGB = w.SizeGB
 		d.Variants = w.Variants
 		d.All = w.All
+		d.NeedsGGUF = allGGUF(w.All)
+
+		// Mark what the architecture rules out before anything is ranked, so
+		// a quant that cannot load is neither recommended nor selectable.
+		// The alternative is finding out from a crash loop, by which point
+		// the model that was serving has already been stopped.
+		arch := <-archCh
+		d.MaxContext = arch.MaxContext()
+		d.KVBytesPerToken = arch.KVBytesPerToken(d.MaxContext)
+		// Only a repo that publishes GGUF can be blocked by the plugin's
+		// mapping, and a safetensors MoE is served by vLLM directly.
+		if ok, why := hf.GGUFServable(arch); !ok && d.BaseModel != "" {
+			d.ArchBlocked = why
+			for i := range d.All {
+				if d.All[i].GGUF && d.All[i].Servable() {
+					d.All[i].Blocked = why
+				}
+			}
+		}
+
 		if d.BudgetGB > 0 {
 			fits := w.SizeGB <= d.BudgetGB
 			d.FitsBudget = &fits
 			// Which one to actually run is a separate question from
 			// whether any of them can, and only worth answering when
 			// there is more than one to choose between.
-			if best, ok := w.BestFit(d.BudgetGB); ok && len(w.All) > 1 {
+			// GGUFReady, not SupportsGGUF: an unreadable registry means
+			// "we could not ask", and every other path here offers those
+			// variants. Asking the stricter question only here would rank
+			// nothing on a machine that is about to be offered the lot.
+			if best, ok := w.BestFit(d.BudgetGB, d.GGUFReady); ok && len(w.All) > 1 {
 				d.Best = &best
 			}
 		}
+
+		// How much context this machine can actually hold for it, which is
+		// the question "does it fit" is usually standing in for.
+		if d.KVBytesPerToken > 0 && d.MaxContext > 0 {
+			size := d.SizeGB
+			if d.Best != nil {
+				size = d.Best.SizeGB
+			}
+			plan := detect.Probe().PlanFor(int64(size*1e9), d.KVBytesPerToken, d.MaxContext, contextTarget)
+			d.ContextTokens = plan.Tokens
+			d.KVCacheGB = float64(plan.KVCacheBytes) / 1e9
+		}
 	}
-	if flags, err := hf.DetectFlags(m.ID); err == nil {
+	if flags, err := hf.DetectFlags(ctx, m.ID); err == nil {
 		// Validate here too: seeing that a card's parser won't work on this
 		// machine is most useful before pulling tens of gigabytes.
 		d.DetectedFlags, d.DroppedFlags = vllm.Check(flags.ExtraArgs, caps)
@@ -147,15 +239,43 @@ type Plan struct {
 // Nothing here is fatal. Every check that fails degrades to a note, because
 // the alternative -- refusing to save a profile because the Hub was slow --
 // helps nobody.
-func PrepareProfile(dirs config.Dirs, repo string, caps vllm.Caps) Plan {
+func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
 	var p Plan
 	name := profile.NameFromRepo(repo)
+	model := repo
 
-	detected, _ := hf.DetectFlags(repo)
-	extraArgs, dropped := vllm.Check(detected.ExtraArgs, caps)
+	// A chosen quant becomes part of the model string, which is how vLLM
+	// addresses one: "repo:Q8_0". Only GGUF works this way -- for everything
+	// else the repo is the quant, so there is nothing to append.
+	var extraFlags string
+	if choice != nil {
+		if sel, ok := choice.Variant.Selector(); ok {
+			model += sel
+			name = profile.NameFromRepo(repo) + "-" + strings.ToLower(choice.Variant.Label)
+			p.Notes = append(p.Notes, "Serving the "+choice.Variant.Label+" quant.")
+		}
+		// vLLM's GGUF plugin resolves its HF config from the tokenizer repo,
+		// and GGUF publishers largely ship no config.json, so without this
+		// the server cannot start at all.
+		if choice.Variant.GGUF && choice.BaseModel != "" {
+			extraFlags = "--tokenizer " + choice.BaseModel
+			p.Notes = append(p.Notes,
+				"Pointing --tokenizer at "+choice.BaseModel+
+					", since GGUF repos rarely ship the config vLLM needs.")
+		}
+	}
+
+	detected, _ := hf.DetectFlags(ctx, repo)
+
+	// Kept apart from extraFlags on purpose. These two end up in the same
+	// ExtraArgs but they are not the same claim: one is what the model's
+	// author prescribed, the other is what this tool added. Merging them
+	// before reporting attributed our own --tokenizer to the card, and said
+	// "flags auto-detected from README" about a repo whose README had none.
+	cardArgs, dropped := vllm.Check(detected.ExtraArgs, caps)
 	p.Notes = append(p.Notes, dropped...)
 
-	if patched, needsPatch, err := hf.DetectChatTemplatePatch(repo); err != nil {
+	if patched, needsPatch, err := hf.DetectChatTemplatePatch(ctx, repo); err != nil {
 		p.Notes = append(p.Notes, "Chat template check failed, continuing without it: "+err.Error())
 	} else if needsPatch {
 		tmplPath := filepath.Join(dirs.Data, "chat-templates", name+".jinja")
@@ -169,18 +289,58 @@ func PrepareProfile(dirs config.Dirs, repo string, caps vllm.Caps) Plan {
 				"This model's bundled template crashes if a system-role message isn't first in "+
 					"the conversation (common with agent harnesses like Coder Agents). Patched a "+
 					"local copy: "+tmplPath)
-			extraArgs = strings.TrimSpace(extraArgs + " --chat-template " + tmplPath)
+			extraFlags = strings.TrimSpace(extraFlags + " --chat-template " + tmplPath)
 		}
 	}
 
 	p.Opts = profile.CreateOpts{
-		Repo:        repo,
+		Repo:        model,
+		Name:        name,
 		MaxModelLen: detected.MaxModelLen,
-		ExtraArgs:   extraArgs,
+		ExtraArgs:   strings.TrimSpace(extraFlags + " " + cardArgs),
 		Source:      "vllm-helper new",
 	}
-	if extraArgs != "" {
-		p.Notes = append(p.Notes, "Auto-detected from the model card: "+extraArgs)
+
+	// Size the cache rather than letting vLLM fill whatever is left.
+	maxLen, _ := strconv.Atoi(p.Opts.MaxModelLen)
+	if maxLen == 0 {
+		maxLen = profile.DefaultMaxModelLen
+	}
+	arch, _ := hf.Config(ctx, configRepoFor(repo, choice))
+	cache, clamped := planCache(detect.Probe(), arch, weightBytes(ctx, repo, choice), maxLen, contextTarget)
+	if clamped != maxLen {
+		p.Opts.MaxModelLen = strconv.Itoa(clamped)
+	}
+	if cache.KVCacheBytes > 0 {
+		p.Opts.KVCacheBytes = cache.KVCacheBytes
+		p.Notes = append(p.Notes, fmt.Sprintf(
+			"Sized the KV cache at %.1f GB, which is %s of context. "+
+				"Left to itself vLLM would claim everything free, which on a shared "+
+				"memory pool is taken from the OS.",
+			float64(cache.KVCacheBytes)/1e9, tokenCount(cache.Tokens)))
+	}
+	if cache.Note != "" {
+		p.Notes = append(p.Notes, cache.Note)
+	}
+
+	// Harmony reads its vocab from disk rather than the model repo, and
+	// without it the server starts healthy and fails every request.
+	if needsHarmony(arch.ModelType) {
+		if note := ensureHarmonyEncodings(dirs.Data); note != "" {
+			p.Notes = append(p.Notes, note)
+		}
+		// Harmony is a wire format as well as a tokenizer: the parsers that
+		// read it are what turn the model's output into an answer.
+		if flags, notes := harmonyServeFlags(caps, p.Opts.ExtraArgs); len(flags) > 0 {
+			p.Opts.ExtraArgs = strings.TrimSpace(p.Opts.ExtraArgs + " " + strings.Join(flags, " "))
+			p.Notes = append(p.Notes, notes...)
+		}
+	}
+	// Only the card's own flags decide this. What we added says nothing about
+	// whether the author documented how to serve the model, which is what the
+	// status is for.
+	if cardArgs != "" {
+		p.Notes = append(p.Notes, "Auto-detected from the model card: "+cardArgs)
 		p.Opts.Status = "NOT YET VERIFIED -- flags auto-detected from README"
 	} else {
 		p.Notes = append(p.Notes,
@@ -189,4 +349,89 @@ func PrepareProfile(dirs config.Dirs, repo string, caps vllm.Caps) Plan {
 		p.Opts.Status = "NOT YET VERIFIED -- no flags auto-detected, check the model card by hand"
 	}
 	return p
+}
+
+// planCache sizes the KV cache for one model, and reports the context length it
+// was sized for -- clamped to what the model was trained for, since asking for
+// more is how vLLM refuses to start and a sliding-window model's cost per token
+// depends on the answer.
+//
+// Pure so the sizing can be checked against a machine other than this one.
+func planCache(hw detect.Hardware, arch hf.Arch, weights int64, maxLen, target int) (detect.Plan, int) {
+	if n := arch.MaxContext(); n > 0 && n < maxLen {
+		maxLen = n
+	}
+	kv := arch.KVBytesPerToken(maxLen)
+	if kv <= 0 {
+		// Nothing known about the shape, so leave it to vLLM's profiling
+		// rather than guess: a wrong cache size is worse than a slow one.
+		return detect.Plan{}, maxLen
+	}
+	return hw.PlanFor(weights, kv, maxLen, target), maxLen
+}
+
+// weightBytes is what the model will occupy. A chosen quant names its own size;
+// otherwise it has to be measured, and a plan given 0 believes the weights are
+// free and hands their room to the cache.
+func weightBytes(ctx context.Context, repo string, choice *Choice) int64 {
+	if choice != nil {
+		return int64(choice.Variant.SizeGB * 1e9)
+	}
+	w, err := hf.WeightsSize(ctx, repo)
+	if err != nil {
+		return 0
+	}
+	return int64(w.SizeGB * 1e9)
+}
+
+// configRepoFor names the repo holding the config.json for a model's shape.
+// GGUF builds keep theirs in the base model they were converted from.
+func configRepoFor(repo string, choice *Choice) string {
+	if choice != nil && choice.Variant.GGUF && choice.BaseModel != "" {
+		return choice.BaseModel
+	}
+	return repo
+}
+
+// tokenCount renders a context length the way people say it.
+func tokenCount(n int64) string {
+	if n >= 1000 {
+		return fmt.Sprintf("about %.0fk tokens", float64(n)/1000)
+	}
+	return fmt.Sprintf("%d tokens", n)
+}
+
+// allGGUF reports whether every copy in a repo is GGUF, which makes the repo
+// itself unreachable without the plugin. A repo that also ships safetensors is
+// not, since that copy serves natively.
+func allGGUF(all []hf.Variant) bool {
+	if len(all) == 0 {
+		return false
+	}
+	for _, v := range all {
+		if !v.GGUF {
+			return false
+		}
+	}
+	return true
+}
+
+// FindVariant resolves a user's quant choice against what a repo holds.
+//
+// Matching is case-insensitive on the label, since quant names are written
+// however the publisher felt: Q8_0, q8_0, and UD-Q2_K_XL all appear.
+func FindVariant(all []hf.Variant, label string) (hf.Variant, bool) {
+	for _, v := range all {
+		if strings.EqualFold(v.Label, label) {
+			return v, true
+		}
+	}
+	return hf.Variant{}, false
+}
+
+// Choice is a user's decision about which copy of a model to serve, together
+// with the base model its tokenizer must come from.
+type Choice struct {
+	Variant   hf.Variant
+	BaseModel string
 }

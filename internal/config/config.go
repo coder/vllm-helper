@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -103,11 +104,28 @@ func (c *Config) get(key, def string) string {
 	return def
 }
 
-func (c *Config) Port() string          { return c.get("PORT", "8001") }
-func (c *Config) VLLMBin() string       { return c.get("VLLM_BIN", "") }
-func (c *Config) ServiceName() string   { return c.get("SERVICE_NAME", DefaultServiceName) }
-func (c *Config) ServiceScope() string  { return c.get("SERVICE_SCOPE", DefaultServiceScope) }
-func (c *Config) ModelBudgetGB() string { return c.get("MODEL_BUDGET_GB", "90") }
+func (c *Config) Port() string         { return c.get("PORT", "8001") }
+func (c *Config) VLLMBin() string      { return c.get("VLLM_BIN", "") }
+func (c *Config) ServiceName() string  { return c.get("SERVICE_NAME", DefaultServiceName) }
+func (c *Config) ServiceScope() string { return c.get("SERVICE_SCOPE", DefaultServiceScope) }
+
+// KVContextTarget is how many full-length requests a profile's KV cache is
+// sized to hold. A property of the workload rather than the machine -- a
+// single-user box wants fewer, a shared endpoint more -- so it is settable.
+// 0 means unset, and callers apply their own default.
+func (c *Config) KVContextTarget() int {
+	n, err := strconv.Atoi(strings.TrimSpace(c.get("KV_CONTEXT_TARGET", "")))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
+}
+
+// ModelBudgetGB is an override, empty when unset. The budget is a property of
+// the machine -- one that changes when RAM is added or the desktop is turned
+// off -- so the default is to measure it at each call rather than serve back a
+// number frozen into config.env at install time.
+func (c *Config) ModelBudgetGB() string { return c.get("MODEL_BUDGET_GB", "") }
 func (c *Config) APIKey() string        { return c.get("VLLM_API_KEY", "") }
 
 // UpdateChannel is where 'upgrade' looks for new builds: "stable" for tagged
@@ -143,6 +161,13 @@ func (c *Config) HasAll(keys ...string) bool {
 func (c *Config) CoderURL() string        { return c.get("CODER_URL", "") }
 func (c *Config) CoderToken() string      { return c.get("CODER_API_TOKEN", "") }
 func (c *Config) CoderProviderID() string { return c.get("CODER_AI_PROVIDER_ID", "") }
+
+// CoderOrganization names the organization the model entries hang off. Coder
+// resolves the literal "default" server-side, which is right for the
+// single-organization deployments that never had to know their own UUID --
+// but a deployment with more than one has no default to fall back on, so it
+// has to be sayable.
+func (c *Config) CoderOrganization() string { return c.get("CODER_ORGANIZATION", "default") }
 func (c *Config) CoderConfigured() bool {
 	return c.CoderURL() != "" && c.CoderToken() != "" && c.CoderProviderID() != ""
 }

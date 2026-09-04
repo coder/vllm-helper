@@ -12,11 +12,10 @@ import (
 // at startup, and the figure keeps drifting while the engine boots.
 const memHeadroom = 0.85
 
-// maxUnifiedMemUtilization is the most of a shared CPU/GPU pool we will ask
-// vLLM for. On unified memory the flag is a slice of the whole machine, so the
-// remainder is all the OS, the page cache and the runtime get. Both vLLM's own
-// DGX Spark guidance and sparkrun's GB10 platform default land on 0.85, so
-// anything above it is a recipe copied from a discrete-GPU machine.
+// maxUnifiedMemUtilization is the most of a shared CPU/GPU pool to ask for when
+// the KV cache is left to vLLM's profiling, where this number alone decides how
+// much of the machine gets eaten. Both vLLM's own GB10 guidance and sparkrun's
+// platform default land on 0.85.
 const maxUnifiedMemUtilization = 0.85
 
 // capMemUtilization limits --gpu-memory-utilization to ceiling, returning the
@@ -44,14 +43,23 @@ func capMemUtilization(want string, ceiling float64) (value, msg string) {
 // The order matters. Unified is checked first because such a machine also
 // reports a GPU name, and reaching the discrete case would leave the request
 // unbounded on exactly the hardware that most needs a bound.
-func pickMemFit(hw detect.Hardware, availMB int, want string) (value, msg string) {
+// kvPinned changes what the flag means: with the cache pinned it is only a
+// ceiling, so the measured one beats a fixed 0.85. Unpinned, the flag *is* the
+// cache size and 0.85 is the most of a shared pool worth risking.
+func pickMemFit(hw detect.Hardware, availMB int, want string, kvPinned bool) (value, msg string) {
 	switch {
 	case hw.Unified:
-		return capMemUtilization(want, maxUnifiedMemUtilization)
+		ceiling := maxUnifiedMemUtilization
+		if kvPinned {
+			if m := hw.PlanFor(0, 0, 0, 0).MemUtilization; m > ceiling {
+				ceiling = m
+			}
+		}
+		return capMemUtilization(want, ceiling)
 	case hw.GPUName != "" || hw.GPUMemGB > 0:
 		return want, "" // discrete VRAM: nothing else competes for it
 	default:
-		return clampMemUtilization(want, hw.TotalMemGB*1024, availMB)
+		return clampMemUtilization(want, hw.TotalMemMB(), availMB)
 	}
 }
 

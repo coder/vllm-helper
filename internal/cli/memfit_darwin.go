@@ -17,8 +17,8 @@ import (
 // linux gives unified NVIDIA parts: there the flag reserves a GPU pool that the
 // outgoing server has not released yet, while here it reserves ordinary RAM
 // that really does have to be free before vLLM will start.
-func fitMemUtilization(want string) string {
-	value, msg := clampMemUtilization(want, detect.Probe().TotalMemGB*1024, detect.AvailableMemMB())
+func fitMemUtilization(want string, _ bool) string {
+	value, msg := clampMemUtilization(want, detect.Probe().TotalMemMB(), detect.AvailableMemMB())
 	if msg != "" {
 		fmt.Print(msg)
 	}

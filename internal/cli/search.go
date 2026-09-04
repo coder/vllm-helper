@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/catalog"
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
 )
 
@@ -23,13 +25,13 @@ func newSearchCmd() *cobra.Command {
 		Use:     "search <search terms>",
 		Short:   "Search HuggingFace and pick a model to pull and switch to",
 		GroupID: groupModels,
-		RunE:    func(_ *cobra.Command, args []string) error { return runSearch(args, jsonOut) },
+		RunE:    func(cmd *cobra.Command, args []string) error { return runSearch(cmd.Context(), args, jsonOut) },
 	}
 	c.Flags().BoolVar(&jsonOut, "json", false, "print results as JSON and exit (no prompts)")
 	return c
 }
 
-func runSearch(args []string, jsonOut bool) error {
+func runSearch(ctx context.Context, args []string, jsonOut bool) error {
 	if len(args) == 0 {
 		return errors.New("usage: vllm-helper search <search terms> [--json]")
 	}
@@ -38,7 +40,7 @@ func runSearch(args []string, jsonOut bool) error {
 	if !jsonOut {
 		fmt.Printf("Searching HuggingFace for %q...\n", query)
 	}
-	models, err := hf.Search(query, 25)
+	models, err := hf.Search(ctx, query, 25)
 	if err != nil {
 		return fmt.Errorf("search request failed (network or rate limit): %w", err)
 	}
@@ -89,11 +91,21 @@ func runSearch(args []string, jsonOut bool) error {
 		}
 		m := models[n-1]
 		fmt.Println()
-		printModelDetail(inspectModel(m, cfg))
+		d := inspectModel(ctx, m, cfg)
+		printModelDetail(d, cfg)
 		fmt.Println()
 
-		if confirm(fmt.Sprintf("Pull %s and switch to it?", m.ID), false) {
-			return pullAndSwitch(cfg, m.ID, watchOpts{follow: stdoutIsTTY(), wait: true})
+		choice, cancelled := pickQuant(cfg, d)
+		if cancelled {
+			fmt.Println()
+			continue
+		}
+		label := m.ID
+		if choice != nil {
+			label += " (" + choice.Variant.Label + ")"
+		}
+		if confirm(fmt.Sprintf("Pull %s and switch to it?", label), false) {
+			return pullAndSwitch(ctx, cfg, m.ID, choice, watchOpts{follow: stdoutIsTTY(), wait: true})
 		}
 		fmt.Println()
 	}
@@ -108,17 +120,17 @@ func newInspectCmd() *cobra.Command {
 		Short:   "Show a model's license, weight size against this machine, and detected flags",
 		GroupID: groupModels,
 		Args:    cobra.MaximumNArgs(1),
-		RunE:    func(_ *cobra.Command, args []string) error { return runInspect(args, jsonOut) },
+		RunE:    func(cmd *cobra.Command, args []string) error { return runInspect(cmd.Context(), args, jsonOut) },
 	}
 	c.Flags().BoolVar(&jsonOut, "json", false, "print the details as JSON")
 	return c
 }
 
-func runInspect(args []string, jsonOut bool) error {
+func runInspect(ctx context.Context, args []string, jsonOut bool) error {
 	if len(args) < 1 {
 		return errors.New("usage: vllm-helper inspect <org/model-repo> [--json]")
 	}
-	m, err := hf.Lookup(args[0])
+	m, err := hf.Lookup(ctx, args[0])
 	if err != nil {
 		return err
 	}
@@ -127,25 +139,56 @@ func runInspect(args []string, jsonOut bool) error {
 	if err != nil && !errors.Is(err, config.ErrNotConfigured) {
 		return err
 	}
-	d := inspectModel(m, cfg)
+	d := inspectModel(ctx, m, cfg)
 	if jsonOut {
 		return printJSON(d)
 	}
-	printModelDetail(d)
+	printModelDetail(d, cfg)
 	return nil
 }
 
 // inspectModel measures a model against this machine. cfg may be nil, which
 // just means there is no budget to measure against.
-func inspectModel(m hf.Model, cfg *config.Config) catalog.Detail {
-	var budget float64
+func inspectModel(ctx context.Context, m hf.Model, cfg *config.Config) catalog.Detail {
+	var override string
+	var target int
 	if cfg != nil {
-		budget, _ = strconv.ParseFloat(cfg.ModelBudgetGB(), 64)
+		override = cfg.ModelBudgetGB()
+		target = cfg.KVContextTarget()
 	}
-	return catalog.Inspect(m, budget, vllmCaps(cfg))
+	return catalog.Inspect(ctx, m, detect.BudgetGB(override), vllmCaps(cfg), target)
 }
 
-func printModelDetail(d catalog.Detail) {
+// firstClause keeps the head of a reason. Repeating a full sentence on every
+// row buries the column that differs, and when a whole repo is blocked the
+// reason has already been given once above the list.
+func firstClause(reason string) string {
+	for _, sep := range []string{", ", " -- "} {
+		if head, _, ok := strings.Cut(reason, sep); ok {
+			return head
+		}
+	}
+	return reason
+}
+
+// display is the readable form of a variant's label. Never use it where the
+// exact label is needed -- it is what vLLM is given.
+func display(v hf.Variant) string {
+	if v.Display != "" {
+		return v.Display
+	}
+	return v.Label
+}
+
+// thousands renders a token count the way people say it: 262144 as "262k".
+func thousands(n int64) string {
+	if n < 1000 {
+		return strconv.FormatInt(n, 10)
+	}
+	return fmt.Sprintf("%.0fk", float64(n)/1000)
+}
+
+func printModelDetail(d catalog.Detail, cfg *config.Config) {
 	fmt.Println(d.ID)
 	fmt.Println(d.URL)
 	fmt.Printf("  license:    %s\n", d.License)
@@ -176,7 +219,7 @@ func printModelDetail(d catalog.Detail) {
 		// proves something here fits, which is the smallest and so also the
 		// worst quant in the repo.
 		fmt.Printf("  size:       %.1f GB at %s  (biggest of %d quants that fits the ~%.0fGB budget; smallest is %.1f GB)\n",
-			d.Best.SizeGB, d.Best.Label, d.Variants, d.BudgetGB, d.SizeGB)
+			d.Best.SizeGB, display(*d.Best), d.Variants, d.BudgetGB, d.SizeGB)
 	case *d.FitsBudget:
 		fmt.Printf("  size:       %.1f GB  (fits under the ~%.0fGB budget%s)\n", d.SizeGB, d.BudgetGB, of)
 	case d.Variants > 1:
@@ -186,6 +229,16 @@ func printModelDetail(d catalog.Detail) {
 	default:
 		fmt.Printf("  size:       %.1f GB  (TOO BIG for this machine -- look for a smaller quant%s)\n", d.SizeGB, of)
 	}
+	// What "fits" actually buys, which is the question the size line is
+	// usually standing in for.
+	if d.ContextTokens > 0 {
+		full := ""
+		if d.MaxContext > 0 {
+			full = fmt.Sprintf(", %.1fx its %s max", float64(d.ContextTokens)/float64(d.MaxContext), thousands(int64(d.MaxContext)))
+		}
+		fmt.Printf("  context:    ~%s tokens in %.1f GB of KV cache%s\n",
+			thousands(d.ContextTokens), d.KVCacheGB, full)
+	}
 	if d.DetectedFlags != "" {
 		fmt.Printf("  vllm flags: %s (auto-detected, will be pre-filled)\n", d.DetectedFlags)
 	} else {
@@ -193,6 +246,19 @@ func printModelDetail(d catalog.Detail) {
 	}
 	for _, w := range d.DroppedFlags {
 		fmt.Printf("  dropped:    %s\n", w)
+	}
+	// A repo that is entirely GGUF on a machine without the plugin cannot be
+	// served at all, whichever quant is picked, so lead with that rather than
+	// leaving it to be inferred from every row saying the same thing.
+	// The architecture is the harder stop of the two: no machine and no
+	// plugin install changes it, so it is said first and instead.
+	switch {
+	case d.NeedsGGUF && d.ArchBlocked != "":
+		fmt.Println()
+		fmt.Println("  can't be served as GGUF: " + d.ArchBlocked)
+	case d.NeedsGGUF && !d.GGUFReady:
+		fmt.Println()
+		fmt.Println("  " + ggufMissingMessage(cfg))
 	}
 	printVariants(d)
 }
@@ -212,24 +278,91 @@ func printVariants(d catalog.Detail) {
 	fmt.Println()
 	fmt.Printf("  %d quants in this repo:\n", len(d.All))
 	for _, v := range d.All {
-		mark := "   "
+		mark, note := "   ", ""
 		switch {
+		case !v.Servable():
+			mark, note = "  -", "  "+firstClause(v.Blocked)
+		case v.GGUF && !d.GGUFReady:
+			mark, note = "  -", "  needs the GGUF plugin"
 		case d.Best != nil && v.Name == d.Best.Name:
 			mark = "  >"
 		case d.BudgetGB > 0 && v.SizeGB > d.BudgetGB:
-			mark = "  x"
+			mark, note = "  x", "  too big for this machine"
 		}
-		fmt.Printf("%s %-14s %6.1f GB\n", mark, v.Label, v.SizeGB)
+		fmt.Printf("%s %-26s %6.1f GB%s\n", mark, display(v), v.SizeGB, note)
 	}
+	// Only offer the flag when there is something it could pick. On a machine
+	// that cannot load GGUF every row is struck through, and inviting a
+	// choice there would be inviting a failure.
 	if d.Best != nil {
-		fmt.Printf("    > = biggest that fits your ~%.0fGB budget", d.BudgetGB)
-		if d.BudgetGB > 0 {
-			fmt.Print(";  x = too big")
-		}
-		fmt.Println()
+		fmt.Printf("    > = the one 'new --quant %s' would serve\n", d.Best.Label)
+		fmt.Printf("    Choose another with: vllm-helper new %s --quant <name>\n", d.ID)
 	}
-	// Saying which one gets served matters more than the list itself: a
-	// profile records the repo, so what runs is whatever vLLM resolves --
-	// not necessarily the one measured above.
-	fmt.Println("    Pulling this repo does not pick one of these -- see issue #25.")
+}
+
+// pickQuant asks which copy of a model to serve, when there is a choice worth
+// offering. Returns nil to mean "the repo's default", and cancelled when the
+// user wants to go back to the results rather than pull anything.
+//
+// The default is pre-selected and one keypress away, so the common case costs
+// nothing -- but a repo holding a 2-bit and an 8-bit copy should not decide
+// between them on the user's behalf and say nothing.
+func pickQuant(cfg *config.Config, d catalog.Detail) (choice *catalog.Choice, cancelled bool) {
+	servable := make([]hf.Variant, 0, len(d.All))
+	for _, v := range d.All {
+		if v.Servable() && (d.GGUFReady || !v.GGUF) {
+			servable = append(servable, v)
+		}
+	}
+	// One option, or none we could act on, is not a question.
+	if len(servable) < 2 {
+		if d.NeedsGGUF && !d.GGUFReady {
+			fmt.Println(ggufMissingMessage(cfg))
+			fmt.Println()
+		}
+		return nil, false
+	}
+
+	fmt.Println("Which quant?")
+	for i, v := range servable {
+		mark := " "
+		if d.Best != nil && v.Name == d.Best.Name {
+			mark = "*"
+		}
+		fmt.Printf(" %s %2d) %-26s %6.1f GB\n", mark, i+1, display(v), v.SizeGB)
+	}
+	// servable is ordered largest first, so the last row is the smallest.
+	// That is the default when nothing was ranked -- an unknown budget, or
+	// nothing that fits -- matching Weights.BestFit: with nothing to check a
+	// size against, the conservative choice is the smallest. Defaulting to
+	// row 1 there would put the largest quant one keypress away.
+	def := len(servable)
+	if d.Best != nil {
+		for i, v := range servable {
+			if v.Name == d.Best.Name {
+				def = i + 1
+			}
+		}
+		fmt.Printf("  * = biggest that fits this machine\n")
+	}
+	for {
+		pick := ask(fmt.Sprintf("Pick one (1-%d, Enter for %d, 'b' to go back)", len(servable), def), "")
+		switch {
+		case pick == "":
+			pick = strconv.Itoa(def)
+		case pick == "b" || pick == "B":
+			return nil, true
+		}
+		n, err := strconv.Atoi(pick)
+		if err != nil || n < 1 || n > len(servable) {
+			fmt.Println("Not a valid number, try again.")
+			continue
+		}
+		v := servable[n-1]
+		// Nothing to append for a repo whose single copy is the repo.
+		if _, ok := v.Selector(); !ok {
+			return nil, false
+		}
+		return &catalog.Choice{Variant: v, BaseModel: d.BaseModel}, false
+	}
 }

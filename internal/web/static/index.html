@@ -41,7 +41,7 @@
               <dd data-budget>&mdash;</dd>
             </div>
             <div>
-              <dt>total</dt>
+              <dt data-total-label>total</dt>
               <dd data-total>&mdash;</dd>
             </div>
             <div>
@@ -55,6 +55,22 @@
         <pre class="failure" data-failure hidden></pre>
         <div class="notice" data-privilege hidden></div>
         <div class="notice notice-error" data-error hidden></div>
+
+        <!-- What a switch decided on your behalf: the quant it picked, flags
+             it read off the model card, a chat template it had to patch.
+             None of that is a failure, so it does not belong in the error
+             slot above -- but it is worth reading once, and then dismissing. -->
+        <section class="notice notice-note" data-notes hidden>
+          <button
+            class="notice-dismiss"
+            data-notes-dismiss
+            aria-label="Dismiss"
+          >
+            &times;
+          </button>
+          <h2 class="notice-title" data-notes-title></h2>
+          <ul class="notice-list" data-notes-list></ul>
+        </section>
 
         <div class="now-actions">
           <button class="btn" data-restart>Restart</button>

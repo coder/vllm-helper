@@ -40,7 +40,12 @@ async function api(path, options = {}) {
   const res = await fetch(path, { ...options, headers });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body.error || `${res.status} ${res.statusText}`);
+    const err = new Error(body.error || `${res.status} ${res.statusText}`);
+    // Carry the rest of the payload: a failed source build explains itself in
+    // pip's last lines, and a browser has no journal to go and read.
+    err.log = body.log;
+    err.status = res.status;
+    throw err;
   }
   return body;
 }
@@ -55,16 +60,35 @@ function fmtCount(n) {
   return String(n);
 }
 
-// Both pages carry the machine's identity in the bar, so it is filled in from
-// one place. It is also the cheapest possible check that the page is talking
-// to the server it thinks it is.
+// Both pages carry the machine's identity in the bar, so it is filled from one
+// place. It is also the cheapest check that the page is talking to the server
+// it thinks it is.
+//
+// Cached because host and build do not change between pages: without this,
+// navigating blanks them for the length of a fetch and the header jitters.
+const CHROME_KEY = "vllm-helper:chrome";
+
+function paintChrome(c) {
+  const host = $("[data-host]");
+  const build = $("[data-build]");
+  if (host && c.host !== undefined) host.textContent = c.host || "";
+  if (build && c.build !== undefined) build.textContent = c.build || "";
+}
+
 async function fillChrome() {
   try {
+    paintChrome(JSON.parse(sessionStorage.getItem(CHROME_KEY) || "{}"));
+  } catch {
+    // A malformed cache is not worth reporting: the fetch below is the
+    // source of truth and will repaint in a moment.
+  }
+  try {
     const s = await api("/api/status");
-    const host = $("[data-host]");
-    const build = $("[data-build]");
-    if (host) host.textContent = s.host || "";
-    if (build) build.textContent = s.build || "";
+    paintChrome(s);
+    sessionStorage.setItem(
+      CHROME_KEY,
+      JSON.stringify({ host: s.host || "", build: s.build || "" }),
+    );
     return s;
   } catch {
     return null;

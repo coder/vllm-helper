@@ -26,6 +26,7 @@ const el = {
   used: $("[data-used]"),
   budget: $("[data-budget]"),
   total: $("[data-total]"),
+  totalLabel: $("[data-total-label]"),
   gpu: $("[data-gpu]"),
   models: $("[data-models]"),
   modelCount: $("[data-model-count]"),
@@ -33,6 +34,10 @@ const el = {
   follow: $("[data-follow]"),
   restart: $("[data-restart]"),
   stop: $("[data-stop]"),
+  notes: $("[data-notes]"),
+  notesTitle: $("[data-notes-title]"),
+  notesList: $("[data-notes-list]"),
+  notesDismiss: $("[data-notes-dismiss]"),
 };
 
 const PHASES = {
@@ -48,6 +53,30 @@ function showError(message) {
   el.error.hidden = !message;
 }
 
+// showNotes reports what a switch decided rather than what went wrong.
+//
+// Separate from showError because these are not failures -- "serving the Q8_0
+// quant", "patched the chat template" -- and colouring them red taught people
+// to distrust a screen that was working correctly. It stays until dismissed,
+// since it is the only record of choices made on the user's behalf, and a
+// poll every thirty seconds must not wipe it out from under a reader.
+function showNotes(items, title) {
+  el.notesList.innerHTML = "";
+  const lines = (items || []).filter((s) => s && s.trim());
+  el.notes.hidden = lines.length === 0;
+  if (!lines.length) return;
+  el.notesTitle.textContent = title || "What this switch did";
+  for (const line of lines) {
+    const li = document.createElement("li");
+    li.textContent = line;
+    el.notesList.append(li);
+  }
+}
+
+el.notesDismiss.addEventListener("click", () => {
+  el.notes.hidden = true;
+});
+
 function renderStatus(s) {
   el.host.textContent = s.host || "";
   el.build.textContent = s.build || "";
@@ -61,7 +90,10 @@ function renderStatus(s) {
   const bits = [`port ${s.port}`];
   if (s.phase === "serving") bits.push(`http ${s.http_status}`);
   if (s.restarts > 0) bits.push(`${s.restarts} restarts`);
-  if (s.fail_reason) bits.push(s.fail_reason);
+  // Only while it is failing: the field keeps the previous run's verdict, so
+  // a unit that crashed once and is now serving would read "http 200 ·
+  // exit-code". Same rule as the log below.
+  if (s.fail_reason && s.phase === "failing") bits.push(s.fail_reason);
   el.detail.textContent = bits.join(" · ");
 
   // Only shown when it explains something. A stale "exit-code" on a unit
@@ -85,22 +117,31 @@ function renderStatus(s) {
 }
 
 function renderMachine(m) {
-  if (!m.total_mem_gb) {
+  // One rail, one pool. The budget is measured against whichever memory the
+  // weights land in, so the axis has to be that same memory: drawing a VRAM
+  // budget over installed RAM puts the marker somewhere that means nothing.
+  const pool = m.pool_bytes || 0;
+  if (!pool) {
     el.rail.hidden = true;
     return;
   }
   el.rail.hidden = false;
 
-  const totalMB = m.total_mem_gb * 1024;
-  const usedMB = Math.max(0, totalMB - m.available_mem_mb);
-  const pct = (v) => `${Math.min(100, Math.max(0, (v / totalMB) * 100))}%`;
+  const vram = m.pool === "vram";
+  const pct = (b) => `${Math.min(100, Math.max(0, (b / pool) * 100))}%`;
+  const decimalGB = (b) => `${Math.round(b / 1e9)} GB`;
 
-  el.railUsed.style.width = pct(usedMB);
-  el.railBudget.style.left = pct(m.budget_gb * 1024);
+  // Usage is a host-RAM reading, so it belongs on the rail only when the rail
+  // is host RAM. Nothing here measures what a discrete card is holding, and
+  // showing the host's figure there would just be a wrong number.
+  const used = vram ? 0 : Math.max(0, pool - m.available_mem_mb * 1024 * 1024);
+  el.railUsed.style.width = vram ? "0%" : pct(used);
+  el.railBudget.style.left = pct(m.budget_bytes);
 
-  el.used.textContent = gb(usedMB);
-  el.budget.textContent = `${m.budget_gb} GB`;
-  el.total.textContent = `${m.total_mem_gb} GB`;
+  el.used.textContent = vram ? "not measured" : decimalGB(used);
+  el.budget.textContent = decimalGB(m.budget_bytes);
+  el.total.textContent = decimalGB(pool);
+  el.totalLabel.textContent = vram ? "vram" : "total";
   el.gpu.textContent = m.gpu_name || "none detected";
   el.gpu.title = m.budget_reason || "";
 }
@@ -177,7 +218,9 @@ async function switchTo(name, label) {
     const res = await api(`/api/switch/${encodeURIComponent(name)}`, {
       method: "POST",
     });
-    if (res.warnings?.length) showError(res.warnings.join("\n"));
+    // Plugin output, not a failure -- the switch succeeded or we would be in
+    // the catch below.
+    showNotes(res.warnings, `Switched to ${label}`);
   } catch (e) {
     showError(e.message);
   } finally {
@@ -262,8 +305,12 @@ async function refresh() {
     // Rebuild the list only when the active model changed. Doing it on
     // every poll would fight the pointer mid-click.
     if (status.profile !== activeProfile) {
+      // Fetch first, record second. Assigning before the request settles
+      // means one failed fetch leaves the old list on screen and every later
+      // poll skipping the rebuild, so the page never recovers on its own.
+      const profiles = await api("/api/profiles");
       activeProfile = status.profile;
-      renderProfiles(await api("/api/profiles"), status.profile);
+      renderProfiles(profiles, status.profile);
     }
     renderStatus(status);
     renderMachine(machine);
@@ -324,9 +371,13 @@ This removes its settings and its Coder model entry. The downloaded weights stay
     return;
   }
   try {
-    await api(`/api/profiles/${encodeURIComponent(name)}/remove`, {
+    const res = await api(`/api/profiles/${encodeURIComponent(name)}/remove`, {
       method: "POST",
     });
+    // A plugin that could not clean up leaves something behind, so say so:
+    // the profile is gone either way, but a Coder entry pointing at it is
+    // not, and nothing else would ever mention it.
+    showNotes(res.warnings, `Removed '${name}'`);
     activeProfile = null; // force the list to rebuild without it
     refresh();
   } catch (err) {
@@ -340,7 +391,16 @@ This removes its settings and its Coder model entry. The downloaded weights stay
 const handover = sessionStorage.getItem("vllm-helper-notes");
 if (handover !== null) {
   sessionStorage.removeItem("vllm-helper-notes");
-  if (handover) showError(handover);
+  try {
+    const { notes, warnings, model } = JSON.parse(handover);
+    showNotes(
+      [...(notes || []), ...(warnings || [])],
+      model ? `Pulled ${model}` : "What this pull did",
+    );
+  } catch {
+    // An older tab may have left a plain string behind.
+    if (handover) showNotes([handover]);
+  }
 }
 
 refresh();

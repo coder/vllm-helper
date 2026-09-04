@@ -14,6 +14,7 @@ package vllm
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,14 +32,39 @@ type Caps struct {
 	// is now an immediate "unrecognized arguments" exit -- so a name that
 	// no longer exists has to be caught alongside a value that doesn't.
 	Flags []string `json:"flags"`
+	// Quantizations is what the installed vLLM can load natively.
+	Quantizations []string `json:"quantizations"`
+	// GGUF is whether the out-of-tree GGUF plugin is installed alongside.
+	//
+	// Deliberately not read from Quantizations: the plugin does not register
+	// there. It hooks vLLM's model-loader and config-parser registries, so a
+	// machine with it installed still reports no "gguf" quantization method
+	// -- checked on a DGX Spark, where looking in the wrong registry meant a
+	// freshly installed plugin was reported as missing.
+	GGUF bool `json:"gguf"`
 }
 
 // Known reports whether introspection actually produced a registry. An empty
 // Caps means "we couldn't ask", which must be treated as "don't validate",
 // never as "nothing is valid".
 func (c Caps) Known() bool {
-	return len(c.ToolParsers) > 0 || len(c.ReasoningParsers) > 0 || len(c.Flags) > 0
+	return len(c.ToolParsers) > 0 || len(c.ReasoningParsers) > 0 ||
+		len(c.Flags) > 0 || len(c.Quantizations) > 0
 }
+
+// KnowsQuantizations reports whether the registry was readable, so "no GGUF"
+// can be told apart from "we could not ask". Refusing a pull needs certainty;
+// an unreadable registry must not look like a missing feature.
+func (c Caps) KnowsQuantizations() bool { return len(c.Quantizations) > 0 }
+
+// SupportsGGUF reports whether this vLLM can load GGUF weights.
+//
+// In 0.27.1 GGUF moved out of vLLM into vllm-gguf-plugin, so this is false on
+// a stock install and stays false until that package is added to the same
+// environment. It is the difference between a model that serves and one that
+// cannot start at all, which is worth knowing before a pull restarts the
+// service.
+func (c Caps) SupportsGGUF() bool { return c.GGUF }
 
 // HasToolParser reports whether the installed vLLM registers this parser.
 func (c Caps) HasToolParser(name string) bool { return contains(c.ToolParsers, name) }
@@ -70,7 +96,7 @@ func contains(haystack []string, needle string) bool {
 // is the accessor that forces and returns the real set.
 const introspect = `
 import json
-out = {"tool_parsers": [], "reasoning_parsers": [], "flags": []}
+out = {"tool_parsers": [], "reasoning_parsers": [], "flags": [], "quantizations": []}
 try:
     from vllm.tool_parsers import ToolParserManager
     out["tool_parsers"] = sorted(ToolParserManager.list_registered())
@@ -79,6 +105,11 @@ except Exception:
 try:
     from vllm.reasoning import ReasoningParserManager
     out["reasoning_parsers"] = sorted(ReasoningParserManager.list_registered())
+except Exception:
+    pass
+try:
+    from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS
+    out["quantizations"] = sorted(QUANTIZATION_METHODS)
 except Exception:
     pass
 try:
@@ -93,12 +124,64 @@ try:
     out["flags"] = sorted(flags)
 except Exception:
     pass
-print(json.dumps(out))
+print("VLLM_HELPER_CAPS " + json.dumps(out))
 `
+
+// capsMarker prefixes the probe's one line of real output.
+//
+// vLLM logs plugin registration to stdout, not stderr -- installing the GGUF
+// plugin turns the script's output into two INFO lines followed by the JSON,
+// and parsing the whole stream silently yielded nothing. The failure mode was
+// invisible: an empty Caps means "we could not ask", so flag validation went
+// quiet, the answer was never cached (making every call re-import torch), and
+// the newly installed plugin was reported as missing.
+const capsMarker = "VLLM_HELPER_CAPS "
+
+// extractMarked pulls the marked line out of whatever else was printed.
+func extractMarked(out []byte, marker string) ([]byte, bool) {
+	for _, line := range strings.Split(string(out), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), marker); ok {
+			return []byte(rest), true
+		}
+	}
+	return nil, false
+}
+
+// extractCaps is extractMarked for the capability script.
+func extractCaps(out []byte) ([]byte, bool) { return extractMarked(out, capsMarker) }
+
+// envProbe reads what can be known without importing vLLM.
+//
+// Both facts are needed on every call -- the version to find the cache, and
+// the plugin to answer whether GGUF can be served -- so both have to be cheap.
+// Importing vLLM to ask costs about five seconds; reading the distribution
+// metadata and looking for a module spec costs about forty milliseconds.
+const envProbe = `
+import importlib.metadata, importlib.util, json
+try:
+    version = importlib.metadata.version("vllm")
+except Exception:
+    version = ""
+print("VLLM_HELPER_ENV " + json.dumps({
+    "version": version,
+    "gguf": importlib.util.find_spec("vllm_gguf_plugin") is not None,
+}))
+`
+
+const envMarker = "VLLM_HELPER_ENV "
+
+// env is the cheap half of the probe.
+type env struct {
+	Version string `json:"version"`
+	GGUF    bool   `json:"gguf"`
+}
 
 // timeout bounds the import of vLLM, which is slow (seconds) because it pulls
 // in torch. Generous, since the result is cached.
 const timeout = 90 * time.Second
+
+// envTimeout bounds the cheap probe, which only reads metadata.
+const envTimeout = 15 * time.Second
 
 // Probe returns what the vLLM at binPath supports, caching the answer under
 // cacheDir keyed by version. A zero Caps means introspection failed, which
@@ -107,16 +190,41 @@ func Probe(binPath, cacheDir string) Caps {
 	if binPath == "" {
 		return Caps{}
 	}
-	version := probeVersion(binPath)
-	if cached, ok := readCache(cacheDir, version); ok {
+	// The cheap facts are read every time. Asking whether the GGUF plugin is
+	// present costs nothing, and reading it fresh means installing one is
+	// noticed immediately rather than after a cache expiry.
+	e := probeEnv(binPath)
+	if cached, ok := readCache(cacheDir, e.Version); ok {
+		cached.GGUF = e.GGUF
 		return cached
 	}
 	caps := runIntrospect(binPath)
-	caps.Version = version
+	caps.Version = e.Version
 	if caps.Known() {
-		writeCache(cacheDir, version, caps)
+		// GGUF is left out of what gets cached, since it is re-read above.
+		writeCache(cacheDir, e.Version, caps)
 	}
+	caps.GGUF = e.GGUF
 	return caps
+}
+
+// probeEnv runs the cheap script. A failure returns a zero env, which means an
+// empty cache key -- so nothing is read or written and the caller degrades to
+// an unknown Caps rather than a wrong one.
+func probeEnv(binPath string) env {
+	out, err := runPython(binPath, envProbe, envTimeout)
+	if err != nil {
+		return env{}
+	}
+	line, ok := extractMarked(out, envMarker)
+	if !ok {
+		return env{}
+	}
+	var e env
+	if json.Unmarshal(line, &e) != nil {
+		return env{}
+	}
+	return e
 }
 
 // pythonFor finds the interpreter that owns a vllm executable. In a venv they
@@ -133,27 +241,14 @@ func pythonFor(binPath string) string {
 	return ""
 }
 
-func probeVersion(binPath string) string {
-	out, err := exec.Command(binPath, "--version").Output()
-	if err != nil {
-		return ""
-	}
-	// vLLM prints a bare version; take the last field defensively in case a
-	// build prefixes it.
-	fields := strings.Fields(strings.TrimSpace(string(out)))
-	if len(fields) == 0 {
-		return ""
-	}
-	return fields[len(fields)-1]
-}
-
-func runIntrospect(binPath string) Caps {
+// runPython executes a script in the interpreter that owns binPath, bounded by
+// a timeout so a slow import cannot hang a command.
+func runPython(binPath, script string, limit time.Duration) ([]byte, error) {
 	python := pythonFor(binPath)
 	if python == "" {
-		return Caps{}
+		return nil, errNoInterpreter
 	}
-	cmd := exec.Command(python, "-c", introspect)
-	// Importing vLLM on a busy GPU box can be slow; don't hang a CLI on it.
+	cmd := exec.Command(python, "-c", script)
 	done := make(chan struct{})
 	var out []byte
 	var err error
@@ -163,15 +258,29 @@ func runIntrospect(binPath string) Caps {
 	}()
 	select {
 	case <-done:
-	case <-time.After(timeout):
+	case <-time.After(limit):
 		_ = cmd.Process.Kill()
-		return Caps{}
+		return nil, errTimeout
 	}
+	return out, err
+}
+
+var (
+	errNoInterpreter = errors.New("no interpreter beside the vllm binary")
+	errTimeout       = errors.New("probe timed out")
+)
+
+func runIntrospect(binPath string) Caps {
+	out, err := runPython(binPath, introspect, timeout)
 	if err != nil {
 		return Caps{}
 	}
+	line, ok := extractCaps(out)
+	if !ok {
+		return Caps{}
+	}
 	var caps Caps
-	if json.Unmarshal(out, &caps) != nil {
+	if json.Unmarshal(line, &caps) != nil {
 		return Caps{}
 	}
 	return caps

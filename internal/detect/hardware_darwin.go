@@ -15,14 +15,14 @@ func sysctlStr(key string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// totalMemGB reads hw.memsize. macOS has no /proc/meminfo, and without this
-// the weights budget comes out as 0 GB and `search` calls every model too big.
-func totalMemGB() int {
+// totalMemBytes reads hw.memsize. macOS has no /proc/meminfo, and without this
+// the weights budget comes out as 0 and `search` calls every model too big.
+func totalMemBytes() int64 {
 	n, err := strconv.ParseInt(sysctlStr("hw.memsize"), 10, 64)
 	if err != nil {
 		return 0
 	}
-	return int(n / 1024 / 1024 / 1024)
+	return n
 }
 
 var pageSizeRe = regexp.MustCompile(`page size of (\d+) bytes`)

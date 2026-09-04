@@ -10,7 +10,10 @@ import (
 	"github.com/coder/vllm-helper/internal/plugin/coder"
 )
 
-const modelConfigPath = "/api/experimental/chats/model-configs"
+// Where a current deployment keeps the collection. The stand-in below answers
+// every path, so route resolution settles on this one; the fallback to the
+// retired /api/experimental path is covered in route_test.go.
+const modelConfigPath = "/api/v2/organizations/default/chats/models"
 
 // capture records what the deployment actually received.
 type capture struct {
@@ -35,7 +38,7 @@ func newClient(t *testing.T, status int, respBody string, got *capture) *coder.C
 		_, _ = io.WriteString(w, respBody)
 	}))
 	t.Cleanup(srv.Close)
-	return coder.NewClient(srv.URL, "session-token", "provider-uuid")
+	return coder.NewClient(srv.URL, "session-token", "provider-uuid", "default")
 }
 
 func TestRequestShape(t *testing.T) {
@@ -200,7 +203,7 @@ func TestUnreachableDeployment(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 
-	if err := coder.NewClient(url, "tok", "prov").Check(); err == nil {
+	if err := coder.NewClient(url, "tok", "prov", "default").Check(); err == nil {
 		t.Error("Check should fail when nothing is listening")
 	}
 }

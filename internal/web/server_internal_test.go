@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
 	"github.com/coder/vllm-helper/internal/service"
 )
 
@@ -129,6 +131,54 @@ func TestMutationsNeedTheTokenInAHeader(t *testing.T) {
 	h.ServeHTTP(rec, queryOnly)
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("POST with only a query token = %d, want 403", rec.Code)
+	}
+}
+
+// The page's fetch helper reads body.error and shows it. A plain-text refusal
+// under /api is discarded there, leaving the user with a bare "401
+// Unauthorized" instead of the sentence saying where to find the token.
+func TestADeniedAPIRequestAnswersInJSON(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(Static())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/status without a token = %d, want 401", rec.Code)
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the refusal is not JSON, so the page cannot show it: %v (body %q)", err, rec.Body.String())
+	}
+	if body.Error == "" {
+		t.Errorf("refusal carried no error field: %q", rec.Body.String())
+	}
+
+	// A document request has no fetch helper, so it keeps the plain-text
+	// body a browser will render.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET / without a token = %d, want 401", rec.Code)
+	}
+	if json.Valid(rec.Body.Bytes()) {
+		t.Errorf("a browser was sent JSON to read: %q", rec.Body.String())
+	}
+}
+
+// Profile names come from the model half of a repo path, so two owners
+// publishing the same model name land on one name. Treating that as "already
+// have it" would offer to serve weights nobody asked for.
+func TestProfileHoldsDoesNotHandOneOwnersProfileToAnother(t *testing.T) {
+	s := newTestServer(t) // holds a profile "demo" whose MODEL is org/demo
+
+	if taken, mine := s.profileHolds("demo", "org/demo"); !taken || !mine {
+		t.Errorf("profileHolds(demo, org/demo) = %v/%v, want the repo that saved it recognised", taken, mine)
+	}
+	if taken, mine := s.profileHolds("demo", "other/demo"); !taken || mine {
+		t.Errorf("profileHolds(demo, other/demo) = %v/%v, want taken by someone else's weights", taken, mine)
 	}
 }
 
@@ -444,5 +494,188 @@ func TestRemoveRefusesTheActiveProfile(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("removing a missing profile = %d, want 404", rec.Code)
+	}
+}
+
+// A quant name off a query string decides what the machine serves, so it is
+// resolved against the repo rather than trusted. Anything the repo does not
+// hold has to be refused before the pull, because pulling restarts the service
+// and a model that cannot start takes the running one down with it.
+//
+// Deliberately uses a repo id that cannot resolve rather than a real one: the
+// point is that an unresolvable choice never reaches the profile writer, and
+// a test that depends on the Hub answering would be asserting the Hub.
+func TestPullRefusesAQuantItCannotResolve(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	req := httptest.NewRequest("POST",
+		"/api/pull?repo=vllm-helper-test/definitely-not-a-real-repo&quant="+
+			url.QueryEscape("Q8_0"), nil)
+	req.Header.Set(tokenHeader, s.token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK {
+		t.Errorf("POST /api/pull with an unresolvable quant = 200, want a refusal")
+	}
+	if strings.Contains(rec.Body.String(), "sk-do-not-leak-me") {
+		t.Error("the refusal leaked a credential")
+	}
+	entries, err := os.ReadDir(s.cfg.Dirs.Profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != "demo.env" {
+			t.Errorf("a profile was written for a refused pull: %s", e.Name())
+		}
+	}
+}
+
+// The panel offers the same install the CLI does, so the endpoints behind it
+// need the same guard as every other mutation -- this one runs pip against the
+// machine's vLLM environment.
+func TestGGUFEndpointsAreGuarded(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/gguf"},
+		{"POST", "/api/gguf/install"},
+	} {
+		req := httptest.NewRequest(c.method, c.path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s = %d, want 401", c.method, c.path, rec.Code)
+		}
+	}
+
+	// Installing is a mutation, so a cookie alone must not be enough.
+	req := httptest.NewRequest("POST", "/api/gguf/install", nil)
+	req.AddCookie(&http.Cookie{Name: tokenCookie, Value: s.token})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("POST /api/gguf/install with cookie only = %d, want 403", rec.Code)
+	}
+}
+
+// The panel shows the command and the caveats rather than hardcoding them, so
+// what a browser is told cannot drift from what the CLI says.
+func TestGGUFStatusReportsTheSameFactsAsTheCLI(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	req := httptest.NewRequest("GET", "/api/gguf", nil)
+	req.Header.Set(tokenHeader, s.token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/gguf = %d, want 200", rec.Code)
+	}
+	var got struct {
+		Supported bool     `json:"supported"`
+		Command   string   `json:"command"`
+		Caveats   []string `json:"caveats"`
+		Reason    string   `json:"reason"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Caveats) != len(control.GGUFCaveats()) {
+		t.Errorf("caveats = %d, want the %d control publishes",
+			len(got.Caveats), len(control.GGUFCaveats()))
+	}
+	// The test config has no real vLLM, so there is no interpreter to install
+	// into -- which must be reported rather than offered as a button.
+	if got.Command == "" && got.Reason == "" {
+		t.Error("with no interpreter found, one of command or reason must say so")
+	}
+}
+
+// The plugin builds a CUDA extension from source, which is minutes. A POST
+// held open that long is dropped by browsers and proxies, and when it is, the
+// page cannot tell a finished install from a lost one -- the symptom being a
+// card that never updates until you search for the model again.
+//
+// So the request must return at once and the work outlive it.
+func TestInstallGGUFReturnsWithoutWaiting(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	// The test config points at no real vLLM, so this is refused before any
+	// work starts -- which is itself the thing being checked: the handler
+	// answers rather than blocking.
+	done := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest("POST", "/api/gguf/install", nil)
+		req.Header.Set(tokenHeader, s.token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		done <- rec.Code
+	}()
+
+	select {
+	case code := <-done:
+		// Accepted when it started, 400 when there is nowhere to install to.
+		// Either is a prompt answer; a hang is what this test exists to catch.
+		if code != http.StatusAccepted && code != http.StatusBadRequest {
+			t.Errorf("POST /api/gguf/install = %d, want 202 or 400", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("POST /api/gguf/install blocked -- it must start the work and return")
+	}
+}
+
+// Progress lives on the server, so a reloaded page rejoins an install it did
+// not start rather than offering to start a second one.
+func TestGGUFStatusReportsAnInstallInFlight(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(nil)
+
+	if !s.beginInstall() {
+		t.Fatal("beginInstall refused on a fresh server")
+	}
+	// A second one must be refused while the first runs: two pips writing to
+	// one site-packages is not something to do.
+	if s.beginInstall() {
+		t.Error("beginInstall allowed a second concurrent install")
+	}
+
+	req := httptest.NewRequest("GET", "/api/gguf", nil)
+	req.Header.Set(tokenHeader, s.token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	var got struct {
+		Installing bool   `json:"installing"`
+		Error      string `json:"install_error"`
+		Log        string `json:"install_log"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Installing {
+		t.Error("a running install is not reported, so a reloaded page would offer to start another")
+	}
+
+	// And the outcome is readable afterwards, log included, since a failed
+	// build explains itself in pip's last lines and a browser has no journal.
+	s.finishInstall(errors.New("build failed"), "gcc: fatal error")
+	req2 := httptest.NewRequest("GET", "/api/gguf", nil)
+	req2.Header.Set(tokenHeader, s.token)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req2)
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Installing {
+		t.Error("a finished install is still reported as running")
+	}
+	if got.Error == "" || got.Log == "" {
+		t.Errorf("a failed install must surface its reason and log, got err=%q log=%q",
+			got.Error, got.Log)
 	}
 }

@@ -2,10 +2,17 @@ package vllm
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// cacheSchema is bumped whenever Caps gains a field. The version in the
+// filename only invalidates the cache when vLLM changes, so without this an
+// existing cache would keep answering for a field it was written before --
+// and a probe that never reruns reads as a capability the machine lacks.
+const cacheSchema = 2
 
 // cachePath names the cache after the vLLM version, so upgrading vLLM
 // invalidates it automatically -- which is the whole point, since a static
@@ -23,7 +30,7 @@ func cachePath(cacheDir, version string) string {
 		}
 		return '_'
 	}, version)
-	return filepath.Join(cacheDir, "vllm-caps-"+safe+".json")
+	return filepath.Join(cacheDir, fmt.Sprintf("vllm-caps-v%d-%s.json", cacheSchema, safe))
 }
 
 func readCache(cacheDir, version string) (Caps, bool) {
