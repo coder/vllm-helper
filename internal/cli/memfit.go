@@ -13,9 +13,11 @@ import (
 const memHeadroom = 0.85
 
 // maxUnifiedMemUtilization is the most of a shared CPU/GPU pool we will ask
-// vLLM for. On unified memory the flag is a slice of the whole machine, so the
-// remainder is all the OS, the page cache and the runtime get. Both vLLM's own
-// DGX Spark guidance and sparkrun's GB10 platform default land on 0.85, so
+// vLLM for when the KV cache is left to vLLM's own profiling. On unified
+// memory the flag is a slice of the whole machine, so the remainder is all the
+// OS, the page cache and the runtime get -- and with the cache unpinned, this
+// number alone decides how much of the machine gets eaten. Both vLLM's own DGX
+// Spark guidance and sparkrun's GB10 platform default land on 0.85, so
 // anything above it is a recipe copied from a discrete-GPU machine.
 const maxUnifiedMemUtilization = 0.85
 
@@ -44,10 +46,21 @@ func capMemUtilization(want string, ceiling float64) (value, msg string) {
 // The order matters. Unified is checked first because such a machine also
 // reports a GPU name, and reaching the discrete case would leave the request
 // unbounded on exactly the hardware that most needs a bound.
-func pickMemFit(hw detect.Hardware, availMB int, want string) (value, msg string) {
+// kvPinned says whether the profile sets KV_CACHE_MEMORY_BYTES. It changes
+// what this flag means: with the cache pinned, utilization is only a ceiling
+// on what vLLM may touch, and the measured one is both safer and roomier than
+// a fixed 0.85. With it unpinned, the flag *is* the cache size, and 0.85 is
+// the most of a shared pool worth risking.
+func pickMemFit(hw detect.Hardware, availMB int, want string, kvPinned bool) (value, msg string) {
 	switch {
 	case hw.Unified:
-		return capMemUtilization(want, maxUnifiedMemUtilization)
+		ceiling := maxUnifiedMemUtilization
+		if kvPinned {
+			if m := hw.PlanFor(0, 0, 0).MemUtilization; m > ceiling {
+				ceiling = m
+			}
+		}
+		return capMemUtilization(want, ceiling)
 	case hw.GPUName != "" || hw.GPUMemGB > 0:
 		return want, "" // discrete VRAM: nothing else competes for it
 	default:

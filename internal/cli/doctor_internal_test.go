@@ -532,8 +532,10 @@ func TestValidateProfile(t *testing.T) {
 
 func TestFitMemUtilizationLeavesUnusableValuesAlone(t *testing.T) {
 	for _, in := range []string{"", "not-a-number", "0", "-0.5"} {
-		if got := fitMemUtilization(in); got != in {
-			t.Errorf("fitMemUtilization(%q) = %q, want it unchanged", in, got)
+		for _, pinned := range []bool{false, true} {
+			if got := fitMemUtilization(in, pinned); got != in {
+				t.Errorf("fitMemUtilization(%q, %v) = %q, want it unchanged", in, pinned, got)
+			}
 		}
 	}
 }
@@ -542,7 +544,7 @@ func TestFitMemUtilizationLeavesUnusableValuesAlone(t *testing.T) {
 // usable value still has to be one.
 func TestFitMemUtilizationStaysInRange(t *testing.T) {
 	for _, in := range []string{"0.3", "0.85", "0.99"} {
-		got := fitMemUtilization(in)
+		got := fitMemUtilization(in, false)
 		f, err := strconv.ParseFloat(got, 64)
 		if err != nil {
 			t.Errorf("fitMemUtilization(%q) = %q, which vLLM can't parse", in, got)

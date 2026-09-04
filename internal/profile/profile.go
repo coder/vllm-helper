@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -100,11 +101,14 @@ type CreateOpts struct {
 	// colon has no place in a filename and because two quants of one repo
 	// have to be able to coexist as separate profiles.
 	Name           string
-	MaxModelLen    string // default 131072
+	MaxModelLen    string // default DefaultMaxModelLen
 	MemUtilization string // default 0.85
-	ExtraArgs      string
-	Status         string // human note for the header
-	Source         string // e.g. "vllm-helper new", "adopted from running server"
+	// KVCacheBytes caps the KV cache instead of letting vLLM take whatever
+	// is free. 0 leaves it to vLLM's own profiling.
+	KVCacheBytes int64
+	ExtraArgs    string
+	Status       string // human note for the header
+	Source       string // e.g. "vllm-helper new", "adopted from running server"
 }
 
 // Create writes a new profile file. Fails if it already exists.
@@ -118,7 +122,7 @@ func Create(dirs config.Dirs, opts CreateOpts) (*Profile, error) {
 		return nil, fmt.Errorf("profile %q already exists", name)
 	}
 	if opts.MaxModelLen == "" {
-		opts.MaxModelLen = "131072"
+		opts.MaxModelLen = strconv.Itoa(DefaultMaxModelLen)
 	}
 	if opts.MemUtilization == "" {
 		opts.MemUtilization = config.DefaultMemUtilization
@@ -126,17 +130,34 @@ func Create(dirs config.Dirs, opts CreateOpts) (*Profile, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
+	// Written even when zero, so the key is visible to anyone editing the
+	// profile by hand -- an absent knob is one nobody knows to reach for.
 	content := fmt.Sprintf(`# Status: %s (added via %s on %s)
 MODEL=%s
 MAX_MODEL_LEN=%s
 GPU_MEMORY_UTILIZATION=%s
+KV_CACHE_MEMORY_BYTES=%s
 EXTRA_ARGS=%s
 `, opts.Status, opts.Source, time.Now().Format("2006-01-02"),
-		opts.Repo, opts.MaxModelLen, opts.MemUtilization, config.Quote(opts.ExtraArgs))
+		opts.Repo, opts.MaxModelLen, opts.MemUtilization,
+		kvCacheValue(opts.KVCacheBytes), config.Quote(opts.ExtraArgs))
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return nil, err
 	}
 	return Load(dirs, name)
+}
+
+// DefaultMaxModelLen is the context a profile gets when the model card did not
+// say. Long enough to be useful, short of the 1M-token configs that would make
+// the KV cache the dominant cost on any machine.
+const DefaultMaxModelLen = 131072
+
+// kvCacheValue renders the cache size, empty when we are leaving it to vLLM.
+func kvCacheValue(n int64) string {
+	if n <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(n, 10)
 }
 
 func Remove(dirs config.Dirs, name string) error {

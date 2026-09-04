@@ -87,16 +87,25 @@ func TestPickMemFit(t *testing.T) {
 	const gb = 1024
 	spark := detect.Hardware{TotalMemBytes: 130 << 30, GPUName: "NVIDIA GB10", Unified: true}
 	tests := []struct {
-		name    string
-		hw      detect.Hardware
-		availMB int
-		want    string
-		value   string
-		msg     bool
+		name     string
+		hw       detect.Hardware
+		availMB  int
+		want     string
+		value    string
+		msg      bool
+		kvPinned bool
 	}{
-		{"spark keeps the recommended value", spark, 10 * gb, "0.85", "0.85", false},
-		{"spark keeps a lower value", spark, 500, "0.70", "0.70", false},
-		{"spark caps a discrete-GPU recipe", spark, 10 * gb, "0.95", "0.85", true},
+		{name: "spark keeps the recommended value", hw: spark, availMB: 10 * gb, want: "0.85", value: "0.85"},
+		{name: "spark keeps a lower value", hw: spark, availMB: 500, want: "0.70", value: "0.70"},
+		{name: "spark caps a discrete-GPU recipe", hw: spark, availMB: 10 * gb, want: "0.95", value: "0.85", msg: true},
+		{
+			// With the cache pinned, this flag is only a ceiling on what
+			// vLLM may touch, and the measured one is both roomier and
+			// better founded than the fixed 0.85 above.
+			name: "a pinned KV cache earns the measured ceiling",
+			hw:   spark, availMB: 10 * gb, want: "0.99", value: "0.92",
+			msg: true, kvPinned: true,
+		},
 		{
 			name: "unified wins over the GPU name",
 			// Both branches match; taking the discrete one would leave the
@@ -123,7 +132,7 @@ func TestPickMemFit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			value, msg := pickMemFit(tt.hw, tt.availMB, tt.want)
+			value, msg := pickMemFit(tt.hw, tt.availMB, tt.want, tt.kvPinned)
 			if value != tt.value {
 				t.Errorf("value = %q, want %q", value, tt.value)
 			}

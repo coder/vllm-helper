@@ -20,8 +20,8 @@ import (
 //     reserves system RAM and the 0.85 default asks for 85% of the box. That
 //     aborts startup on a machine that is also doing something else, so here
 //     the live reading is the right signal. Seen on a 15 GiB WSL2 box; #13.
-func fitMemUtilization(want string) string {
-	value, msg := pickMemFit(detect.Probe(), detect.AvailableMemMB(), want)
+func fitMemUtilization(want string, kvPinned bool) string {
+	value, msg := pickMemFit(detect.Probe(), detect.AvailableMemMB(), want, kvPinned)
 	if msg != "" {
 		fmt.Print(msg)
 	}
