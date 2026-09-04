@@ -156,6 +156,39 @@ type createResponse struct {
 	ID string `json:"id"`
 }
 
+// Entry is one model-config as the API returns it.
+type Entry struct {
+	ID           string `json:"id"`
+	AIProviderID string `json:"ai_provider_id"`
+	Model        string `json:"model"`
+	Enabled      bool   `json:"enabled"`
+}
+
+// listResponse covers both shapes: the newer API wraps the collection, the
+// older one returned it bare.
+type listResponse struct {
+	Models []Entry `json:"models"`
+}
+
+// List reports the model-configs on this client's provider.
+//
+// The endpoint returns every provider's entries -- an Anthropic model sits in
+// the same list as ours -- so filtering here rather than at the call site is
+// what stops a caller deleting somebody else's models.
+func (c *Client) List() ([]Entry, error) {
+	var wrapped listResponse
+	if err := c.do("GET", "", nil, &wrapped); err != nil {
+		return nil, err
+	}
+	var mine []Entry
+	for _, e := range wrapped.Models {
+		if e.AIProviderID == c.ProviderID {
+			mine = append(mine, e)
+		}
+	}
+	return mine, nil
+}
+
 // Create posts a new model-config entry and returns its ID.
 func (c *Client) Create(mc ModelConfig) (string, error) {
 	mc.AIProviderID = c.ProviderID
