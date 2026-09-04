@@ -10,7 +10,10 @@ import (
 	"github.com/coder/vllm-helper/internal/plugin/coder"
 )
 
-const modelConfigPath = "/api/experimental/chats/model-configs"
+// Where a current deployment keeps the collection. The stand-in below answers
+// every path, so route resolution settles on this one; the fallback to the
+// retired /api/experimental path is covered in route_test.go.
+const modelConfigPath = "/api/v2/organizations/default/chats/models"
 
 // capture records what the deployment actually received.
 type capture struct {

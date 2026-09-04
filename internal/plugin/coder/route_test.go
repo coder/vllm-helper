@@ -1,0 +1,142 @@
+package coder_test
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/coder/vllm-helper/internal/plugin/coder"
+)
+
+const (
+	orgPath = "/api/v2/organizations/default/chats/models"
+	expPath = "/api/experimental/chats/model-configs"
+)
+
+// deployment stands in for a Coder that serves exactly one of the two
+// collection routes and 404s the other, which is what the real ones do:
+// Coder's router reserves the retired path and answers it with a 404 rather
+// than letting it fall through.
+func deployment(t *testing.T, serves string, seen *[]string) *coder.Client {
+	t.Helper()
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		*seen = append(*seen, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		if !strings.HasPrefix(r.URL.Path, serves) {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"new-id"}`)
+	}))
+	t.Cleanup(srv.Close)
+	return coder.NewClient(srv.URL, "tok", "provider-uuid")
+}
+
+// The bug this fixes: against Coder 2.37 the client called the retired path
+// and got a 404 that read like a bad URL or an expired token.
+func TestTheClientFindsTheCollectionOnEitherGeneration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		route string
+	}{
+		{"a current deployment", orgPath},
+		{"a pre-2.37 deployment", expPath},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var seen []string
+			c := deployment(t, tc.route, &seen)
+			if err := c.Check(); err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			id, err := c.Create(coder.ModelConfig{Model: "m", ContextLimit: 4096})
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			if id != "new-id" {
+				t.Errorf("Create returned %q, want the id the API gave", id)
+			}
+			for _, s := range seen {
+				if strings.HasPrefix(s, "POST ") && !strings.Contains(s, tc.route) {
+					t.Errorf("posted to %q, but this deployment serves %q", s, tc.route)
+				}
+			}
+		})
+	}
+}
+
+// Resolution costs one request, not one per call: a sync makes several.
+func TestTheRouteIsResolvedOnce(t *testing.T) {
+	t.Parallel()
+	var seen []string
+	c := deployment(t, orgPath, &seen)
+	_ = c.Check()
+	_, _ = c.Create(coder.ModelConfig{Model: "m", ContextLimit: 4096})
+	_ = c.Update("id-1", coder.ModelConfig{Model: "m", ContextLimit: 4096})
+	_ = c.Disable("id-2")
+
+	probes := 0
+	for _, s := range seen {
+		if s == "GET "+orgPath {
+			probes++
+		}
+	}
+	// One from resolution, one from Check itself.
+	if probes > 2 {
+		t.Errorf("probed the route %d times across four calls", probes)
+	}
+}
+
+// A saved ID outlives its entry when someone deletes the model in Coder's UI,
+// or when CODER_URL is pointed at a different deployment. Callers recover by
+// re-creating, which they can only do if the error says what happened.
+func TestAMissingEntryIsDistinguishable(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == orgPath {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"models":[]}`)
+			return
+		}
+		http.NotFound(w, r) // any specific entry is gone
+	}))
+	t.Cleanup(srv.Close)
+	c := coder.NewClient(srv.URL, "tok", "prov")
+
+	err := c.Update("stale-id", coder.ModelConfig{Model: "m", ContextLimit: 4096})
+	if !errors.Is(err, coder.ErrNotFound) {
+		t.Errorf("Update on a deleted entry gave %v, want ErrNotFound", err)
+	}
+	// And the collection being missing must NOT read as a missing entry --
+	// that is a broken deployment, not something to recreate around.
+	if err := c.Check(); errors.Is(err, coder.ErrNotFound) {
+		t.Error("an unusable API reported itself as a missing entry")
+	}
+}
+
+// Both generations have replied to a create with a different shape.
+func TestCreateReadsEitherResponseShape(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{`{"id":"abc"}`, `{"model":{"id":"abc"}}`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, body)
+		}))
+		id, err := coder.NewClient(srv.URL, "tok", "prov").Create(coder.ModelConfig{Model: "m"})
+		srv.Close()
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if id != "abc" {
+			t.Errorf("from %s got id %q, want abc", body, id)
+		}
+	}
+}
