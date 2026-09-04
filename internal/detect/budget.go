@@ -25,6 +25,11 @@ const (
 	graphReserve       = 1.5 * gibibyte // torch.compile + CUDA graphs; max seen 0.98
 	activationFraction = 0.06           // peak activation / weights; max seen 4.7%
 
+	// Without CUDA there is no context to hold and no graphs to capture, so
+	// most of the above is not spent. Charging for them refuses small models
+	// on machines that can serve them: a 7 GB box came out at a budget of 0.
+	cpuRuntimeReserve = 2 * gibibyte
+
 	// A model you cannot serve does not fit, so hold back a usable cache --
 	// capped by fraction so a small card is not budgeted to zero.
 	kvFloor     = 6 * gibibyte
@@ -38,9 +43,9 @@ const (
 // weightsBudget solves w + baseline + runtime + graphs + activationFraction*w
 // + kv <= pool. Closed form: every term is constant or linear in w. Returns 0
 // when the fixed costs already exceed the pool, which is a real answer.
-func weightsBudget(pool, baseline, runtime float64) float64 {
+func weightsBudget(pool, baseline, runtime, graphs float64) float64 {
 	kv := math.Min(kvFloor, kvFloorFrac*pool)
-	free := pool - baseline - runtime - graphReserve - kv
+	free := pool - baseline - runtime - graphs - kv
 	if free <= 0 {
 		return 0
 	}
@@ -75,17 +80,27 @@ const baselineCeiling = 0.15
 // Budget reports the largest model weights this machine should load, in bytes,
 // with a line explaining the figure. usedBytes is memory in use now, or 0 when
 // unknown. A discrete GPU is measured against its own VRAM.
-func Budget(totalBytes, gpuBytes, usedBytes int64, unified bool) (int64, string) {
-	pool, runtime, baseline := float64(totalBytes), float64(runtimeReserve), 0.0
+func (h Hardware) Budget(usedBytes int64) (int64, string) {
+	pool := float64(h.TotalMemBytes)
+	runtime, graphs := float64(runtimeReserve), float64(graphReserve)
+	baseline := 0.0
 	reason := "unified/system memory, minus the OS and vLLM's own overhead"
 
+	// vLLM falls back to its CPU backend without CUDA, where there is no
+	// context and no captured graphs to pay for.
+	if !h.CUDA {
+		runtime, graphs = cpuRuntimeReserve, 0
+		reason = "system memory, minus the OS and vLLM's CPU-backend overhead"
+	}
+
 	switch {
-	case !unified && gpuBytes > 0:
-		pool, runtime, baseline = float64(gpuBytes), discreteRuntime, discreteBaseline
+	case !h.Unified && h.GPUMemBytes > 0:
+		pool, runtime, graphs = float64(h.GPUMemBytes), discreteRuntime, float64(graphReserve)
+		baseline = discreteBaseline
 		reason = "discrete VRAM, minus CUDA's overhead and room for a KV cache"
 	case usedBytes > 0 && float64(usedBytes) < baselineCeiling*pool:
 		baseline = float64(usedBytes)
-		reason = "unified/system memory, minus a measured OS baseline and vLLM's own overhead"
+		reason += ", against a measured OS baseline"
 	default:
 		baseline = defaultBaseline(pool)
 	}
@@ -93,7 +108,13 @@ func Budget(totalBytes, gpuBytes, usedBytes int64, unified bool) (int64, string)
 	if pool <= 0 {
 		return 0, "unknown: this machine's memory could not be measured"
 	}
-	return int64(weightsBudget(pool, baseline, runtime)), reason
+	b := int64(weightsBudget(pool, baseline, runtime, graphs))
+	if b <= 0 {
+		// A real answer, not a failure to compute one: vLLM's own runtime
+		// and a usable cache already exceed what this machine has.
+		return 0, "none: this machine has too little memory to serve a model"
+	}
+	return b, reason
 }
 
 // BudgetGB reports the weights budget in decimal gigabytes, honouring an
