@@ -152,7 +152,7 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) De
 	archCh := make(chan hf.Arch, 1)
 	go func() {
 		a, _ := hf.Config(m.ID)
-		if a.ModelType == "" && a.KVBytesPerToken() == 0 && d.BaseModel != "" {
+		if a.ModelType == "" && a.MaxContext() == 0 && d.BaseModel != "" {
 			a, _ = hf.Config(d.BaseModel)
 		}
 		archCh <- a
@@ -174,8 +174,8 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) De
 		// The alternative is finding out from a crash loop, by which point
 		// the model that was serving has already been stopped.
 		arch := <-archCh
-		d.KVBytesPerToken = arch.KVBytesPerToken()
 		d.MaxContext = arch.MaxContext()
+		d.KVBytesPerToken = arch.KVBytesPerToken(d.MaxContext)
 		// Only a repo that publishes GGUF can be blocked by the plugin's
 		// mapping, and a safetensors MoE is served by vLLM directly.
 		if ok, why := hf.GGUFServable(arch); !ok && d.BaseModel != "" {
@@ -303,14 +303,15 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 		maxLen = profile.DefaultMaxModelLen
 	}
 	arch, _ := hf.Config(configRepoFor(repo, choice))
-	if kv := arch.KVBytesPerToken(); kv > 0 {
-		if n := arch.MaxContext(); n > 0 && n < maxLen {
-			// Asking for more context than the model was trained for is
-			// how vLLM refuses to start, and the card's snippet is not
-			// always right about this.
-			maxLen = n
-			p.Opts.MaxModelLen = strconv.Itoa(n)
-		}
+	if n := arch.MaxContext(); n > 0 && n < maxLen {
+		// Asking for more context than the model was trained for is how
+		// vLLM refuses to start, and the card's snippet is not always right
+		// about this. Clamp before sizing: a sliding-window model's cost
+		// per token depends on the context it is given.
+		maxLen = n
+		p.Opts.MaxModelLen = strconv.Itoa(n)
+	}
+	if kv := arch.KVBytesPerToken(maxLen); kv > 0 {
 		var weights int64
 		if choice != nil {
 			weights = int64(choice.Variant.SizeGB * 1e9)

@@ -512,52 +512,32 @@ input:focus-visible {
 
 /* ---------- nav ---------- */
 
-/* Two destinations, one at a time: a recessed rail holding both reads as a
-   switch with two positions, where two loose pills read as debris floating
-   over the header. The rail also gives the pair a box to sit in -- the bar
-   aligns its contents on their text baselines, which padded pills have no
-   business sharing, so it opts out with align-self. */
+/* Links, not a control. These load new documents, so anything that looks like
+   a switch promises a transition the browser will not make. */
 .tabs {
-  align-self: center;
+  align-self: baseline;
   display: flex;
-  gap: 0.125rem;
-  margin-left: 0.5rem;
-  padding: 0.1875rem;
-  border: 1px solid var(--border-default);
-  border-radius: calc(var(--radius) + 0.1875rem);
-  background: var(--surface-secondary);
+  gap: 1rem;
+  margin-left: 0.75rem;
 }
 
-/* Chrome speaks in the bar's voice: mono, small, tracked out, matching the
-   wordmark and the phase readout rather than the body text below. */
 .tab {
   color: var(--content-secondary);
   font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 0.75rem;
   text-decoration: none;
   white-space: nowrap;
-  padding: 0.3125rem 0.6875rem;
-  border-radius: var(--radius);
-  transition:
-    color 120ms ease,
-    background-color 120ms ease;
+  padding-bottom: 0.125rem;
+  border-bottom: 1px solid transparent;
 }
 
 .tab:hover {
   color: var(--content-primary);
 }
 
-/* The page you are on is the raised position of the switch: lifted onto a
-   lighter surface while the other stays down in the rail. Deliberately not
-   accent-coloured -- a bright control up here would compete with the phase
-   readout, which is the thing on the page worth looking at. */
 .tab[aria-current="page"] {
   color: var(--content-primary);
-  background: var(--surface-tertiary);
-  box-shadow: 0 1px 2px hsl(240 10% 2% / 0.5);
+  border-bottom-color: var(--border-secondary);
 }
 
 .tab:focus-visible {

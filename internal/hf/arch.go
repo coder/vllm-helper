@@ -31,6 +31,9 @@ type Arch struct {
 	TorchDtype        string `json:"torch_dtype"`
 	// LayerTypes names each layer for hybrids, where only some attend.
 	LayerTypes []string `json:"layer_types"`
+	// SlidingWindow caps how far a sliding-attention layer looks back, so
+	// those layers hold that many tokens rather than the whole context.
+	SlidingWindow int `json:"sliding_window"`
 	// TextConfig holds the language model's shape on multimodal repos.
 	TextConfig *Arch `json:"text_config"`
 }
@@ -43,22 +46,23 @@ func (a Arch) text() Arch {
 	return a
 }
 
-// attentionLayers counts the layers that hold a KV cache. Hybrids interleave
-// attention with Mamba layers that hold none; using num_hidden_layers there
-// overstates the cache by the ratio of the two -- 52 against 4 on nemotron_h.
-func (a Arch) attentionLayers() int {
-	if n := len(a.LayerTypes); n > 0 {
-		attn := 0
-		for _, t := range a.LayerTypes {
-			if strings.Contains(strings.ToLower(t), "attention") {
-				attn++
-			}
-		}
-		if attn > 0 {
-			return attn
+// attentionLayers counts the layers holding a KV cache, split by how much each
+// holds. Hybrids interleave attention with Mamba layers that hold none, and
+// sliding layers hold only their window -- gpt-oss is half full, half sliding
+// at a window of 128, so treating them alike doubles the estimate.
+func (a Arch) attentionLayers() (full, sliding int) {
+	for _, t := range a.LayerTypes {
+		switch t := strings.ToLower(t); {
+		case strings.Contains(t, "sliding"):
+			sliding++
+		case strings.Contains(t, "attention"):
+			full++
 		}
 	}
-	return a.NumHiddenLayers
+	if full+sliding == 0 {
+		full = a.NumHiddenLayers
+	}
+	return full, sliding
 }
 
 // kvDtypeBytes is the width of one cached element. 2 unless the cache itself
@@ -72,13 +76,15 @@ func kvDtypeBytes(dtype string) int {
 	}
 }
 
-// KVBytesPerToken is what one token of context costs:
-// 2 (K and V) * layers * kv_heads * head_dim * dtype_bytes. Reproduces vLLM's
-// own allocation to the byte. Returns 0 when the config did not say enough,
-// which callers must treat as unknown rather than free.
-func (a Arch) KVBytesPerToken() int64 {
+// KVBytesPerToken is what one token of context costs, averaged over a request
+// of maxLen: 2 (K and V) * layers * kv_heads * head_dim * dtype_bytes, with
+// sliding layers counted at their window rather than the full context.
+// Reproduces vLLM's own allocation. Returns 0 when the config did not say
+// enough, which callers must treat as unknown rather than free.
+func (a Arch) KVBytesPerToken(maxLen int) int64 {
 	t := a.text()
-	layers, heads, dim := t.attentionLayers(), t.NumKeyValueHeads, t.HeadDim
+	full, sliding := t.attentionLayers()
+	heads, dim := t.NumKeyValueHeads, t.HeadDim
 	if heads == 0 {
 		heads = t.NumAttentionHeads // no grouped-query attention
 	}
@@ -86,10 +92,19 @@ func (a Arch) KVBytesPerToken() int64 {
 		// Last resort only; deriving over a declared value is the OOM above.
 		dim = t.HiddenSize / t.NumAttentionHeads
 	}
-	if layers <= 0 || heads <= 0 || dim <= 0 {
+	if full+sliding <= 0 || heads <= 0 || dim <= 0 || maxLen <= 0 {
 		return 0
 	}
-	return 2 * int64(layers) * int64(heads) * int64(dim) * int64(kvDtypeBytes(t.TorchDtype))
+	perLayer := 2 * int64(heads) * int64(dim) * int64(kvDtypeBytes(t.TorchDtype))
+
+	// A sliding layer never holds more than its window, so past that point
+	// it stops costing anything per extra token of context.
+	window := t.SlidingWindow
+	if window <= 0 || window > maxLen {
+		window = maxLen
+	}
+	total := perLayer * (int64(full)*int64(maxLen) + int64(sliding)*int64(window))
+	return total / int64(maxLen)
 }
 
 // MaxContext is the longest context this model was trained for, or 0 if the
