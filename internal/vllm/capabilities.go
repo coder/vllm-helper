@@ -48,7 +48,8 @@ type Caps struct {
 // Caps means "we couldn't ask", which must be treated as "don't validate",
 // never as "nothing is valid".
 func (c Caps) Known() bool {
-	return len(c.ToolParsers) > 0 || len(c.ReasoningParsers) > 0 || len(c.Flags) > 0
+	return len(c.ToolParsers) > 0 || len(c.ReasoningParsers) > 0 ||
+		len(c.Flags) > 0 || len(c.Quantizations) > 0
 }
 
 // KnowsQuantizations reports whether the registry was readable, so "no GGUF"

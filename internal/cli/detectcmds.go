@@ -220,7 +220,7 @@ func gatherHFToken(cfg *config.Config) hfTokenStatus {
 		return st
 	}
 	st.Present = true
-	account, err := hf.WhoAmI(token)
+	account, err := hf.WhoAmI(context.Background(), token)
 	if err != nil {
 		st.Error = err.Error()
 	} else {

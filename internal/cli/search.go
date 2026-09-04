@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -24,13 +25,13 @@ func newSearchCmd() *cobra.Command {
 		Use:     "search <search terms>",
 		Short:   "Search HuggingFace and pick a model to pull and switch to",
 		GroupID: groupModels,
-		RunE:    func(_ *cobra.Command, args []string) error { return runSearch(args, jsonOut) },
+		RunE:    func(cmd *cobra.Command, args []string) error { return runSearch(cmd.Context(), args, jsonOut) },
 	}
 	c.Flags().BoolVar(&jsonOut, "json", false, "print results as JSON and exit (no prompts)")
 	return c
 }
 
-func runSearch(args []string, jsonOut bool) error {
+func runSearch(ctx context.Context, args []string, jsonOut bool) error {
 	if len(args) == 0 {
 		return errors.New("usage: vllm-helper search <search terms> [--json]")
 	}
@@ -39,7 +40,7 @@ func runSearch(args []string, jsonOut bool) error {
 	if !jsonOut {
 		fmt.Printf("Searching HuggingFace for %q...\n", query)
 	}
-	models, err := hf.Search(query, 25)
+	models, err := hf.Search(ctx, query, 25)
 	if err != nil {
 		return fmt.Errorf("search request failed (network or rate limit): %w", err)
 	}
@@ -90,7 +91,7 @@ func runSearch(args []string, jsonOut bool) error {
 		}
 		m := models[n-1]
 		fmt.Println()
-		d := inspectModel(m, cfg)
+		d := inspectModel(ctx, m, cfg)
 		printModelDetail(d, cfg)
 		fmt.Println()
 
@@ -104,7 +105,7 @@ func runSearch(args []string, jsonOut bool) error {
 			label += " (" + choice.Variant.Label + ")"
 		}
 		if confirm(fmt.Sprintf("Pull %s and switch to it?", label), false) {
-			return pullAndSwitch(cfg, m.ID, choice, watchOpts{follow: stdoutIsTTY(), wait: true})
+			return pullAndSwitch(ctx, cfg, m.ID, choice, watchOpts{follow: stdoutIsTTY(), wait: true})
 		}
 		fmt.Println()
 	}
@@ -119,17 +120,17 @@ func newInspectCmd() *cobra.Command {
 		Short:   "Show a model's license, weight size against this machine, and detected flags",
 		GroupID: groupModels,
 		Args:    cobra.MaximumNArgs(1),
-		RunE:    func(_ *cobra.Command, args []string) error { return runInspect(args, jsonOut) },
+		RunE:    func(cmd *cobra.Command, args []string) error { return runInspect(cmd.Context(), args, jsonOut) },
 	}
 	c.Flags().BoolVar(&jsonOut, "json", false, "print the details as JSON")
 	return c
 }
 
-func runInspect(args []string, jsonOut bool) error {
+func runInspect(ctx context.Context, args []string, jsonOut bool) error {
 	if len(args) < 1 {
 		return errors.New("usage: vllm-helper inspect <org/model-repo> [--json]")
 	}
-	m, err := hf.Lookup(args[0])
+	m, err := hf.Lookup(ctx, args[0])
 	if err != nil {
 		return err
 	}
@@ -138,7 +139,7 @@ func runInspect(args []string, jsonOut bool) error {
 	if err != nil && !errors.Is(err, config.ErrNotConfigured) {
 		return err
 	}
-	d := inspectModel(m, cfg)
+	d := inspectModel(ctx, m, cfg)
 	if jsonOut {
 		return printJSON(d)
 	}
@@ -148,14 +149,14 @@ func runInspect(args []string, jsonOut bool) error {
 
 // inspectModel measures a model against this machine. cfg may be nil, which
 // just means there is no budget to measure against.
-func inspectModel(m hf.Model, cfg *config.Config) catalog.Detail {
+func inspectModel(ctx context.Context, m hf.Model, cfg *config.Config) catalog.Detail {
 	var override string
 	var target int
 	if cfg != nil {
 		override = cfg.ModelBudgetGB()
 		target = cfg.KVContextTarget()
 	}
-	return catalog.Inspect(m, detect.BudgetGB(override), vllmCaps(cfg), target)
+	return catalog.Inspect(ctx, m, detect.BudgetGB(override), vllmCaps(cfg), target)
 }
 
 // firstClause keeps the head of a reason. Repeating a full sentence on every
@@ -330,15 +331,20 @@ func pickQuant(cfg *config.Config, d catalog.Detail) (choice *catalog.Choice, ca
 		}
 		fmt.Printf(" %s %2d) %-26s %6.1f GB\n", mark, i+1, display(v), v.SizeGB)
 	}
-	def := 1
+	// servable is ordered largest first, so the last row is the smallest.
+	// That is the default when nothing was ranked -- an unknown budget, or
+	// nothing that fits -- matching Weights.BestFit: with nothing to check a
+	// size against, the conservative choice is the smallest. Defaulting to
+	// row 1 there would put the largest quant one keypress away.
+	def := len(servable)
 	if d.Best != nil {
 		for i, v := range servable {
 			if v.Name == d.Best.Name {
 				def = i + 1
 			}
 		}
+		fmt.Printf("  * = biggest that fits this machine\n")
 	}
-	fmt.Printf("  * = biggest that fits this machine\n")
 	for {
 		pick := ask(fmt.Sprintf("Pick one (1-%d, Enter for %d, 'b' to go back)", len(servable), def), "")
 		switch {

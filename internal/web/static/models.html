@@ -78,7 +78,10 @@
             </p>
 
             <div data-detail-body hidden>
-              <div class="verdict" data-verdict></div>
+              <!-- Announced on change: choosing a model in the list swaps
+                   this text without moving focus, so a screen reader would
+                   otherwise never hear the answer it asked for. -->
+              <div class="verdict" data-verdict aria-live="polite"></div>
               <dl class="facts" data-facts></dl>
               <div class="quants" data-quants hidden>
                 <h4 class="quants-title">

@@ -1,6 +1,7 @@
 package hf
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -120,8 +121,8 @@ func (a Arch) MoE() bool {
 // Config reads a model's config.json. Returns a zero Arch and no error when
 // the repo has none: GGUF repos typically ship none, which is a fact about the
 // repo rather than a failure.
-func Config(repo string) (Arch, error) {
-	resp, err := httpClient.Get(fmt.Sprintf("%s/%s/raw/main/config.json", baseURL, repo))
+func Config(ctx context.Context, repo string) (Arch, error) {
+	resp, err := get(ctx, fmt.Sprintf("%s/%s/raw/main/config.json", baseURL, repo))
 	if err != nil {
 		return Arch{}, err
 	}

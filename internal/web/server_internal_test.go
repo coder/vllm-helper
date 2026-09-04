@@ -134,6 +134,54 @@ func TestMutationsNeedTheTokenInAHeader(t *testing.T) {
 	}
 }
 
+// The page's fetch helper reads body.error and shows it. A plain-text refusal
+// under /api is discarded there, leaving the user with a bare "401
+// Unauthorized" instead of the sentence saying where to find the token.
+func TestADeniedAPIRequestAnswersInJSON(t *testing.T) {
+	s := newTestServer(t)
+	h := s.Handler(Static())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/status without a token = %d, want 401", rec.Code)
+	}
+	var body struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the refusal is not JSON, so the page cannot show it: %v (body %q)", err, rec.Body.String())
+	}
+	if body.Error == "" {
+		t.Errorf("refusal carried no error field: %q", rec.Body.String())
+	}
+
+	// A document request has no fetch helper, so it keeps the plain-text
+	// body a browser will render.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET / without a token = %d, want 401", rec.Code)
+	}
+	if json.Valid(rec.Body.Bytes()) {
+		t.Errorf("a browser was sent JSON to read: %q", rec.Body.String())
+	}
+}
+
+// Profile names come from the model half of a repo path, so two owners
+// publishing the same model name land on one name. Treating that as "already
+// have it" would offer to serve weights nobody asked for.
+func TestProfileHoldsDoesNotHandOneOwnersProfileToAnother(t *testing.T) {
+	s := newTestServer(t) // holds a profile "demo" whose MODEL is org/demo
+
+	if taken, mine := s.profileHolds("demo", "org/demo"); !taken || !mine {
+		t.Errorf("profileHolds(demo, org/demo) = %v/%v, want the repo that saved it recognised", taken, mine)
+	}
+	if taken, mine := s.profileHolds("demo", "other/demo"); !taken || mine {
+		t.Errorf("profileHolds(demo, other/demo) = %v/%v, want taken by someone else's weights", taken, mine)
+	}
+}
+
 // Every response is assembled from an explicit DTO precisely so a credential
 // can't ride along. This asserts that end to end, against a config that
 // really does hold secrets.

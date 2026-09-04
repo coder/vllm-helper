@@ -1,6 +1,7 @@
 package hf
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -66,7 +67,7 @@ func status(code int) http.Handler {
 func TestLookup(t *testing.T) {
 	serveTestdata(t, map[string]string{"/api/models/" + repo: "model.json"})
 
-	m, err := Lookup(repo)
+	m, err := Lookup(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -107,7 +108,7 @@ func TestLookupFailures(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			newHub(t, tt.handler)
-			_, err := Lookup(repo)
+			_, err := Lookup(context.Background(), repo)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -124,7 +125,7 @@ func TestLookupFallsBackToTheRequestedRepo(t *testing.T) {
 	newHub(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"downloads":1}`))
 	}))
-	m, err := Lookup(repo)
+	m, err := Lookup(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
@@ -145,7 +146,7 @@ func TestSearch(t *testing.T) {
 		_, _ = w.Write(body)
 	}))
 
-	models, err := Search("qwen3 8b", 25)
+	models, err := Search(context.Background(), "qwen3 8b", 25)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -164,7 +165,7 @@ func TestSearch(t *testing.T) {
 
 func TestSearchNon200(t *testing.T) {
 	newHub(t, status(http.StatusTooManyRequests))
-	if _, err := Search("qwen", 5); err == nil || !strings.Contains(err.Error(), "HTTP 429") {
+	if _, err := Search(context.Background(), "qwen", 5); err == nil || !strings.Contains(err.Error(), "HTTP 429") {
 		t.Errorf("error = %v, want it to report HTTP 429", err)
 	}
 }
@@ -172,7 +173,7 @@ func TestSearchNon200(t *testing.T) {
 func TestWeightsSize(t *testing.T) {
 	serveTestdata(t, map[string]string{"/api/models/" + repo + "/tree/main": "tree.json"})
 
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -193,7 +194,7 @@ func TestWeightsSizeInSubfolder(t *testing.T) {
 		{"type":"file","path":"weights/model-00001-of-00002.safetensors","size":4000000000},
 		{"type":"file","path":"weights/model-00002-of-00002.safetensors","size":2500000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -214,7 +215,7 @@ func TestWeightsSizePicksSmallestVariant(t *testing.T) {
 		{"type":"file","path":"UD-IQ1_S/model-00002-of-00002.gguf","size":1000000000},
 		{"type":"file","path":"BF16/model.gguf","size":40000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -235,7 +236,7 @@ func TestWeightsSizePicksSmallestRootGGUF(t *testing.T) {
 		{"type":"file","path":"Qwen3-32B-IQ2_XXS.gguf","size":9000000000},
 		{"type":"file","path":"Qwen3-32B-Q4_K_M.gguf","size":20000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -255,7 +256,7 @@ func TestWeightsSizeSumsRootGGUFShards(t *testing.T) {
 		{"type":"file","path":"DeepSeek-UD-TQ1_0-00002-of-00002.gguf","size":2500000000},
 		{"type":"file","path":"DeepSeek-UD-IQ2_M.gguf","size":90000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -276,7 +277,7 @@ func TestWeightsSizeSkipsCompanionFiles(t *testing.T) {
 		{"type":"file","path":"gemma-3-27b-it-Q4_K_M.gguf","size":16000000000},
 		{"type":"file","path":"gemma-3-27b-it-IQ2_XXS.gguf","size":6500000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -297,7 +298,7 @@ func TestWeightsSizeDropsDuplicateRootCopies(t *testing.T) {
 		{"type":"file","path":"model-00001-of-00002.safetensors","size":10000000000},
 		{"type":"file","path":"model-00002-of-00002.safetensors","size":4500000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -312,7 +313,7 @@ func TestWeightsSizePrefersSafetensorsOverBin(t *testing.T) {
 		{"type":"file","path":"pytorch_model.bin","size":8000000000},
 		{"type":"file","path":"model.safetensors","size":8000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -329,7 +330,7 @@ func TestWeightsSizeSumsComponentFolders(t *testing.T) {
 		{"type":"file","path":"transformer/model.safetensors","size":23800000000},
 		{"type":"file","path":"vae/model.safetensors","size":170000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -349,7 +350,7 @@ func TestWeightsSizeSumsUppercaseGGUFShards(t *testing.T) {
 		{"type":"file","path":"MODEL-00001-OF-00002.GGUF","size":4000000000},
 		{"type":"file","path":"MODEL-00002-OF-00002.GGUF","size":2500000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -369,7 +370,7 @@ func TestWeightsSizeIgnoresDuplicateFormatFolder(t *testing.T) {
 		{"type":"file","path":"original/consolidated.00.pth","size":16000000000},
 		{"type":"file","path":"original/consolidated.01.bin","size":16000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -380,7 +381,7 @@ func TestWeightsSizeIgnoresDuplicateFormatFolder(t *testing.T) {
 
 func TestWeightsSizeWithoutWeightFiles(t *testing.T) {
 	serveTree(t, `[{"type":"file","path":"original/consolidated.pth","size":1000000}]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -401,7 +402,7 @@ func TestWeightsSizeFollowsPagination(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`[{"type":"file","path":"model-00002-of-00002.safetensors","size":2500000000}]`))
 	}))
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -418,7 +419,7 @@ func TestWeightsSizeStopsOnLoopingCursor(t *testing.T) {
 		w.Header().Set("Link", `<`+srv.URL+`/api/models/`+repo+`/tree/main?recursive=true&cursor=same>; rel="next"`)
 		_, _ = w.Write([]byte(`[{"type":"file","path":"model.safetensors","size":8000000000}]`))
 	}))
-	_, err := WeightsSize(repo)
+	_, err := WeightsSize(context.Background(), repo)
 	if err == nil {
 		t.Fatal("want an error when the cursor never advances, got none")
 	}
@@ -437,7 +438,7 @@ func TestWeightsSizeFailsRatherThanTruncate(t *testing.T) {
 		w.Header().Set("Link", fmt.Sprintf(`<%s/api/models/%s/tree/main?recursive=true&cursor=%d>; rel="next"`, srv.URL, repo, page))
 		_, _ = w.Write([]byte(fmt.Sprintf(`[{"type":"file","path":"shard-%d.safetensors","size":1000000000}]`, page)))
 	}))
-	if _, err := WeightsSize(repo); err == nil {
+	if _, err := WeightsSize(context.Background(), repo); err == nil {
 		t.Fatal("want an error when the repo exceeds the page budget, got none")
 	}
 }
@@ -451,7 +452,7 @@ func TestWeightsSizeReadsQuantNamedFolders(t *testing.T) {
 		{"type":"file","path":"fp8/model.safetensors","size":30000000000},
 		{"type":"file","path":"int4/model.safetensors","size":15000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -471,7 +472,7 @@ func TestWeightsSizeSumsGGUFComponentFolders(t *testing.T) {
 		{"type":"file","path":"text_encoder/t5-Q8_0.gguf","size":5000000000},
 		{"type":"file","path":"vae/vae-F16.gguf","size":300000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -491,7 +492,7 @@ func TestWeightsSizeIgnoresStrayRootFile(t *testing.T) {
 		{"type":"file","path":"pytorch_model-00001-of-00002.bin","size":90000000000},
 		{"type":"file","path":"pytorch_model-00002-of-00002.bin","size":50000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -508,7 +509,7 @@ func TestWeightsSizeComparesRootTensorsWithRootGGUFs(t *testing.T) {
 		{"type":"file","path":"model-Q4_K_M.gguf","size":20000000000},
 		{"type":"file","path":"model-Q8_0.gguf","size":35000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -528,7 +529,7 @@ func TestWeightsSizeKeepsQuantsBesideAnotherFolder(t *testing.T) {
 		{"type":"file","path":"UD-Q4_K_M/model.gguf","size":20000000000},
 		{"type":"file","path":"original/consolidated.safetensors","size":60000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -583,7 +584,7 @@ func TestContextLimit(t *testing.T) {
 			newHub(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write([]byte(tt.body))
 			}))
-			got, err := ContextLimit(repo)
+			got, err := ContextLimit(context.Background(), repo)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected an error")
@@ -602,7 +603,7 @@ func TestContextLimit(t *testing.T) {
 
 func TestContextLimitMissingConfig(t *testing.T) {
 	newHub(t, status(http.StatusNotFound))
-	if _, err := ContextLimit(repo); err == nil {
+	if _, err := ContextLimit(context.Background(), repo); err == nil {
 		t.Error("expected an error when the model has no config.json")
 	}
 }
@@ -616,7 +617,7 @@ func TestDetectFlags(t *testing.T) {
 		"/" + repo + "/raw/main/config.json": "config.json",
 	})
 
-	d, err := DetectFlags(repo)
+	d, err := DetectFlags(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("DetectFlags: %v", err)
 	}
@@ -644,7 +645,7 @@ func TestDetectFlagsWithoutASnippetStillClampsContext(t *testing.T) {
 		"/" + repo + "/raw/main/README.md":   "README_no_snippet.md",
 		"/" + repo + "/raw/main/config.json": "config_small_context.json",
 	})
-	d, err := DetectFlags(repo)
+	d, err := DetectFlags(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("DetectFlags: %v", err)
 	}
@@ -662,7 +663,7 @@ func TestDetectFlagsWithoutASnippetOrConfig(t *testing.T) {
 	newHub(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("# A model card with no serving instructions.\n"))
 	}))
-	d, err := DetectFlags(repo)
+	d, err := DetectFlags(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("DetectFlags: %v", err)
 	}
@@ -673,7 +674,7 @@ func TestDetectFlagsWithoutASnippetOrConfig(t *testing.T) {
 
 func TestDetectFlagsMissingCard(t *testing.T) {
 	newHub(t, status(http.StatusNotFound))
-	if _, err := DetectFlags(repo); err == nil {
+	if _, err := DetectFlags(context.Background(), repo); err == nil {
 		t.Error("expected an error when the model card is missing")
 	}
 }
@@ -689,7 +690,7 @@ func TestWhoAmI(t *testing.T) {
 		_, _ = w.Write([]byte(`{"type":"user","name":"chris","fullname":"Chris"}`))
 	}))
 
-	name, err := WhoAmI("hf_good")
+	name, err := WhoAmI(context.Background(), "hf_good")
 	if err != nil {
 		t.Fatalf("WhoAmI: %v", err)
 	}
@@ -700,14 +701,14 @@ func TestWhoAmI(t *testing.T) {
 		t.Errorf("Authorization = %q, want a bearer token", gotAuth)
 	}
 
-	if _, err := WhoAmI("hf_bad"); err == nil || !strings.Contains(err.Error(), "401") {
+	if _, err := WhoAmI(context.Background(), "hf_bad"); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("error = %v, want the rejection reported as 401", err)
 	}
 }
 
 func TestWhoAmINon200(t *testing.T) {
 	newHub(t, status(http.StatusBadGateway))
-	if _, err := WhoAmI("hf_good"); err == nil || !strings.Contains(err.Error(), "HTTP 502") {
+	if _, err := WhoAmI(context.Background(), "hf_good"); err == nil || !strings.Contains(err.Error(), "HTTP 502") {
 		t.Errorf("error = %v, want it to report HTTP 502", err)
 	}
 }
@@ -730,7 +731,7 @@ func TestDetectChatTemplatePatch(t *testing.T) {
 			} else {
 				serveTestdata(t, map[string]string{"/" + repo + "/raw/main/chat_template.jinja": tt.file})
 			}
-			patched, ok, err := DetectChatTemplatePatch(repo)
+			patched, ok, err := DetectChatTemplatePatch(context.Background(), repo)
 			if err != nil {
 				t.Fatalf("DetectChatTemplatePatch: %v", err)
 			}
@@ -881,7 +882,7 @@ func TestWeightsSizeListsEveryVariant(t *testing.T) {
 		{"type":"file","path":"Qwen_Qwen3-32B-Q4_K_M.gguf","size":20000000000},
 		{"type":"file","path":"Qwen_Qwen3-32B-Q8_0.gguf","size":34000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -971,7 +972,7 @@ func TestWeightsSizeCountsQuantFoldersBesideARootFile(t *testing.T) {
 		{"type":"file","path":"UD-IQ1_S/model.gguf","size":192000000000},
 		{"type":"file","path":"Q2_K/model.gguf","size":245000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -994,7 +995,7 @@ func TestWeightsSizeIgnoresFormatCopiesBesideRoot(t *testing.T) {
 		{"type":"file","path":"metal/model.bin","size":65000000000},
 		{"type":"file","path":"original/model.safetensors","size":65000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}
@@ -1039,7 +1040,7 @@ func TestVariantsRecordWhatCannotBeServed(t *testing.T) {
 		{"type":"file","path":"m-bf16-00002-of-00002.gguf","size":25000000000},
 		{"type":"file","path":"UD-Q2_K_XL/model.gguf","size":20000000000}
 	]`)
-	got, err := WeightsSize(repo)
+	got, err := WeightsSize(context.Background(), repo)
 	if err != nil {
 		t.Fatalf("WeightsSize: %v", err)
 	}

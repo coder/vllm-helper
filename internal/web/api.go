@@ -164,14 +164,34 @@ func (s *Server) handleProfiles(w http.ResponseWriter, _ *http.Request) {
 }
 
 // machineResponse is the hardware the panel draws its memory rail from.
+//
+// BudgetBytes and BudgetGB shadow the embedded pair deliberately: the probe
+// reports what this machine could hold, while every verdict on the models page
+// is measured against the configured budget. Two numbers for one limit, sitting
+// beside each other on the same page, is worse than either.
+//
+// PoolBytes/Pool say which memory the budget was measured against, because on
+// a discrete GPU that is VRAM and drawing it over installed RAM would put the
+// marker in a meaningless place.
 type machineResponse struct {
 	detect.Hardware
-	AvailableMemMB int `json:"available_mem_mb"`
+	BudgetBytes    int64  `json:"budget_bytes"`
+	BudgetGB       int    `json:"budget_gb"`
+	PoolBytes      int64  `json:"pool_bytes"`
+	Pool           string `json:"pool"`
+	AvailableMemMB int    `json:"available_mem_mb"`
 }
 
 func (s *Server) handleMachine(w http.ResponseWriter, _ *http.Request) {
+	hw := detect.Probe()
+	poolBytes, pool := hw.Pool()
+	budget := s.budget()
 	writeJSON(w, http.StatusOK, machineResponse{
-		Hardware:       detect.Probe(),
+		Hardware:       hw,
+		BudgetBytes:    int64(budget * 1e9),
+		BudgetGB:       int(budget),
+		PoolBytes:      poolBytes,
+		Pool:           pool,
 		AvailableMemMB: detect.AvailableMemMB(),
 	})
 }
@@ -201,6 +221,9 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePrivilege(w) {
 		return
 	}
+	s.actionMu.Lock()
+	defer s.actionMu.Unlock()
+	defer s.forgetHealth()
 	warnings, err := s.activate(r.Context(), name)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, actionResponse{Error: err.Error(), Warnings: warnings})
@@ -213,6 +236,9 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePrivilege(w) {
 		return
 	}
+	s.actionMu.Lock()
+	defer s.actionMu.Unlock()
+	defer s.forgetHealth()
 	if err := s.privilegedCall(r.Context(), s.svc.Restart); err != nil {
 		writeJSON(w, http.StatusInternalServerError, actionResponse{Error: err.Error()})
 		return
@@ -224,6 +250,9 @@ func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePrivilege(w) {
 		return
 	}
+	s.actionMu.Lock()
+	defer s.actionMu.Unlock()
+	defer s.forgetHealth()
 	if err := s.privilegedCall(r.Context(), s.svc.Stop); err != nil {
 		writeJSON(w, http.StatusInternalServerError, actionResponse{Error: err.Error()})
 		return

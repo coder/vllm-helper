@@ -138,6 +138,14 @@ func TestCapsKnown(t *testing.T) {
 	if !caps0271.Known() {
 		t.Error("a populated Caps should be Known")
 	}
+	// A probe that got no further than the quantization registry still asked
+	// and got an answer. readCache and writeCache gate on Known, so reading
+	// it as unknown throws the answer away and re-runs the torch-importing
+	// introspection on every command.
+	quantsOnly := Caps{Quantizations: []string{"awq", "gptq", "fp8"}}
+	if !quantsOnly.Known() {
+		t.Error("a Caps holding only a quantization registry is not Known, so nothing will ever be cached")
+	}
 }
 
 // vLLM logs plugin registration to stdout, so the probe's JSON is not the only

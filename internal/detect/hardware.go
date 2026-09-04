@@ -46,6 +46,17 @@ type Hardware struct {
 	BudgetReason string  `json:"budget_reason"` // one-liner explaining the budget for the user
 }
 
+// Pool reports the memory weights are actually loaded into, and which pool
+// that is. A discrete GPU uses its own VRAM; everything else uses system
+// memory. One definition, because a caller drawing installed RAM under a
+// budget measured against VRAM is comparing two different machines.
+func (h Hardware) Pool() (int64, string) {
+	if !h.Unified && h.GPUMemBytes > 0 {
+		return h.GPUMemBytes, "vram"
+	}
+	return h.TotalMemBytes, "ram"
+}
+
 // TotalMemMB reports installed RAM in mebibytes, the unit the CPU-backend
 // clamp works in because that is how vLLM's own memory readings arrive.
 func (h Hardware) TotalMemMB() int { return int(h.TotalMemBytes / (1 << 20)) }

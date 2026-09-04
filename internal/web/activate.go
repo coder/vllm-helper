@@ -34,13 +34,18 @@ func (s *Server) activate(ctx context.Context, name string) ([]string, error) {
 	restart := func() error { return s.privilegedCall(ctx, s.svc.Restart) }
 	err = control.NotifyAndRestart(ctx, s.cfg, p, &pluginOut, restart)
 
-	var warnings []string
-	for _, line := range strings.Split(strings.TrimSpace(pluginOut.String()), "\n") {
+	return warningsFrom(&pluginOut), err
+}
+
+// warningsFrom turns captured plugin output into lines a page can show.
+func warningsFrom(buf *bytes.Buffer) []string {
+	var out []string
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
-			warnings = append(warnings, line)
+			out = append(out, line)
 		}
 	}
-	return warnings, err
+	return out
 }
 
 func hostname() string {

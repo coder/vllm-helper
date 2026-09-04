@@ -159,7 +159,7 @@ func newNewCmd() *cobra.Command {
 		Args:    cobra.MaximumNArgs(1),
 		Example: "  vllm-helper new Qwen/Qwen3-32B\n" +
 			"  vllm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0",
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
 				return errors.New("usage: vllm-helper new <org/model-repo> [--quant NAME] [--wait|--no-follow] [--timeout 30m]")
 			}
@@ -167,11 +167,11 @@ func newNewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			choice, err := resolveQuant(cfg, args[0], quant)
+			choice, err := resolveQuant(cmd.Context(), cfg, args[0], quant)
 			if err != nil {
 				return err
 			}
-			return pullAndSwitch(cfg, args[0], choice, w.opts())
+			return pullAndSwitch(cmd.Context(), cfg, args[0], choice, w.opts())
 		},
 	}
 	c.Flags().StringVar(&quant, "quant", "",
@@ -186,15 +186,15 @@ func newNewCmd() *cobra.Command {
 // Refusing here rather than at startup matters: activating a profile restarts
 // the service, so a model that cannot load takes the running one down with it
 // and leaves the machine serving nothing.
-func resolveQuant(cfg *config.Config, repo, want string) (*catalog.Choice, error) {
+func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*catalog.Choice, error) {
 	if want == "" {
 		return nil, nil
 	}
-	m, err := hf.Lookup(repo)
+	m, err := hf.Lookup(ctx, repo)
 	if err != nil {
 		return nil, fmt.Errorf("looking up %s: %w", repo, err)
 	}
-	d := inspectModel(m, cfg)
+	d := inspectModel(ctx, m, cfg)
 	v, ok := catalog.FindVariant(d.All, want)
 	if !ok {
 		// A repo holding one copy has nothing to choose between, and listing
@@ -228,7 +228,7 @@ func resolveQuant(cfg *config.Config, repo, want string) (*catalog.Choice, error
 
 // pullAndSwitch is `new` minus the flag parsing, so `search` can funnel
 // into it with its own options.
-func pullAndSwitch(cfg *config.Config, repo string, choice *catalog.Choice, opts watchOpts) error {
+func pullAndSwitch(ctx context.Context, cfg *config.Config, repo string, choice *catalog.Choice, opts watchOpts) error {
 	name := profile.NameFromRepo(repo)
 	if choice != nil {
 		if _, ok := choice.Variant.Selector(); ok {
@@ -246,7 +246,7 @@ func pullAndSwitch(cfg *config.Config, repo string, choice *catalog.Choice, opts
 	fmt.Println("Pulling new model:", repo)
 	fmt.Println("Checking the model's README for known vLLM serving flags, and its")
 	fmt.Println("chat template for known crash patterns...")
-	plan := catalog.PrepareProfile(cfg.Dirs, repo, choice, vllmCaps(cfg), cfg.KVContextTarget())
+	plan := catalog.PrepareProfile(ctx, cfg.Dirs, repo, choice, vllmCaps(cfg), cfg.KVContextTarget())
 	for _, n := range plan.Notes {
 		fmt.Println(n)
 	}

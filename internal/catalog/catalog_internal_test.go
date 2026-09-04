@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -105,7 +106,7 @@ func TestPrepareProfileAppliesAQuantChoice(t *testing.T) {
 		Variant:   hf.Variant{Name: "m-Q8_0.gguf", Label: "Q8_0", GGUF: true},
 		BaseModel: "Qwen/Qwen3-32B",
 	}
-	p := PrepareProfile(dirs, "bartowski/Qwen_Qwen3-32B-GGUF", choice, vllm.Caps{}, 0)
+	p := PrepareProfile(context.Background(), dirs, "bartowski/Qwen_Qwen3-32B-GGUF", choice, vllm.Caps{}, 0)
 
 	if want := "bartowski/Qwen_Qwen3-32B-GGUF:Q8_0"; p.Opts.Repo != want {
 		t.Errorf("Repo = %q, want %q", p.Opts.Repo, want)
@@ -120,7 +121,7 @@ func TestPrepareProfileAppliesAQuantChoice(t *testing.T) {
 	}
 
 	// No choice means the repo's default, unchanged.
-	plain := PrepareProfile(dirs, "Qwen/Qwen3-32B", nil, vllm.Caps{}, 0)
+	plain := PrepareProfile(context.Background(), dirs, "Qwen/Qwen3-32B", nil, vllm.Caps{}, 0)
 	if plain.Opts.Repo != "Qwen/Qwen3-32B" {
 		t.Errorf("Repo = %q, want the bare repo when nothing was chosen", plain.Opts.Repo)
 	}
@@ -159,7 +160,7 @@ func TestNotesDoNotCreditTheCardForOurOwnFlags(t *testing.T) {
 		BaseModel: "Qwen/Qwen3-Coder-30B-A3B-Instruct",
 	}
 	// A repo with no README snippet, which is the usual case for GGUF.
-	p := PrepareProfile(dirs, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", choice, vllm.Caps{}, 0)
+	p := PrepareProfile(context.Background(), dirs, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", choice, vllm.Caps{}, 0)
 
 	// The flag still has to reach vLLM -- the plugin cannot start without it.
 	if !strings.Contains(p.Opts.ExtraArgs, "--tokenizer Qwen/Qwen3-Coder-30B-A3B-Instruct") {
@@ -229,7 +230,7 @@ func TestInspectFetchesTheArchConcurrently(t *testing.T) {
 	m := hf.Model{ID: "unsloth/demo-GGUF"}
 	m.CardData.BaseModel = json.RawMessage(`"org/demo"`)
 
-	d := Inspect(m, 84, vllm.Caps{}, 0)
+	d := Inspect(context.Background(), m, 84, vllm.Caps{}, 0)
 
 	// Overlap is the whole claim, and it is deterministic: a sequential
 	// implementation can never have two requests in flight at once. An
@@ -252,6 +253,48 @@ func TestInspectFetchesTheArchConcurrently(t *testing.T) {
 	}
 	if d.Best != nil {
 		t.Errorf("recommended %s from a repo where nothing can load", d.Best.Label)
+	}
+}
+
+// An unreadable quantization registry means "we could not ask", and every
+// other path here offers the repo's GGUF variants on that basis. Asking the
+// stricter "does vLLM support GGUF" question only when ranking left a GGUF
+// repo with no recommendation at all, on a machine that was about to be
+// offered every one of those quants.
+func TestBestIsStillChosenWhenTheQuantRegistryCouldNotBeRead(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "config.json"):
+			fmt.Fprint(w, `{"model_type":"qwen3","num_hidden_layers":28,
+			                "num_key_value_heads":8,"head_dim":128,
+			                "max_position_embeddings":40960}`)
+		case strings.Contains(r.URL.Path, "/tree/"):
+			fmt.Fprint(w, `[{"type":"file","path":"m-Q8_0.gguf","size":34000000000},
+			                {"type":"file","path":"m-Q4_K_M.gguf","size":19000000000},
+			                {"type":"file","path":"m-IQ2_XXS.gguf","size":9000000000}]`)
+		default:
+			fmt.Fprint(w, `# no serve snippet`)
+		}
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+
+	m := hf.Model{ID: "someone/demo-GGUF"}
+	m.CardData.BaseModel = json.RawMessage(`"org/demo"`)
+
+	// An empty Caps is what a probe that could not run returns.
+	d := Inspect(context.Background(), m, 84, vllm.Caps{}, 0)
+	if !d.GGUFReady {
+		t.Fatal("caps we could not read were taken as a missing GGUF plugin")
+	}
+	if len(d.All) != 3 {
+		t.Fatalf("got %d variants, want the 3 the repo publishes", len(d.All))
+	}
+	if d.Best == nil {
+		t.Fatal("no quant recommended from a repo whose quants are all on offer")
+	}
+	if d.Best.Label != "Q8_0" {
+		t.Errorf("recommended %q, want Q8_0: the largest that fits the budget", d.Best.Label)
 	}
 }
 
@@ -290,7 +333,7 @@ func TestTheReposOwnConfigBeatsItsBaseModels(t *testing.T) {
 	m := hf.Model{ID: "Qwen/Qwen3-0.6B"}
 	m.CardData.BaseModel = json.RawMessage(`["Qwen/Qwen3-0.6B-Base"]`)
 
-	d := Inspect(m, 84, vllm.Caps{}, 0)
+	d := Inspect(context.Background(), m, 84, vllm.Caps{}, 0)
 	if d.MaxContext != 40960 {
 		t.Errorf("MaxContext = %d, want 40960 from the repo's own config", d.MaxContext)
 	}
@@ -328,7 +371,7 @@ func TestAConfiglessRepoFallsBackToItsBaseModel(t *testing.T) {
 	m := hf.Model{ID: "someone/demo-GGUF"}
 	m.CardData.BaseModel = json.RawMessage(`"org/base"`)
 
-	d := Inspect(m, 84, vllm.Caps{}, 0)
+	d := Inspect(context.Background(), m, 84, vllm.Caps{}, 0)
 	if d.KVBytesPerToken != 2*28*8*128*2 {
 		t.Errorf("KVBytesPerToken = %d, want the base model's shape", d.KVBytesPerToken)
 	}
@@ -462,7 +505,7 @@ func TestAPullWithoutAQuantChoiceStillMeasuresTheWeights(t *testing.T) {
 	defer srv.Close()
 	defer hf.SetBaseURLForTest(srv.URL)()
 
-	PrepareProfile(config.Dirs{Data: t.TempDir()}, "org/big-model", nil, vllm.Caps{}, 0)
+	PrepareProfile(context.Background(), config.Dirs{Data: t.TempDir()}, "org/big-model", nil, vllm.Caps{}, 0)
 
 	mu.Lock()
 	defer mu.Unlock()

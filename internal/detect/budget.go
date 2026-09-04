@@ -81,7 +81,8 @@ const baselineCeiling = 0.15
 // with a line explaining the figure. usedBytes is memory in use now, or 0 when
 // unknown. A discrete GPU is measured against its own VRAM.
 func (h Hardware) Budget(usedBytes int64) (int64, string) {
-	pool := float64(h.TotalMemBytes)
+	poolBytes, poolKind := h.Pool()
+	pool := float64(poolBytes)
 	runtime, graphs := float64(runtimeReserve), float64(graphReserve)
 	baseline := 0.0
 	reason := "unified/system memory, minus the OS and vLLM's own overhead"
@@ -94,8 +95,8 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 	}
 
 	switch {
-	case !h.Unified && h.GPUMemBytes > 0:
-		pool, runtime, graphs = float64(h.GPUMemBytes), discreteRuntime, float64(graphReserve)
+	case poolKind == "vram":
+		runtime, graphs = discreteRuntime, float64(graphReserve)
 		baseline = discreteBaseline
 		reason = "discrete VRAM, minus CUDA's overhead and room for a KV cache"
 	case usedBytes > 0 && float64(usedBytes) < baselineCeiling*pool:

@@ -9,6 +9,7 @@
 package catalog
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -127,7 +128,7 @@ func ToResult(m hf.Model) Result {
 // guessing, so nothing downstream claims it fits.
 // contextTarget is how many full-length requests to size a KV cache for; 0
 // takes detect's default.
-func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) Detail {
+func Inspect(ctx context.Context, m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) Detail {
 	d := Detail{
 		Result:    ToResult(m),
 		BudgetGB:  budgetGB,
@@ -151,9 +152,9 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) De
 	// fallback for repos that ship none, which in practice means GGUF.
 	archCh := make(chan hf.Arch, 1)
 	go func() {
-		a, _ := hf.Config(m.ID)
+		a, _ := hf.Config(ctx, m.ID)
 		if a.ModelType == "" && a.MaxContext() == 0 && d.BaseModel != "" {
-			a, _ = hf.Config(d.BaseModel)
+			a, _ = hf.Config(ctx, d.BaseModel)
 		}
 		archCh <- a
 	}()
@@ -161,7 +162,7 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) De
 	// A failed measurement is not the same as a repo with nothing to measure:
 	// the pagination guards report an error precisely so a short listing is
 	// not mistaken for a small model, and swallowing it here would undo that.
-	if w, err := hf.WeightsSize(m.ID); err != nil {
+	if w, err := hf.WeightsSize(ctx, m.ID); err != nil {
 		d.SizeError = err.Error()
 	} else if w.SizeGB > 0 {
 		d.SizeGB = w.SizeGB
@@ -193,7 +194,11 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) De
 			// Which one to actually run is a separate question from
 			// whether any of them can, and only worth answering when
 			// there is more than one to choose between.
-			if best, ok := w.BestFit(d.BudgetGB, caps.SupportsGGUF()); ok && len(w.All) > 1 {
+			// GGUFReady, not SupportsGGUF: an unreadable registry means
+			// "we could not ask", and every other path here offers those
+			// variants. Asking the stricter question only here would rank
+			// nothing on a machine that is about to be offered the lot.
+			if best, ok := w.BestFit(d.BudgetGB, d.GGUFReady); ok && len(w.All) > 1 {
 				d.Best = &best
 			}
 		}
@@ -210,7 +215,7 @@ func Inspect(m hf.Model, budgetGB float64, caps vllm.Caps, contextTarget int) De
 			d.KVCacheGB = float64(plan.KVCacheBytes) / 1e9
 		}
 	}
-	if flags, err := hf.DetectFlags(m.ID); err == nil {
+	if flags, err := hf.DetectFlags(ctx, m.ID); err == nil {
 		// Validate here too: seeing that a card's parser won't work on this
 		// machine is most useful before pulling tens of gigabytes.
 		d.DetectedFlags, d.DroppedFlags = vllm.Check(flags.ExtraArgs, caps)
@@ -234,7 +239,7 @@ type Plan struct {
 // Nothing here is fatal. Every check that fails degrades to a note, because
 // the alternative -- refusing to save a profile because the Hub was slow --
 // helps nobody.
-func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
+func PrepareProfile(ctx context.Context, dirs config.Dirs, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
 	var p Plan
 	name := profile.NameFromRepo(repo)
 	model := repo
@@ -260,7 +265,7 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 		}
 	}
 
-	detected, _ := hf.DetectFlags(repo)
+	detected, _ := hf.DetectFlags(ctx, repo)
 
 	// Kept apart from extraFlags on purpose. These two end up in the same
 	// ExtraArgs but they are not the same claim: one is what the model's
@@ -270,7 +275,7 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 	cardArgs, dropped := vllm.Check(detected.ExtraArgs, caps)
 	p.Notes = append(p.Notes, dropped...)
 
-	if patched, needsPatch, err := hf.DetectChatTemplatePatch(repo); err != nil {
+	if patched, needsPatch, err := hf.DetectChatTemplatePatch(ctx, repo); err != nil {
 		p.Notes = append(p.Notes, "Chat template check failed, continuing without it: "+err.Error())
 	} else if needsPatch {
 		tmplPath := filepath.Join(dirs.Data, "chat-templates", name+".jinja")
@@ -301,8 +306,8 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 	if maxLen == 0 {
 		maxLen = profile.DefaultMaxModelLen
 	}
-	arch, _ := hf.Config(configRepoFor(repo, choice))
-	cache, clamped := planCache(detect.Probe(), arch, weightBytes(repo, choice), maxLen, contextTarget)
+	arch, _ := hf.Config(ctx, configRepoFor(repo, choice))
+	cache, clamped := planCache(detect.Probe(), arch, weightBytes(ctx, repo, choice), maxLen, contextTarget)
 	if clamped != maxLen {
 		p.Opts.MaxModelLen = strconv.Itoa(clamped)
 	}
@@ -362,11 +367,11 @@ func planCache(hw detect.Hardware, arch hf.Arch, weights int64, maxLen, target i
 // weightBytes is what the model will occupy. A chosen quant names its own size;
 // otherwise it has to be measured, and a plan given 0 believes the weights are
 // free and hands their room to the cache.
-func weightBytes(repo string, choice *Choice) int64 {
+func weightBytes(ctx context.Context, repo string, choice *Choice) int64 {
 	if choice != nil {
 		return int64(choice.Variant.SizeGB * 1e9)
 	}
-	w, err := hf.WeightsSize(repo)
+	w, err := hf.WeightsSize(ctx, repo)
 	if err != nil {
 		return 0
 	}
