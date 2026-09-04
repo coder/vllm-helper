@@ -317,6 +317,14 @@ func PrepareProfile(dirs config.Dirs, repo string, choice *Choice, caps vllm.Cap
 	if cache.Note != "" {
 		p.Notes = append(p.Notes, cache.Note)
 	}
+
+	// Harmony reads its vocab from disk rather than the model repo, and
+	// without it the server starts healthy and fails every request.
+	if needsHarmony(arch.ModelType) {
+		if note := ensureHarmonyEncodings(dirs.Data); note != "" {
+			p.Notes = append(p.Notes, note)
+		}
+	}
 	// Only the card's own flags decide this. What we added says nothing about
 	// whether the author documented how to serve the model, which is what the
 	// status is for.
