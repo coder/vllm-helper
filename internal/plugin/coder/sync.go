@@ -210,37 +210,70 @@ func activate(cfg *config.Config, p *profile.Profile) {
 	}
 	state := ids(cfg)
 
-	if id := state.Get(p.Name); id == "" {
-		fmt.Printf("Coder sync: creating model-config for '%s'...\n", p.Name)
-		newID, err := client.Create(mc)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Coder sync: create failed, continuing without it:", err)
+	// A saved ID can name an entry that no longer exists -- deleted in
+	// Coder's UI, or left behind by a different deployment. Recreating is
+	// what was wanted either way, and refusing would leave the picker
+	// permanently stale with only an HTTP 404 to explain it.
+	id := state.Get(p.Name)
+	if id != "" {
+		fmt.Printf("Coder sync: updating model-config for '%s'...\n", p.Name)
+		err := client.Update(id, mc)
+		if err == nil {
+			state = disableOthers(cfg, client, state, p.Name)
+			fmt.Printf("Coder sync: '%s' is now the only enabled/default model in Coder Agents.\n", p.Name)
 			return
 		}
-		state.Set(p.Name, newID)
-		saveIDs(cfg, state)
-	} else {
-		fmt.Printf("Coder sync: updating model-config for '%s'...\n", p.Name)
-		if err := client.Update(id, mc); err != nil {
+		if !errors.Is(err, ErrNotFound) {
 			fmt.Fprintln(os.Stderr, "Coder sync: update failed, continuing without it:", err)
 			return
 		}
+		fmt.Printf("Coder sync: '%s' had no entry on this deployment, creating one...\n", p.Name)
+	} else {
+		fmt.Printf("Coder sync: creating model-config for '%s'...\n", p.Name)
 	}
+	newID, err := client.Create(mc)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Coder sync: create failed, continuing without it:", err)
+		return
+	}
+	state.Set(p.Name, newID)
+	saveIDs(cfg, state)
 
+	state = disableOthers(cfg, client, state, p.Name)
+	fmt.Printf("Coder sync: '%s' is now the only enabled/default model in Coder Agents.\n", p.Name)
+}
+
+// disableOthers turns off every other profile's entry, because vLLM serves one
+// model at a time and any other entry names something this machine cannot
+// answer for right now. (Not about is_default -- Coder enforces a single
+// default itself.)
+//
+// An entry that has already gone is forgotten rather than reported: the goal
+// is that it not be selectable, and a deleted entry meets that.
+func disableOthers(cfg *config.Config, client *Client, state *config.EnvFile, keep string) *config.EnvFile {
 	profiles, _ := profile.List(cfg.Dirs)
+	dropped := false
 	for _, other := range profiles {
-		if other.Name == p.Name {
+		if other.Name == keep {
 			continue
 		}
 		id := state.Get(other.Name)
 		if id == "" {
 			continue
 		}
-		if err := client.Disable(id); err != nil {
+		switch err := client.Disable(id); {
+		case err == nil:
+		case errors.Is(err, ErrNotFound):
+			state.Delete(other.Name)
+			dropped = true
+		default:
 			fmt.Fprintf(os.Stderr, "Coder sync: failed to disable '%s', continuing: %v\n", other.Name, err)
 		}
 	}
-	fmt.Printf("Coder sync: '%s' is now the only enabled/default model in Coder Agents.\n", p.Name)
+	if dropped {
+		saveIDs(cfg, state)
+	}
+	return state
 }
 
 // register creates a disabled entry for a profile that isn't active
