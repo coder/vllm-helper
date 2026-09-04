@@ -145,6 +145,13 @@ the fact.
 
 ### Fixed
 
+- gpt-oss models are set up so they can actually be used. Their cards carry no
+  `vllm serve` snippet, so nothing was detected and the profile was written with
+  no flags at all. Served that way the model answers ordinary chat normally but
+  returns an empty message for anything involving tools, which reads as the
+  model ignoring the request rather than as a missing flag. `new` now adds the
+  parsers that read this format, and fetches the vocab files the tokenizer
+  reads from disk, both only where the installed vLLM confirms them.
 - Installing the GGUF plugin from the panel no longer holds a request open for
   the whole build. It builds from source, so that request stayed open for
   minutes and browsers drop those — after which the page could not tell a
