@@ -158,6 +158,15 @@ func inspectModel(m hf.Model, cfg *config.Config) catalog.Detail {
 	return catalog.Inspect(m, detect.BudgetGB(override), vllmCaps(cfg), target)
 }
 
+// display is the readable form of a variant's label. Never use it where the
+// exact label is needed -- it is what vLLM is given.
+func display(v hf.Variant) string {
+	if v.Display != "" {
+		return v.Display
+	}
+	return v.Label
+}
+
 // thousands renders a token count the way people say it: 262144 as "262k".
 func thousands(n int64) string {
 	if n < 1000 {
@@ -197,7 +206,7 @@ func printModelDetail(d catalog.Detail, cfg *config.Config) {
 		// proves something here fits, which is the smallest and so also the
 		// worst quant in the repo.
 		fmt.Printf("  size:       %.1f GB at %s  (biggest of %d quants that fits the ~%.0fGB budget; smallest is %.1f GB)\n",
-			d.Best.SizeGB, d.Best.Label, d.Variants, d.BudgetGB, d.SizeGB)
+			d.Best.SizeGB, display(*d.Best), d.Variants, d.BudgetGB, d.SizeGB)
 	case *d.FitsBudget:
 		fmt.Printf("  size:       %.1f GB  (fits under the ~%.0fGB budget%s)\n", d.SizeGB, d.BudgetGB, of)
 	case d.Variants > 1:
@@ -267,7 +276,7 @@ func printVariants(d catalog.Detail) {
 		case d.BudgetGB > 0 && v.SizeGB > d.BudgetGB:
 			mark, note = "  x", "  too big for this machine"
 		}
-		fmt.Printf("%s %-14s %6.1f GB%s\n", mark, v.Label, v.SizeGB, note)
+		fmt.Printf("%s %-26s %6.1f GB%s\n", mark, display(v), v.SizeGB, note)
 	}
 	// Only offer the flag when there is something it could pick. On a machine
 	// that cannot load GGUF every row is struck through, and inviting a
@@ -307,7 +316,7 @@ func pickQuant(cfg *config.Config, d catalog.Detail) (choice *catalog.Choice, ca
 		if d.Best != nil && v.Name == d.Best.Name {
 			mark = "*"
 		}
-		fmt.Printf(" %s %2d) %-14s %6.1f GB\n", mark, i+1, v.Label, v.SizeGB)
+		fmt.Printf(" %s %2d) %-26s %6.1f GB\n", mark, i+1, display(v), v.SizeGB)
 	}
 	def := 1
 	if d.Best != nil {

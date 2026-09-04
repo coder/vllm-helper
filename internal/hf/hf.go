@@ -161,9 +161,14 @@ type Variant struct {
 	// quant subfolder, or "" for weights sitting at the repo root.
 	Name string `json:"name"`
 	// Label is Name reduced to the part worth reading, so a list of them
-	// can be scanned: "Q8_0" rather than "Qwen_Qwen3-32B-Q8_0.gguf".
-	Label  string  `json:"label"`
-	SizeGB float64 `json:"size_gb"`
+	// can be scanned: "Q8_0" rather than "Qwen_Qwen3-32B-Q8_0.gguf". It is
+	// also the selector vLLM is given, so it cannot be abbreviated.
+	Label string `json:"label"`
+	// Display is Label shortened for a list or a dropdown. Some publishers
+	// name a quant after every per-tensor override it applies, which runs to
+	// 70 characters and hides the one part that differs.
+	Display string  `json:"display,omitempty"`
+	SizeGB  float64 `json:"size_gb"`
 	// GGUF marks a variant that needs vLLM's out-of-tree GGUF plugin.
 	GGUF bool `json:"gguf,omitempty"`
 	// Blocked says why vLLM cannot be pointed at this variant, and is empty
@@ -221,12 +226,59 @@ func quantLabel(name, repo string) string {
 	}
 
 	if _, model, ok := strings.Cut(repo, "/"); ok {
-		trimmed := strings.TrimPrefix(label, model)
-		if t := strings.Trim(trimmed, "-_."); t != "" {
+		// HasPrefix, not TrimPrefix: a miss leaves the label untouched, and
+		// trimming that would look like a successful strip.
+		if strings.HasPrefix(label, model) {
+			if t := strings.Trim(strings.TrimPrefix(label, model), "-_."); t != "" {
+				return t
+			}
+		}
+		// The prefix rarely matches exactly: a repo named deepseek-v4-gguf
+		// holds files called DeepSeek-V4-Pro-... So drop leading words the
+		// repo name already says, which by definition tell these variants
+		// apart from nothing.
+		if t := trimRepoWords(label, model); t != "" {
 			return t
 		}
 	}
 	return label
+}
+
+// trimRepoWords removes leading dash-separated words of label that also appear
+// in the repo's model name, case-insensitively.
+func trimRepoWords(label, model string) string {
+	known := map[string]bool{}
+	for _, w := range strings.FieldsFunc(strings.ToLower(model), isLabelSep) {
+		known[w] = true
+	}
+	words := strings.Split(label, "-")
+	i := 0
+	for i < len(words)-1 && known[strings.ToLower(words[i])] {
+		i++
+	}
+	if i == 0 {
+		return ""
+	}
+	return strings.Join(words[i:], "-")
+}
+
+func isLabelSep(r rune) bool { return r == '-' || r == '_' || r == '.' }
+
+// maxLabelWidth is how much of a label a list can show before the column stops
+// being scannable.
+const maxLabelWidth = 26
+
+// shortLabel elides the middle of an over-long label. The ends are what differ
+// between siblings -- the quant at the front, a date or revision at the back --
+// so the middle is the part that can go.
+func shortLabel(label string) string {
+	if len(label) <= maxLabelWidth {
+		return label
+	}
+	const ellipsis = "..."
+	keep := maxLabelWidth - len(ellipsis)
+	head := (keep + 1) / 2
+	return label[:head] + ellipsis + label[len(label)-(keep-head):]
 }
 
 // quantSuffix matches the precision marker at the end of a variant name --
@@ -454,11 +506,13 @@ func pickSmallest(candidates map[string]int64, display map[string]string, parts 
 		if d, ok := display[name]; ok {
 			shown = d
 		}
+		label := quantLabel(shown, repo)
 		v := Variant{
-			Name:   shown,
-			Label:  quantLabel(shown, repo),
-			SizeGB: float64(size) / 1e9,
-			GGUF:   isGGUF(shown) || folders[name],
+			Name:    shown,
+			Label:   label,
+			Display: shortLabel(label),
+			SizeGB:  float64(size) / 1e9,
+			GGUF:    isGGUF(shown) || folders[name],
 		}
 		// Which layouts vLLM can be pointed at is not a judgement about
 		// quality: it addresses a GGUF quant by name, and on every released
