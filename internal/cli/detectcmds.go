@@ -42,6 +42,7 @@ type doctorConfig struct {
 	ServiceState    string `json:"service_state"`
 	ServiceCrashed  bool   `json:"service_crashed"`
 	ServiceRestarts int    `json:"service_restarts"`
+	BudgetOverride  string `json:"budget_override,omitempty"`
 	CoderConfigured bool   `json:"coder_sync_configured"`
 }
 
@@ -118,6 +119,7 @@ func gatherDoctor() doctorReport {
 			ServiceState:    health.State,
 			ServiceCrashed:  health.Crashed,
 			ServiceRestarts: health.NRestarts,
+			BudgetOverride:  cfg.ModelBudgetGB(),
 			CoderConfigured: cfg.CoderConfigured(),
 		}
 	}
@@ -240,6 +242,11 @@ func renderDoctor(r doctorReport, yes bool) {
 		fmt.Printf("  in use:     %.1f GB by the OS and everything else running\n", hw.BaselineGB)
 	}
 	fmt.Printf("  budget:     ~%d GB of model weights (%s)\n", hw.BudgetGB, hw.BudgetReason)
+	// An override silently replaces the figure above everywhere else, so
+	// showing only the measured one would make doctor disagree with search.
+	if r.Config != nil && r.Config.BudgetOverride != "" {
+		fmt.Printf("              overridden to %s GB by MODEL_BUDGET_GB in config.env\n", r.Config.BudgetOverride)
+	}
 	fmt.Println()
 
 	fmt.Println("CONFIG")
