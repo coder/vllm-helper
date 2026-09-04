@@ -122,8 +122,17 @@ func (h Hardware) Budget(usedBytes int64) (int64, string) {
 // override from config.env. An unparseable or non-positive override is treated
 // as absent: a zero budget would silently reject every model on the Hub.
 func BudgetGB(override string) float64 {
-	if v, err := strconv.ParseFloat(strings.TrimSpace(override), 64); err == nil && v > 0 {
+	if v, ok := overrideGB(override); ok {
 		return v
 	}
 	return float64(Probe().BudgetBytes) / gigabyte
+}
+
+// overrideGB reads a configured budget, reporting false when there is none to
+// use. Kept apart from the probe so the parsing can be checked on its own: the
+// probe reads memory that is in use right now, so two calls a moment apart
+// legitimately disagree and cannot be compared to each other.
+func overrideGB(override string) (float64, bool) {
+	v, err := strconv.ParseFloat(strings.TrimSpace(override), 64)
+	return v, err == nil && v > 0
 }
