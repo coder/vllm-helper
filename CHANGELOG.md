@@ -9,6 +9,8 @@ the fact.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-07
+
 ### Added
 
 - Choosing which quantization to serve, for the GGUF repos that ship several.
@@ -16,6 +18,20 @@ the fact.
   preselected, and the panel offers a dropdown. The choice is written into the
   profile as `MODEL=repo:QUANT`, along with the `--tokenizer` such a model
   needs, so what runs is what was picked rather than whatever vLLM resolves.
+- `coder-sync prune` clears model entries this machine can no longer serve. A
+  provider names one endpoint, so an entry for a model that isn't here is one
+  Coder's picker offers and the server then refuses — and they accumulate, from
+  profiles deleted outside vllm-helper or from a provider whose address moved to
+  a different machine, leaving the previous one's models behind. It reports by
+  default and deletes on `--yes` or a prompt, and calls out an enabled orphan
+  separately: a disabled one is untidy, an enabled one is selectable and then
+  fails. Entries belonging to other providers in the same deployment are never
+  touched.
+- `CODER_ORGANIZATION` in `config.env`, for deployments with more than one.
+  Coder resolves the literal `default` server-side for single-organization
+  deployments, which is why it was hardcoded, but a deployment with several has
+  no default to fall back on and had no way to name its own. Still defaults to
+  `default`.
 - `install-gguf` installs the plugin vLLM now needs to read GGUF at all,
   into the interpreter that owns the configured vLLM rather than whatever
   `pip` is on PATH. It says what the trade-offs are before installing:
@@ -72,6 +88,38 @@ the fact.
 
 ### Changed
 
+- The KV cache is sized for the model being served instead of being whatever
+  vLLM finds left over. Every profile carried `GPU_MEMORY_UTILIZATION=0.85`
+  regardless of what it was serving, and since that fraction is what decides the
+  cache when nothing else does, a 1.1 GB model took 101.77 GiB of KV cache — 23
+  full contexts of something nobody was asking 23 contexts of — on a 121 GiB
+  machine that then sat at 112 GB used with 2 GB in swap. New profiles are
+  written with `KV_CACHE_MEMORY_BYTES`, computed from the model's own attention
+  shape and sized at `KV_CONTEXT_TARGET` full contexts (four by default, since
+  nothing about the hardware can tell a single-user box from a shared endpoint),
+  and `start` passes it as `--kv-cache-memory-bytes`. With the cache pinned,
+  `--gpu-memory-utilization` becomes what its name always suggested: a ceiling
+  on what vLLM may touch, not the size of the cache. Existing profiles are
+  untouched and keep the old behaviour until they are re-created. Note that a
+  profile written by this release names a flag older vLLM builds don't have.
+- `inspect`, `search` and the panel report how much context a model can actually
+  hold on this machine — tokens, the KV cache they cost, and how many times the
+  model's own maximum that is. It's the question the size line was always
+  standing in for.
+- The model budget is measured from the machine rather than being a fixed
+  percentage of it. The old rule handed over 70% of unified memory or 80% of
+  VRAM; both numbers were invented, and on a 128 GB machine the first held back
+  37 GiB for an operating system that vLLM's own profiler measures at under
+  6 GiB. The budget now solves for the largest model whose weights, runtime
+  overhead and a usable KV cache all fit, with the OS baseline read from the
+  machine when it looks idle. Because it is a property of the hardware — one
+  that changes when RAM is added — it is re-measured on every run instead of
+  being frozen into `config.env` at install time. `MODEL_BUDGET_GB` is now an
+  override, and `setup` writes it commented out. If you ran `setup` on an
+  earlier version the number it wrote is still there, and now pins the budget to
+  whatever that machine looked like then; comment it out to get the measurement.
+  `doctor` says when an override is in force, so the figure it reports and the
+  one `search` compares against can no longer disagree with no way to tell why.
 - GGUF builds of mixture-of-experts models are marked unsupported rather than
   offered. vLLM's GGUF plugin maps fused expert weights for two architectures
   only (OLMoE and MiniMax-M2); every other MoE fails at load with one unmapped
@@ -178,7 +226,46 @@ the fact.
 - `--gpu-memory-utilization` is clamped to what's actually free on Linux hosts
   with no NVIDIA GPU. There the flag reserves a fraction of _system_ RAM rather
   than VRAM, so the 0.85 default asked for 85% of the machine and aborted
-  startup. Hosts with a GPU are untouched, and macOS already did this.
+  startup. Hosts with a discrete card are untouched, and macOS already did this.
+- `--gpu-memory-utilization` is capped on machines where the GPU shares one
+  memory pool with the host — GB10, Jetson, Thor. The old guard asked "is there
+  an NVIDIA GPU?", which is the right question for discrete VRAM, where nobody
+  else can take it, and the wrong one for unified memory, where the flag is a
+  slice of the whole machine and the remainder is all the OS and page cache get.
+  Overshooting there is worse than elsewhere: the allocation failure lands below
+  the CUDA runtime, so instead of a clean OOM the host can wedge hard enough to
+  need a power cycle. Such machines take a 0.85 cap rather than a live
+  measurement — measuring free memory during a restart reads the outgoing
+  server, which on a DGX Spark serving a 68 GB model turned 0.85 into 0.06 and
+  left a cache too small to run. Discrete cards and the CPU backend are
+  unchanged.
+- A machine with no NVIDIA GPU is no longer charged for a CUDA context and graph
+  capture it never creates. Those reserves were all measured on a GPU box, so a
+  7 GB CPU-only host came out with a budget of zero and was told nothing would
+  run, when vLLM's CPU backend serves small models there quite happily. A
+  machine that genuinely cannot serve anything now says so, rather than
+  reporting a budget that happens to be zero.
+- Fit checks were 7.4% pessimistic. HuggingFace reports sizes in decimal GB and
+  memory was being read in GiB, so models that did fit were called too big.
+  Sizes are carried in bytes internally now.
+- A model's weights are measured wherever they live. The listing only looked at
+  the repo root, so a model keeping its weights one level down measured as 0 and
+  was reported as "unknown" rather than as a size, and a sharded repo whose
+  listing ran past one page was never counted in full. Listing is recursive and
+  follows the Hub's pagination now, running out of pages is an error rather than
+  a short answer, and a measurement that fails says it could not be measured
+  instead of being rendered as a model with no servable weights — the two read
+  as opposites and only one of them is a reason not to pull.
+- Coder sync follows the model-config collection to its new route. Coder moved
+  it from `/api/experimental/chats/model-configs` to
+  `/api/v2/organizations/{org}/chats/models` and reserves the old path, so
+  against a 2.37 deployment every sync failed with an HTTP 404 that read like a
+  bad `CODER_URL` or an expired token — which is exactly what `doctor` said. The
+  client now asks the deployment which collection it serves, once per command,
+  and both generations stay supported because both are in the wild. A saved
+  entry ID that has outlived its entry — deleted in Coder's UI, or left by
+  another deployment — is also told apart from a missing collection now:
+  `activate` re-creates it rather than giving up.
 - `status` distinguishes a service that is failing to start from one that is
   still loading. Both leave the endpoint unresponsive, and reporting a
   crash-looping unit as "still loading" sent people off to wait for a server
@@ -323,7 +410,8 @@ the fact.
   users, and an idempotent `install.sh` supporting system- and user-scope
   systemd units.
 
-[Unreleased]: https://github.com/coder/vllm-helper/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/coder/vllm-helper/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/coder/vllm-helper/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/coder/vllm-helper/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/coder/vllm-helper/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/coder/vllm-helper/compare/v0.1.0...v0.2.0

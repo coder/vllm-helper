@@ -100,8 +100,13 @@ A profile is a small env file in `~/.config/vllm-helper/models/`:
 MODEL=Qwen/Qwen3-Coder-Next-FP8
 MAX_MODEL_LEN=131072
 GPU_MEMORY_UTILIZATION=0.85
+KV_CACHE_MEMORY_BYTES=17179869184
 EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 ```
+
+`KV_CACHE_MEMORY_BYTES` is sized when the profile is written, from the model's own attention shape and `KV_CONTEXT_TARGET` (`config.env`, four full contexts by default). With it set, `GPU_MEMORY_UTILIZATION` is a ceiling on what vLLM may touch rather than the size of the cache. Profiles written before this key existed keep working; re-create one to get a sized cache.
+
+The model budget `search` and `doctor` compare against is measured from the machine on every run. Set `MODEL_BUDGET_GB` in `config.env` to override it — `doctor` says when one is in force.
 
 Keep `EXTRA_ARGS` quoted if it has more than one flag; flag values with spaces (like JSON) can be quoted inside it.
 
@@ -146,7 +151,7 @@ A 0.6B model in BF16 serves at roughly 30 tokens/sec on an M4 Pro, which is enou
 
 If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm-helper can keep Coder's model picker truthful: every profile gets a model-config entry, and only the loaded model is enabled. Set `CODER_URL` and `CODER_AI_PROVIDER_ID` in `config.env` and `CODER_API_TOKEN` in `secrets.env`. Sync failures never block a local switch.
 
-`vllm-helper coder-sync register-all` adds a disabled entry for any profile that doesn't have one yet; existing entries are left as-is. `vllm-helper doctor` verifies the configured URL and token against the API.
+`vllm-helper coder-sync register-all` adds a disabled entry for any profile that doesn't have one yet; existing entries are left as-is. `vllm-helper coder-sync prune` reports entries this provider offers that no local profile can serve, and deletes them with `--yes`. `vllm-helper doctor` verifies the configured URL and token against the API. On a deployment with more than one organization, name yours with `CODER_ORGANIZATION`.
 
 ## Troubleshooting
 
