@@ -44,3 +44,17 @@ jobs:
           args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Extracting the notes and publishing them are different things, and the
+      # gap between them is silent: v0.4.0 was published with an empty body by
+      # a run where the extract step above printed all 336 lines of it. Read
+      # the release back and fail if the body didn't land.
+      - name: Verify the published release carries the notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          published="$(gh release view "$GITHUB_REF_NAME" --json body --jq '.body')"
+          if [ "$(printf '%s' "$published" | tr -d '[:space:]' | wc -c)" -lt 200 ]; then
+            echo "::error::${GITHUB_REF_NAME} was published with an empty or truncated body, though CHANGELOG.md has a section for it. Check that changelog.disable is not set in .goreleaser.yaml."
+            exit 1
+          fi
