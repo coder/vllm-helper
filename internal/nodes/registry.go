@@ -28,7 +28,8 @@ type Capabilities struct {
 // Node is one machine in the cluster registry.
 type Node struct {
 	Name   string            `json:"name"`
-	Host   string            `json:"host"` // scheme://host:port for API routing
+	Host   string            `json:"host"`          // scheme://host:port for API routing
+	SSH    string            `json:"ssh,omitempty"` // user@host for orchestration
 	Labels map[string]string `json:"labels"`
 	Caps   Capabilities      `json:"caps"`
 }

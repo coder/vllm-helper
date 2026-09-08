@@ -1,14 +1,407 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/nodes"
+	"github.com/coder/vllm-helper/internal/profile"
 )
 
 func newShardCmd() *cobra.Command {
 	c := &cobra.Command{Use: "shard", Short: "Sharded (distributed) serving", GroupID: groupMachine}
-	c.AddCommand(&cobra.Command{Use: "new <name>", Args: cobra.ExactArgs(1), Short: "Create sharded config", Run: func(_ *cobra.Command, args []string) { fmt.Println("not implemented") }})
-	c.AddCommand(&cobra.Command{Use: "status <name>", Args: cobra.ExactArgs(1), Short: "Show sharded status", Run: func(_ *cobra.Command, args []string) { fmt.Println("not implemented") }})
+	c.AddCommand(newShardInstallRayCmd(), newShardStartCmd(), newShardStopCmd(), newShardStatusCmd())
 	return c
+}
+
+type shardCommon struct {
+	nodesCSV string
+	head     string
+	sshKey   string
+	dryRun   bool
+}
+
+func (s *shardCommon) register(c *cobra.Command) {
+	c.Flags().StringVar(&s.nodesCSV, "nodes", "", "Comma-separated node names")
+	c.Flags().StringVar(&s.head, "head", "", "Head node name (defaults to first --nodes entry)")
+	c.Flags().StringVar(&s.sshKey, "ssh-key", "", "SSH private key for non-head nodes")
+	c.Flags().BoolVar(&s.dryRun, "dry-run", false, "print commands instead of running them")
+}
+
+func newShardInstallRayCmd() *cobra.Command {
+	var common shardCommon
+	var python string
+	c := &cobra.Command{
+		Use:   "install-ray --nodes n1,n2",
+		Short: "Install Ray into the vLLM virtualenv on cluster nodes",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			return shardInstallRay(cfg, common, python)
+		},
+	}
+	common.register(c)
+	c.Flags().StringVar(&python, "python", "", "Python executable to install Ray with (defaults next to VLLM_BIN)")
+	return c
+}
+
+func newShardStartCmd() *cobra.Command {
+	var common shardCommon
+	var o shardStartOptions
+	c := &cobra.Command{
+		Use:   "start --profile <profile> --nodes n1,n2",
+		Short: "Start a Ray-backed sharded vLLM server in the foreground",
+		Args:  cobra.NoArgs,
+		RunE:  func(*cobra.Command, []string) error { return runShardStart(common, o) },
+	}
+	common.register(c)
+	c.Flags().StringVar(&o.profileName, "profile", "", "Profile to serve")
+	c.Flags().StringVar(&o.headIP, "head-ip", "", "IP workers use to reach the Ray head")
+	c.Flags().StringVar(&o.iface, "iface", "", "Network interface for Ray/NCCL/Gloo traffic")
+	c.Flags().StringVar(&o.port, "port", "", "OpenAI API port (defaults to config PORT)")
+	c.Flags().IntVar(&o.pp, "pp", 2, "Pipeline parallel size")
+	c.Flags().IntVar(&o.tp, "tp", 1, "Tensor parallel size")
+	c.Flags().IntVar(&o.rayPort, "ray-port", 6379, "Ray head port")
+	c.Flags().StringVar(&o.serviceName, "service-name", "vllm.service", "vLLM service to stop when --stop-services is set")
+	c.Flags().BoolVar(&o.stopServices, "stop-services", false, "stop existing vLLM services on all nodes before starting")
+	c.Flags().BoolVar(&o.installRay, "install-ray", false, "install Ray into the vLLM virtualenv before starting")
+	return c
+}
+
+func newShardStopCmd() *cobra.Command {
+	var common shardCommon
+	var serviceName string
+	var startServices bool
+	c := &cobra.Command{
+		Use:   "stop --nodes n1,n2",
+		Short: "Stop Ray on cluster nodes",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			members, head, err := loadShardMembers(common)
+			if err != nil {
+				return err
+			}
+			if startServices {
+				for _, n := range members {
+					if err := runOnNode(n, head.Name, common.sshKey, "sudo systemctl start "+shellQuote(serviceName), common.dryRun); err != nil {
+						return err
+					}
+				}
+			}
+			ray := rayBin(cfg)
+			for _, n := range members {
+				if err := runOnNode(n, head.Name, common.sshKey, shellQuote(ray)+" stop --force || true", common.dryRun); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	common.register(c)
+	c.Flags().StringVar(&serviceName, "service-name", "vllm.service", "service to restart with --start-services")
+	c.Flags().BoolVar(&startServices, "start-services", false, "start the normal vLLM service after stopping Ray")
+	return c
+}
+
+func newShardStatusCmd() *cobra.Command {
+	var common shardCommon
+	var port string
+	c := &cobra.Command{
+		Use:   "status --nodes n1,n2",
+		Short: "Show Ray and sharded endpoint status",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			if port == "" {
+				port = cfg.Port()
+			}
+			members, head, err := loadShardMembers(common)
+			if err != nil {
+				return err
+			}
+			fmt.Print("endpoint health: ")
+			_ = runLocal("curl -fsS -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:"+shellQuote(port)+"/health || true", common.dryRun)
+			ray := rayBin(cfg)
+			for _, n := range members {
+				fmt.Printf("\n== %s ==\n", n.Name)
+				cmd := shellQuote(ray) + " status 2>/dev/null | head -n 25 || true"
+				if err := runOnNode(n, head.Name, common.sshKey, cmd, common.dryRun); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	common.register(c)
+	c.Flags().StringVar(&port, "port", "", "API port to probe")
+	return c
+}
+
+type shardStartOptions struct {
+	profileName  string
+	headIP       string
+	iface        string
+	port         string
+	pp           int
+	tp           int
+	rayPort      int
+	serviceName  string
+	stopServices bool
+	installRay   bool
+}
+
+func runShardStart(common shardCommon, o shardStartOptions) error {
+	if o.profileName == "" {
+		return errors.New("--profile is required")
+	}
+	if o.pp <= 0 || o.tp <= 0 {
+		return errors.New("--pp and --tp must be positive")
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	p, err := profile.Load(cfg.Dirs, o.profileName)
+	if err != nil {
+		return err
+	}
+	members, head, err := loadShardMembers(common)
+	if err != nil {
+		return err
+	}
+	if o.installRay {
+		if err := shardInstallRay(cfg, common, ""); err != nil {
+			return err
+		}
+	}
+	if o.stopServices {
+		for _, n := range members {
+			if err := runOnNode(n, head.Name, common.sshKey, "sudo systemctl stop "+shellQuote(o.serviceName)+" || true", common.dryRun); err != nil {
+				return err
+			}
+		}
+	}
+	ray := rayBin(cfg)
+	if o.headIP == "" && o.iface != "" {
+		o.headIP, err = localInterfaceIP(o.iface)
+		if err != nil {
+			return err
+		}
+	}
+	if o.headIP == "" {
+		return errors.New("--head-ip is required unless --iface names a local interface with an IPv4 address")
+	}
+
+	for _, n := range members {
+		_ = runOnNode(n, head.Name, common.sshKey, shellQuote(ray)+" stop --force || true", common.dryRun)
+	}
+	headStart := fmt.Sprintf("%s %s start --head --node-ip-address=%s --port=%d --disable-usage-stats", shardEnvPrefix(o.iface), shellQuote(ray), shellQuote(o.headIP), o.rayPort)
+	if err := runOnNode(head, head.Name, common.sshKey, headStart, common.dryRun); err != nil {
+		return err
+	}
+	for _, n := range members {
+		if n.Name == head.Name {
+			continue
+		}
+		workerStart := fmt.Sprintf("%s %s start --address=%s:%d --disable-usage-stats", shardEnvPrefix(o.iface), shellQuote(ray), shellQuote(o.headIP), o.rayPort)
+		if o.iface != "" {
+			workerStart = fmt.Sprintf("node_ip=$(ip -o -4 addr show dev %s | awk '{split($4,a,\"/\"); print a[1]; exit}'); %s %s start --address=%s:%d --node-ip-address=$node_ip --disable-usage-stats", shellQuote(o.iface), shardEnvPrefix(o.iface), shellQuote(ray), shellQuote(o.headIP), o.rayPort)
+		}
+		if err := runOnNode(n, head.Name, common.sshKey, workerStart, common.dryRun); err != nil {
+			return err
+		}
+	}
+
+	spec := serveSpecFromProfile(cfg, p, o.port)
+	args, err := spec.args("--distributed-executor-backend", "ray", "--pipeline-parallel-size", strconv.Itoa(o.pp), "--tensor-parallel-size", strconv.Itoa(o.tp))
+	if err != nil {
+		return err
+	}
+	if common.dryRun {
+		fmt.Println(shellJoin(redactServeArgs(args)))
+		return nil
+	}
+	cmd := exec.Command(spec.Bin, args[1:]...)
+	cmd.Env = shardEnv(serveEnvFromProfile(cfg, p), o.iface, o.headIP)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+func shardInstallRay(cfg *config.Config, common shardCommon, python string) error {
+	members, head, err := loadShardMembers(common)
+	if err != nil {
+		return err
+	}
+	if python == "" {
+		python = filepath.Join(filepath.Dir(cfg.VLLMBin()), "python")
+	}
+	for _, n := range members {
+		cmd := shellQuote(python) + " -m pip install 'ray[default]'"
+		if err := runOnNode(n, head.Name, common.sshKey, cmd, common.dryRun); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rayBin(cfg *config.Config) string { return filepath.Join(filepath.Dir(cfg.VLLMBin()), "ray") }
+
+func loadShardMembers(common shardCommon) ([]nodes.Node, nodes.Node, error) {
+	if strings.TrimSpace(common.nodesCSV) == "" {
+		return nil, nodes.Node{}, errors.New("--nodes is required")
+	}
+	reg, err := nodes.Load()
+	if err != nil {
+		return nil, nodes.Node{}, err
+	}
+	var members []nodes.Node
+	for _, name := range strings.Split(common.nodesCSV, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		n, ok := reg.Get(name)
+		if !ok {
+			return nil, nodes.Node{}, fmt.Errorf("unknown node %q -- add it with 'vllm-helper node add'", name)
+		}
+		members = append(members, n)
+	}
+	if len(members) == 0 {
+		return nil, nodes.Node{}, errors.New("--nodes did not name any nodes")
+	}
+	headName := common.head
+	if headName == "" {
+		headName = members[0].Name
+	}
+	for _, n := range members {
+		if n.Name == headName {
+			return members, n, nil
+		}
+	}
+	return nil, nodes.Node{}, fmt.Errorf("head node %q is not in --nodes", headName)
+}
+
+func runOnNode(n nodes.Node, headName, key, command string, dry bool) error {
+	if n.Name == headName {
+		return runLocal(command, dry)
+	}
+	target, err := sshTarget(n)
+	if err != nil {
+		return err
+	}
+	args := []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"}
+	if key != "" {
+		args = append(args, "-i", expandHome(key))
+	}
+	args = append(args, target, "bash", "-lc", command)
+	if dry {
+		fmt.Println("ssh", shellJoin(args))
+		return nil
+	}
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+func runLocal(command string, dry bool) error {
+	if dry {
+		fmt.Println(command)
+		return nil
+	}
+	cmd := exec.Command("bash", "-lc", command)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+func sshTarget(n nodes.Node) (string, error) {
+	if n.SSH != "" {
+		return n.SSH, nil
+	}
+	u, err := url.Parse(n.Host)
+	if err != nil {
+		return "", err
+	}
+	host := u.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("node %s has no SSH target and host %q is not a URL", n.Name, n.Host)
+	}
+	user := os.Getenv("USER")
+	if user == "" {
+		return host, nil
+	}
+	return user + "@" + host, nil
+}
+
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+func localInterfaceIP(iface string) (string, error) {
+	out, err := exec.Command("bash", "-lc", "ip -o -4 addr show dev "+shellQuote(iface)+" | awk '{split($4,a,\"/\"); print a[1]; exit}'").Output()
+	if err != nil {
+		return "", err
+	}
+	ip := strings.TrimSpace(string(out))
+	if ip == "" {
+		return "", fmt.Errorf("no IPv4 address on interface %s", iface)
+	}
+	return ip, nil
+}
+
+func shardEnv(base []string, iface, headIP string) []string {
+	env := append([]string{}, base...)
+	env = append(env, "RAY_ADDRESS=auto")
+	if headIP != "" {
+		env = append(env, "VLLM_HOST_IP="+headIP)
+	}
+	if iface != "" {
+		env = append(env, "NCCL_SOCKET_IFNAME="+iface, "GLOO_SOCKET_IFNAME="+iface)
+	}
+	return env
+}
+
+func shardEnvPrefix(iface string) string {
+	if iface == "" {
+		return "env"
+	}
+	return "env NCCL_SOCKET_IFNAME=" + shellQuote(iface) + " GLOO_SOCKET_IFNAME=" + shellQuote(iface)
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func shellJoin(args []string) string {
+	quoted := make([]string, 0, len(args))
+	for _, a := range args {
+		quoted = append(quoted, shellQuote(a))
+	}
+	return strings.Join(quoted, " ")
 }

@@ -44,41 +44,10 @@ func runStart() error {
 		return fmt.Errorf("reading the active model config at %s: %w", cfg.Dirs.ActiveEnvFile(), err)
 	}
 
-	bin := active.Get("VLLM_BIN")
-	if bin == "" {
-		return fmt.Errorf("VLLM_BIN is not set in config.env")
+	spec := serveSpecFromActive(active)
+	args, err := spec.args()
+	if err != nil {
+		return err
 	}
-	if info, err := os.Stat(bin); err != nil || info.Mode()&0o111 == 0 {
-		return fmt.Errorf("VLLM_BIN (%s) does not exist or is not executable", bin)
-	}
-
-	args := []string{bin, "serve", active.Get("MODEL"),
-		"--port", active.Get("PORT"),
-		"--max-model-len", active.Get("MAX_MODEL_LEN"),
-		"--gpu-memory-utilization", fitMemUtilization(active.Get("GPU_MEMORY_UTILIZATION"), active.Get("KV_CACHE_MEMORY_BYTES") != ""),
-		"--api-key", active.Get("VLLM_API_KEY"),
-	}
-	// A deliberate cache size makes --gpu-memory-utilization what it should
-	// always have been -- a ceiling on what vLLM may touch -- rather than the
-	// knob that decides the cache. Note the flag is --kv-cache-memory-bytes:
-	// vLLM's own log prints "--kv-cache-memory=N", which only works because
-	// argparse accepts unambiguous prefixes, and is not a real option name.
-	if kv := active.Get("KV_CACHE_MEMORY_BYTES"); kv != "" {
-		args = append(args, "--kv-cache-memory-bytes", kv)
-	}
-	if extra := active.Get("EXTRA_ARGS"); extra != "" {
-		words, err := config.SplitArgs(extra)
-		if err != nil {
-			return fmt.Errorf("EXTRA_ARGS: %w", err)
-		}
-		args = append(args, words...)
-	}
-
-	// Give vLLM the merged env (TIKTOKEN_ENCODINGS_BASE, HF_HOME, ...) on
-	// top of the process environment, mirroring bash's `set -a; source`.
-	env := os.Environ()
-	for _, k := range active.Keys() {
-		env = append(env, k+"="+active.Get(k))
-	}
-	return syscall.Exec(bin, args, env)
+	return syscall.Exec(spec.Bin, args, serveEnvFromActive(active))
 }

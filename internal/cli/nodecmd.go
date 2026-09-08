@@ -16,7 +16,7 @@ func newNodeCmd() *cobra.Command {
 }
 
 func newNodeAddCmd() *cobra.Command {
-	var host string
+	var host, sshTarget string
 	c := &cobra.Command{Use: "add <name>", Args: cobra.ExactArgs(1), Short: "Add a node",
 		RunE: func(_ *cobra.Command, args []string) error {
 			if host == "" {
@@ -26,7 +26,7 @@ func newNodeAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			r.Add(nodes.Node{Name: args[0], Host: host})
+			r.Add(nodes.Node{Name: args[0], Host: host, SSH: sshTarget})
 			if err := r.Save(); err != nil {
 				return err
 			}
@@ -35,6 +35,7 @@ func newNodeAddCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&host, "host", "", "Base URL (scheme://host:port)")
+	c.Flags().StringVar(&sshTarget, "ssh", "", "SSH target for orchestration (user@host)")
 	return c
 }
 
