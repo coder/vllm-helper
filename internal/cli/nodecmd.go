@@ -10,7 +10,7 @@ import (
 )
 
 func newNodeCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "node", Short: "Manage known nodes"}
+	cmd := &cobra.Command{Use: "node", Short: "Manage known nodes", GroupID: groupMachine}
 	cmd.AddCommand(newNodeAddCmd(), newNodeListCmd(), newNodeRemoveCmd())
 	return cmd
 }
