@@ -1,10 +1,12 @@
 package router
 
 import (
+	"context"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"sync"
+	"time"
 )
 
 type backend struct {
@@ -40,15 +42,66 @@ func (p *Pool) pick(key string) (backend, bool) {
 	if len(p.backends) == 0 {
 		return backend{}, false
 	}
-	if key == "" {
-		return p.backends[0], true
+	// Start index based on key (0 when empty).
+	start := 0
+	if key != "" {
+		var h uint32
+		for i := 0; i < len(key); i++ { h = h*16777619 ^ uint32(key[i]) }
+		start = int(h) % len(p.backends)
 	}
-	// Fixed but stable mapping.
-	var h uint32
-	for i := 0; i < len(key); i++ {
-		h = h*16777619 ^ uint32(key[i])
+	// Prefer healthy backend at or after start, wrap once.
+	for i := 0; i < len(p.backends); i++ {
+		b := p.backends[(start+i)%len(p.backends)]
+		if b.healthy { return b, true }
 	}
-	return p.backends[int(h)%len(p.backends)], true
+	// No healthy backends; return start anyway.
+	return p.backends[start], true
+}
+
+// Status returns a snapshot of backend health and URLs.
+type Status struct {
+	Backends []struct{
+		URL     string `json:"url"`
+		Healthy bool   `json:"healthy"`
+	} `json:"backends"`
+}
+
+func (p *Pool) Status() Status {
+	p.mu.RLock(); defer p.mu.RUnlock()
+	var s Status
+	for _, b := range p.backends {
+		s.Backends = append(s.Backends, struct{URL string `json:"url"`; Healthy bool `json:"healthy"`}{URL: b.url.String(), Healthy: b.healthy})
+	}
+	return s
+}
+
+// StartHealth begins background health checks of backends. It stops when ctx is done.
+func (p *Pool) StartHealth(ctx context.Context, every time.Duration) {
+	go func(){
+		client := &http.Client{ Timeout: 2 * time.Second }
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(every):
+				p.mu.Lock()
+				bs := make([]backend, len(p.backends))
+				copy(bs, p.backends)
+				p.mu.Unlock()
+				for i, b := range bs {
+					// Probe /health at the host root (vLLM serves it there).
+					u := *b.url
+					u.Path = "/health"
+					ok := false
+					if resp, err := client.Get(u.String()); err == nil {
+						if resp.Body != nil { _ = resp.Body.Close() }
+						ok = resp.StatusCode == http.StatusOK
+					}
+					p.mu.Lock(); if i < len(p.backends) { p.backends[i].healthy = ok }; p.mu.Unlock()
+				}
+			}
+		}
+	}()
 }
 
 func (p *Pool) ServeHTTP(w http.ResponseWriter, r *http.Request) {

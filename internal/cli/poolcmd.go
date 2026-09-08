@@ -9,7 +9,7 @@ import (
 
 func newPoolCmd() *cobra.Command {
 	c := &cobra.Command{Use: "pool", Short: "Replica pools (router)"}
-	c.AddCommand(newPoolNewCmd(), newPoolStatusCmd())
+	c.AddCommand(newPoolNewCmd(), newPoolStatusCmd(), newPoolServeCmd())
 	return c
 }
 
