@@ -6,6 +6,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,6 +19,7 @@ type Pool struct {
 	mu       sync.RWMutex
 	backends []backend
 	sticky   func(*http.Request) string
+	rr       uint64
 }
 
 // NewPool creates a simple sticky router over backends.
@@ -44,15 +46,21 @@ func (p *Pool) pick(key string) (backend, bool) {
 	}
 	// Start index based on key (0 when empty).
 	start := 0
-	if key != "" {
+	if key == "" {
+		start = int(atomic.AddUint64(&p.rr, 1)-1) % len(p.backends)
+	} else {
 		var h uint32
-		for i := 0; i < len(key); i++ { h = h*16777619 ^ uint32(key[i]) }
+		for i := 0; i < len(key); i++ {
+			h = h*16777619 ^ uint32(key[i])
+		}
 		start = int(h) % len(p.backends)
 	}
 	// Prefer healthy backend at or after start, wrap once.
 	for i := 0; i < len(p.backends); i++ {
 		b := p.backends[(start+i)%len(p.backends)]
-		if b.healthy { return b, true }
+		if b.healthy {
+			return b, true
+		}
 	}
 	// No healthy backends; return start anyway.
 	return p.backends[start], true
@@ -60,25 +68,29 @@ func (p *Pool) pick(key string) (backend, bool) {
 
 // Status returns a snapshot of backend health and URLs.
 type Status struct {
-	Backends []struct{
+	Backends []struct {
 		URL     string `json:"url"`
 		Healthy bool   `json:"healthy"`
 	} `json:"backends"`
 }
 
 func (p *Pool) Status() Status {
-	p.mu.RLock(); defer p.mu.RUnlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	var s Status
 	for _, b := range p.backends {
-		s.Backends = append(s.Backends, struct{URL string `json:"url"`; Healthy bool `json:"healthy"`}{URL: b.url.String(), Healthy: b.healthy})
+		s.Backends = append(s.Backends, struct {
+			URL     string `json:"url"`
+			Healthy bool   `json:"healthy"`
+		}{URL: b.url.String(), Healthy: b.healthy})
 	}
 	return s
 }
 
 // StartHealth begins background health checks of backends. It stops when ctx is done.
 func (p *Pool) StartHealth(ctx context.Context, every time.Duration) {
-	go func(){
-		client := &http.Client{ Timeout: 2 * time.Second }
+	go func() {
+		client := &http.Client{Timeout: 2 * time.Second}
 		for {
 			select {
 			case <-ctx.Done():
@@ -94,10 +106,16 @@ func (p *Pool) StartHealth(ctx context.Context, every time.Duration) {
 					u.Path = "/health"
 					ok := false
 					if resp, err := client.Get(u.String()); err == nil {
-						if resp.Body != nil { _ = resp.Body.Close() }
+						if resp.Body != nil {
+							_ = resp.Body.Close()
+						}
 						ok = resp.StatusCode == http.StatusOK
 					}
-					p.mu.Lock(); if i < len(p.backends) { p.backends[i].healthy = ok }; p.mu.Unlock()
+					p.mu.Lock()
+					if i < len(p.backends) {
+						p.backends[i].healthy = ok
+					}
+					p.mu.Unlock()
 				}
 			}
 		}

@@ -30,16 +30,21 @@ func newPoolServeCmd() *cobra.Command {
 		Short: "Run a sticky reverse proxy over the given nodes",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if nlist == "" { return errors.New("--nodes is required") }
-			r, err := nodes.Load(); if err != nil { return err }
+			if nlist == "" {
+				return errors.New("--nodes is required")
+			}
+			r, err := nodes.Load()
+			if err != nil {
+				return err
+			}
 			var backends []string
 			for _, name := range strings.Split(nlist, ",") {
 				name = strings.TrimSpace(name)
 				n, ok := r.Get(name)
-				if !ok { return fmt.Errorf("unknown node %q -- add it with 'vllm-helper node add'", name) }
-				// Proxy to /v1 on each backend.
-				b := strings.TrimRight(n.Host, "/") + "/v1"
-				backends = append(backends, b)
+				if !ok {
+					return fmt.Errorf("unknown node %q -- add it with 'vllm-helper node add'", name)
+				}
+				backends = append(backends, strings.TrimRight(n.Host, "/"))
 			}
 			// Stickiness function
 			var stickyFn func(*http.Request) string
@@ -51,12 +56,16 @@ func newPoolServeCmd() *cobra.Command {
 				stickyFn = func(r *http.Request) string { return r.Header.Get(hdr) }
 			default: // auto
 				stickyFn = func(r *http.Request) string {
-					if v := r.Header.Get("X-Session-ID"); v != "" { return v }
+					if v := r.Header.Get("X-Session-ID"); v != "" {
+						return v
+					}
 					return r.Header.Get("Authorization")
 				}
 			}
 			pool, err := router.NewPool(backends, stickyFn)
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			pool.StartHealth(ctx, 3*time.Second)
@@ -72,24 +81,33 @@ func newPoolServeCmd() *cobra.Command {
 			})
 
 			ln, err := net.Listen("tcp", bind)
-			if err != nil { return fmt.Errorf("listening on %s: %w", bind, err) }
+			if err != nil {
+				return fmt.Errorf("listening on %s: %w", bind, err)
+			}
 			fmt.Println()
 			fmt.Println("Pool router listening:")
-	fmt.Printf("  http://%s/v1\n", ln.Addr().String())
+			fmt.Printf("  http://%s/v1\n", ln.Addr().String())
 			fmt.Println("Backends:")
-			for _, b := range backends { fmt.Println("  ", b) }
+			for _, b := range backends {
+				fmt.Println("  ", b)
+			}
 			fmt.Println("Sticky:", sticky)
 
-			srv := &http.Server{ Handler: mux, ReadHeaderTimeout: 10*time.Second, IdleTimeout: 2*time.Minute }
+			srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
 			errs := make(chan error, 1)
-			go func(){ if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed { errs <- err } }()
+			go func() {
+				if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+					errs <- err
+				}
+			}()
 			stop := make(chan os.Signal, 1)
 			signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 			select {
 			case err := <-errs:
 				return err
 			case <-stop:
-				_ = srv.Close(); return nil
+				_ = srv.Close()
+				return nil
 			}
 		},
 	}
