@@ -9,7 +9,7 @@ import (
 
 func newPoolCmd() *cobra.Command {
 	c := &cobra.Command{Use: "pool", Short: "Replica pools (router)", GroupID: groupMachine}
-	c.AddCommand(newPoolNewCmd(), newPoolStatusCmd(), newPoolServeCmd())
+	c.AddCommand(newPoolNewCmd(), newPoolHTTPStatusCmd(), newPoolServeCmd(), newPoolInstallServiceCmd())
 	return c
 }
 
@@ -31,16 +31,4 @@ func newPoolNewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&bind, "bind", ":8001", "Bind address for router")
 	cmd.Flags().StringVar(&sticky, "sticky", "auto", "Stickiness (auto|authorization|header:Name)")
 	return cmd
-}
-
-func newPoolStatusCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "status <name>",
-		Short: "Show pool status",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			fmt.Printf("Pool %s status: not implemented.\n", args[0])
-			return nil
-		},
-	}
 }
