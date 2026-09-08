@@ -13,3 +13,4 @@ tiktoken-encodings/
 *.bak
 *.bak.*
 .env
+*.stackdump
