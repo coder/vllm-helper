@@ -80,6 +80,11 @@ func newRootCmd() *cobra.Command {
 
 		newStartCmd(),
 		newVersionCmd(),
+
+		// Multi-node scaffolding
+		newNodeCmd(),
+		newPoolCmd(),
+		newShardCmd(),
 	)
 	// Integrations contribute their own commands, so the set of them is a
 	// property of what's registered rather than a list maintained here.
