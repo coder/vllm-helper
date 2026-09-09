@@ -214,7 +214,7 @@ func runShardStart(common shardCommon, o shardStartOptions) error {
 	for _, n := range members {
 		_ = runOnNode(n, head.Name, common.sshKey, shellQuote(ray)+" stop --force || true", common.dryRun)
 	}
-	headStart := fmt.Sprintf("%s %s start --head --node-ip-address=%s --port=%d --disable-usage-stats", shardEnvPrefix(o.iface), shellQuote(ray), shellQuote(o.headIP), o.rayPort)
+	headStart := fmt.Sprintf("%s %s start --head --node-ip-address=%s --port=%d --disable-usage-stats", shardEnvPrefix(o.iface, o.headIP), shellQuote(ray), shellQuote(o.headIP), o.rayPort)
 	if err := runOnNode(head, head.Name, common.sshKey, headStart, common.dryRun); err != nil {
 		return err
 	}
@@ -222,9 +222,9 @@ func runShardStart(common shardCommon, o shardStartOptions) error {
 		if n.Name == head.Name {
 			continue
 		}
-		workerStart := fmt.Sprintf("%s %s start --address=%s:%d --disable-usage-stats", shardEnvPrefix(o.iface), shellQuote(ray), shellQuote(o.headIP), o.rayPort)
+		workerStart := fmt.Sprintf("%s %s start --address=%s:%d --disable-usage-stats", shardEnvPrefix(o.iface, ""), shellQuote(ray), shellQuote(o.headIP), o.rayPort)
 		if o.iface != "" {
-			workerStart = fmt.Sprintf("node_ip=$(ip -o -4 addr show dev %s | awk '{split($4,a,\"/\"); print a[1]; exit}'); %s %s start --address=%s:%d --node-ip-address=$node_ip --disable-usage-stats", shellQuote(o.iface), shardEnvPrefix(o.iface), shellQuote(ray), shellQuote(o.headIP), o.rayPort)
+			workerStart = fmt.Sprintf("node_ip=$(ip -o -4 addr show dev %s | awk '{split($4,a,\"/\"); print a[1]; exit}'); test -n \"$node_ip\" || { echo \"no IPv4 address on interface %s\" >&2; exit 1; }; %s %s start --address=%s:%d --node-ip-address=$node_ip --disable-usage-stats", shellQuote(o.iface), shellQuote(o.iface), shardWorkerEnvPrefix(o.iface), shellQuote(ray), shellQuote(o.headIP), o.rayPort)
 		}
 		if err := runOnNode(n, head.Name, common.sshKey, workerStart, common.dryRun); err != nil {
 			return err
@@ -308,17 +308,19 @@ func runOnNode(n nodes.Node, headName, key, command string, dry bool) error {
 	if err != nil {
 		return err
 	}
-	args := []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"}
+	sshArgs := []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"}
 	if key != "" {
-		args = append(args, "-i", expandHome(key))
+		sshArgs = append(sshArgs, "-i", expandHome(key))
 	}
-	args = append(args, target, "bash", "-lc", command)
 	if dry {
-		fmt.Println("ssh", shellJoin(args))
+		shown := append(append([]string{}, sshArgs...), target)
+		fmt.Printf("ssh %s bash -s <<'SCRIPT'\n%s\nSCRIPT\n", shellJoin(shown), command)
 		return nil
 	}
+	args := append(append([]string{}, sshArgs...), target, "bash", "-s")
 	cmd := exec.Command("ssh", args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Stdin = strings.NewReader(command + "\n")
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd.Run()
 }
 
@@ -384,11 +386,23 @@ func shardEnv(base []string, iface, headIP string) []string {
 	return env
 }
 
-func shardEnvPrefix(iface string) string {
-	if iface == "" {
-		return "env"
+func shardEnvPrefix(iface, hostIP string) string {
+	parts := []string{"env"}
+	if hostIP != "" {
+		parts = append(parts, "VLLM_HOST_IP="+shellQuote(hostIP))
 	}
-	return "env NCCL_SOCKET_IFNAME=" + shellQuote(iface) + " GLOO_SOCKET_IFNAME=" + shellQuote(iface)
+	if iface != "" {
+		parts = append(parts, "NCCL_SOCKET_IFNAME="+shellQuote(iface), "GLOO_SOCKET_IFNAME="+shellQuote(iface))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shardWorkerEnvPrefix(iface string) string {
+	parts := []string{"env", "VLLM_HOST_IP=$node_ip"}
+	if iface != "" {
+		parts = append(parts, "NCCL_SOCKET_IFNAME="+shellQuote(iface), "GLOO_SOCKET_IFNAME="+shellQuote(iface))
+	}
+	return strings.Join(parts, " ")
 }
 
 func shellQuote(s string) string {
