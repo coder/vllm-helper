@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -37,6 +36,12 @@ func (s *shardCommon) register(c *cobra.Command) {
 	c.Flags().BoolVar(&s.dryRun, "dry-run", false, "print commands instead of running them")
 }
 
+const (
+	shardBackendRay = "ray"
+	shardBackendMP  = "mp"
+	shardBackendAll = "all"
+)
+
 func newShardInstallRayCmd() *cobra.Command {
 	var common shardCommon
 	var python string
@@ -62,18 +67,21 @@ func newShardStartCmd() *cobra.Command {
 	var o shardStartOptions
 	c := &cobra.Command{
 		Use:   "start --profile <profile> --nodes n1,n2",
-		Short: "Start a Ray-backed sharded vLLM server in the foreground",
+		Short: "Start a sharded vLLM server in the foreground",
 		Args:  cobra.NoArgs,
 		RunE:  func(*cobra.Command, []string) error { return runShardStart(common, o) },
 	}
 	common.register(c)
 	c.Flags().StringVar(&o.profileName, "profile", "", "Profile to serve")
-	c.Flags().StringVar(&o.headIP, "head-ip", "", "IP workers use to reach the Ray head")
-	c.Flags().StringVar(&o.iface, "iface", "", "Network interface for Ray/NCCL/Gloo traffic")
+	c.Flags().StringVar(&o.backend, "backend", shardBackendRay, "Distributed executor backend: ray or mp")
+	c.Flags().StringVar(&o.headIP, "head-ip", "", "IP workers use to reach the distributed head")
+	c.Flags().StringVar(&o.iface, "iface", "", "Network interface for distributed traffic")
 	c.Flags().StringVar(&o.port, "port", "", "OpenAI API port (defaults to config PORT)")
 	c.Flags().IntVar(&o.pp, "pp", 2, "Pipeline parallel size")
 	c.Flags().IntVar(&o.tp, "tp", 1, "Tensor parallel size")
 	c.Flags().IntVar(&o.rayPort, "ray-port", 6379, "Ray head port")
+	c.Flags().IntVar(&o.masterPort, "master-port", 29501, "vLLM multiprocessing master port")
+	c.Flags().IntVar(&o.distributedTimeoutSeconds, "distributed-timeout-seconds", 0, "vLLM distributed init timeout (0 uses vLLM default)")
 	c.Flags().StringVar(&o.serviceName, "service-name", "vllm.service", "vLLM service to stop when --stop-services is set")
 	c.Flags().BoolVar(&o.stopServices, "stop-services", false, "stop existing vLLM services on all nodes before starting")
 	c.Flags().BoolVar(&o.installRay, "install-ray", false, "install Ray into the vLLM virtualenv before starting")
@@ -82,13 +90,18 @@ func newShardStartCmd() *cobra.Command {
 
 func newShardStopCmd() *cobra.Command {
 	var common shardCommon
+	var backend string
 	var serviceName string
 	var startServices bool
 	c := &cobra.Command{
 		Use:   "stop --nodes n1,n2",
-		Short: "Stop Ray on cluster nodes",
+		Short: "Stop sharded runtimes on cluster nodes",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
+			backend, err := normalizeShardBackend(backend, true)
+			if err != nil {
+				return err
+			}
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -97,6 +110,16 @@ func newShardStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if backend == shardBackendAll || backend == shardBackendRay {
+				if err := stopShardRay(cfg, members, head, common); err != nil {
+					return err
+				}
+			}
+			if backend == shardBackendAll || backend == shardBackendMP {
+				if err := stopShardMP(members, head, common); err != nil {
+					return err
+				}
+			}
 			if startServices {
 				for _, n := range members {
 					if err := runOnNode(n, head.Name, common.sshKey, "sudo systemctl start "+shellQuote(serviceName), common.dryRun); err != nil {
@@ -104,29 +127,29 @@ func newShardStopCmd() *cobra.Command {
 					}
 				}
 			}
-			ray := rayBin(cfg)
-			for _, n := range members {
-				if err := runOnNode(n, head.Name, common.sshKey, shellQuote(ray)+" stop --force || true", common.dryRun); err != nil {
-					return err
-				}
-			}
 			return nil
 		},
 	}
 	common.register(c)
+	c.Flags().StringVar(&backend, "backend", shardBackendAll, "Backend to stop: all, ray, or mp")
 	c.Flags().StringVar(&serviceName, "service-name", "vllm.service", "service to restart with --start-services")
-	c.Flags().BoolVar(&startServices, "start-services", false, "start the normal vLLM service after stopping Ray")
+	c.Flags().BoolVar(&startServices, "start-services", false, "start the normal vLLM service after stopping sharded runtimes")
 	return c
 }
 
 func newShardStatusCmd() *cobra.Command {
 	var common shardCommon
+	var backend string
 	var port string
 	c := &cobra.Command{
 		Use:   "status --nodes n1,n2",
-		Short: "Show Ray and sharded endpoint status",
+		Short: "Show sharded endpoint and runtime status",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
+			backend, err := normalizeShardBackend(backend, true)
+			if err != nil {
+				return err
+			}
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -140,11 +163,13 @@ func newShardStatusCmd() *cobra.Command {
 			}
 			fmt.Print("endpoint health: ")
 			_ = runLocal("curl -fsS -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:"+shellQuote(port)+"/health || true", common.dryRun)
-			ray := rayBin(cfg)
-			for _, n := range members {
-				fmt.Printf("\n== %s ==\n", n.Name)
-				cmd := shellQuote(ray) + " status 2>/dev/null | head -n 25 || true"
-				if err := runOnNode(n, head.Name, common.sshKey, cmd, common.dryRun); err != nil {
+			if backend == shardBackendAll || backend == shardBackendRay {
+				if err := statusShardRay(cfg, members, head, common); err != nil {
+					return err
+				}
+			}
+			if backend == shardBackendAll || backend == shardBackendMP {
+				if err := statusShardMP(members, head, common); err != nil {
 					return err
 				}
 			}
@@ -152,24 +177,42 @@ func newShardStatusCmd() *cobra.Command {
 		},
 	}
 	common.register(c)
+	c.Flags().StringVar(&backend, "backend", shardBackendAll, "Backend to inspect: all, ray, or mp")
 	c.Flags().StringVar(&port, "port", "", "API port to probe")
 	return c
 }
 
 type shardStartOptions struct {
-	profileName  string
-	headIP       string
-	iface        string
-	port         string
-	pp           int
-	tp           int
-	rayPort      int
-	serviceName  string
-	stopServices bool
-	installRay   bool
+	profileName               string
+	backend                   string
+	headIP                    string
+	iface                     string
+	port                      string
+	pp                        int
+	tp                        int
+	rayPort                   int
+	masterPort                int
+	distributedTimeoutSeconds int
+	serviceName               string
+	stopServices              bool
+	installRay                bool
 }
 
 func runShardStart(common shardCommon, o shardStartOptions) error {
+	backend, err := normalizeShardBackend(o.backend, false)
+	if err != nil {
+		return err
+	}
+	if backend == shardBackendMP && o.installRay {
+		return errors.New("--install-ray only applies to --backend ray")
+	}
+	if backend == shardBackendMP {
+		return runShardStartMP(common, o)
+	}
+	return runShardStartRay(common, o)
+}
+
+func runShardStartRay(common shardCommon, o shardStartOptions) error {
 	if o.profileName == "" {
 		return errors.New("--profile is required")
 	}
@@ -232,7 +275,7 @@ func runShardStart(common shardCommon, o shardStartOptions) error {
 	}
 
 	spec := serveSpecFromProfile(cfg, p, o.port)
-	args, err := spec.args("--distributed-executor-backend", "ray", "--pipeline-parallel-size", strconv.Itoa(o.pp), "--tensor-parallel-size", strconv.Itoa(o.tp))
+	args, err := spec.args(shardRayServeArgs(o)...)
 	if err != nil {
 		return err
 	}
