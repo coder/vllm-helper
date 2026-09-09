@@ -110,24 +110,30 @@ func newShardStopCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if backend == shardBackendAll || backend == shardBackendRay {
-				if err := stopShardRay(cfg, members, head, common); err != nil {
+			var firstErr error
+			if startServices {
+				if err := preflightServiceControl(members, head, common); err != nil {
 					return err
 				}
 			}
+			if backend == shardBackendAll || backend == shardBackendRay {
+				if err := stopShardRay(cfg, members, head, common); err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
 			if backend == shardBackendAll || backend == shardBackendMP {
-				if err := stopShardMP(members, head, common); err != nil {
-					return err
+				if err := stopShardMP(members, head, common); err != nil && firstErr == nil {
+					firstErr = err
 				}
 			}
 			if startServices {
 				for _, n := range members {
-					if err := runOnNode(n, head.Name, common.sshKey, "sudo systemctl start "+shellQuote(serviceName), common.dryRun); err != nil {
-						return err
+					if err := runOnNode(n, head.Name, common.sshKey, "sudo systemctl start "+shellQuote(serviceName), common.dryRun); err != nil && firstErr == nil {
+						firstErr = err
 					}
 				}
 			}
-			return nil
+			return firstErr
 		},
 	}
 	common.register(c)
@@ -212,6 +218,33 @@ func runShardStart(common shardCommon, o shardStartOptions) error {
 	return runShardStartRay(common, o)
 }
 
+func preflightShardNodes(members []nodes.Node, head nodes.Node, common shardCommon) error {
+	if common.dryRun {
+		return nil
+	}
+	for _, n := range members {
+		if n.Name == head.Name {
+			continue
+		}
+		if err := runOnNode(n, head.Name, common.sshKey, "true", false); err != nil {
+			return fmt.Errorf("cannot reach node %s over SSH (pass --ssh-key if it needs one): %w", n.Name, err)
+		}
+	}
+	return nil
+}
+
+func preflightServiceControl(members []nodes.Node, head nodes.Node, common shardCommon) error {
+	if common.dryRun {
+		return nil
+	}
+	for _, n := range members {
+		if err := runOnNode(n, head.Name, common.sshKey, "sudo -n true", false); err != nil {
+			return fmt.Errorf("cannot control services on node %s: passwordless sudo is required for --stop-services/--start-services: %w", n.Name, err)
+		}
+	}
+	return nil
+}
+
 func runShardStartRay(common shardCommon, o shardStartOptions) error {
 	if o.profileName == "" {
 		return errors.New("--profile is required")
@@ -231,12 +264,18 @@ func runShardStartRay(common shardCommon, o shardStartOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := preflightShardNodes(members, head, common); err != nil {
+		return err
+	}
 	if o.installRay {
 		if err := shardInstallRay(cfg, common, ""); err != nil {
 			return err
 		}
 	}
 	if o.stopServices {
+		if err := preflightServiceControl(members, head, common); err != nil {
+			return err
+		}
 		for _, n := range members {
 			if err := runOnNode(n, head.Name, common.sshKey, "sudo systemctl stop "+shellQuote(o.serviceName)+" || true", common.dryRun); err != nil {
 				return err

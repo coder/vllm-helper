@@ -80,7 +80,13 @@ func runShardStartMP(common shardCommon, o shardStartOptions) error {
 	if members[0].Name != head.Name {
 		return errors.New("--backend mp requires the head node to be first in --nodes so it can run node-rank 0")
 	}
+	if err := preflightShardNodes(members, head, common); err != nil {
+		return err
+	}
 	if o.stopServices {
+		if err := preflightServiceControl(members, head, common); err != nil {
+			return err
+		}
 		for _, n := range members {
 			if err := runOnNode(n, head.Name, common.sshKey, "sudo systemctl stop "+shellQuote(o.serviceName)+" || true", common.dryRun); err != nil {
 				return err
