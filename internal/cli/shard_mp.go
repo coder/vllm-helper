@@ -212,7 +212,7 @@ func statusShardMP(members []nodes.Node, head nodes.Node, common shardCommon) er
 }
 
 func shardMPEnv(base []string, iface, headIP string) []string {
-	env := append([]string{}, base...)
+	env := shardToolchainEnv(base)
 	if headIP != "" {
 		env = append(env, "VLLM_HOST_IP="+headIP)
 	}
@@ -226,6 +226,7 @@ func shardMPWorkerStartCommand(args []string, iface string) string {
 	prefix := shardEnvPrefix(iface, "")
 	lines := []string{
 		shardMPStateVars(),
+		shardToolchainShell(),
 		"if [ -f \"$pid\" ] && kill -0 \"$(cat \"$pid\")\" 2>/dev/null; then echo \"shard worker already running: $(cat \"$pid\")\" >&2; exit 1; fi",
 		"rm -f \"$pid\"",
 	}

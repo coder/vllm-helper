@@ -456,8 +456,55 @@ func localInterfaceIP(iface string) (string, error) {
 	return ip, nil
 }
 
-func shardEnv(base []string, iface, headIP string) []string {
+func shardToolchainEnv(base []string) []string {
 	env := append([]string{}, base...)
+	cudaHome := envValue(env, "CUDA_HOME")
+	if cudaHome == "" {
+		if info, err := os.Stat("/usr/local/cuda"); err == nil && info.IsDir() {
+			cudaHome = "/usr/local/cuda"
+			env = append(env, "CUDA_HOME="+cudaHome)
+		}
+	}
+	if cudaHome != "" {
+		bin := filepath.Join(cudaHome, "bin")
+		if info, err := os.Stat(bin); err == nil && info.IsDir() {
+			env = prependPath(env, bin)
+		}
+	}
+	return env
+}
+
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			return strings.TrimPrefix(kv, prefix)
+		}
+	}
+	return ""
+}
+
+func prependPath(env []string, dir string) []string {
+	for i, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			path := strings.TrimPrefix(kv, "PATH=")
+			if path == "" {
+				env[i] = "PATH=" + dir
+			} else {
+				env[i] = "PATH=" + dir + string(os.PathListSeparator) + path
+			}
+			return env
+		}
+	}
+	return append(env, "PATH="+dir)
+}
+
+func shardToolchainShell() string {
+	return `if [ -z "${CUDA_HOME:-}" ] && [ -d /usr/local/cuda ]; then export CUDA_HOME=/usr/local/cuda; fi; if [ -n "${CUDA_HOME:-}" ] && [ -d "$CUDA_HOME/bin" ]; then export PATH="$CUDA_HOME/bin:$PATH"; fi`
+}
+
+func shardEnv(base []string, iface, headIP string) []string {
+	env := shardToolchainEnv(base)
 	env = append(env, "RAY_ADDRESS=auto")
 	if headIP != "" {
 		env = append(env, "VLLM_HOST_IP="+headIP)
