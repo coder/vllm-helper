@@ -17,7 +17,7 @@
         "--tensor-parallel-size",
         "2",
         "--max-model-len",
-        "65536",
+        "262144",
         "--tokenizer-mode",
         "deepseek_v4",
         "--tool-call-parser",
@@ -73,20 +73,20 @@
         "VLLM_HOST_IP": "$NODE_IP"
       },
       "verified": {
-        "date": "2026-09-09",
+        "date": "2026-09-10",
         "hardware": "dgx_spark_gb10 x2",
         "driver": "580.173.02",
         "vllm_version": "0.1.dev20606+gaba94d396.d20260909",
         "load_seconds": 150,
-        "context": 65536,
-        "kv_tokens": 196022,
-        "concurrency": 2.99,
-        "smoke": "17*19 -> 323",
+        "context": 262144,
+        "kv_tokens": 675260,
+        "concurrency": 2.58,
+        "smoke": "17*19 -> 323; CTX256K OK at 262144 via router",
         "notes": [
           "Launch worker rank 1 headless BEFORE head rank 0.",
           "attention-backend is B12X; vllm-project/recipes says B12X_MLA_SPARSE, which this image rejects at startup.",
           "Needs both RoCE twins via NCCL_IB_HCA and a routable DAC subnet; NetworkManager must own the addresses or they vanish.",
-          "Per-token KV cost falls as context rises (CSA/HCA sparse attention): 32K gave 99,949 tokens, 64K gave 196,022 for the same memory."
+          "Per-token KV cost falls as context rises (CSA/HCA sparse attention): 32K gave 99,949 tokens, 64K gave 196,022 and 256K gave 675,260 for the same ~19 GiB. A linear KV estimator is badly wrong for deepseek_v4."
         ]
       }
     }

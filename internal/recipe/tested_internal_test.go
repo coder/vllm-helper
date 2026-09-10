@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -65,6 +66,33 @@ func TestTestedRecipesHoldTheArchInvariant(t *testing.T) {
 	}
 }
 
+// A recipe that serves a different context than it claims to have verified is
+// worse than no recipe, so the two must be edited together.
+func TestVerifiedContextMatchesMaxModelLen(t *testing.T) {
+	tt, err := LoadTested()
+	if err != nil {
+		t.Fatalf("LoadTested: %v", err)
+	}
+	for _, r := range tt.Recipes {
+		if r.Verified.Context == 0 {
+			continue
+		}
+		want := strconv.Itoa(r.Verified.Context)
+		var got string
+		for i, a := range r.Args {
+			if a == "--max-model-len" && i+1 < len(r.Args) {
+				got = r.Args[i+1]
+			}
+			if v, ok := strings.CutPrefix(a, "--max-model-len="); ok {
+				got = v
+			}
+		}
+		if got != want {
+			t.Errorf("%s: --max-model-len %q but verified.context %q", r.ID, got, want)
+		}
+	}
+}
+
 func TestDeepSeekRecipeSummary(t *testing.T) {
 	tt, err := LoadTested()
 	if err != nil {
@@ -78,7 +106,7 @@ func TestDeepSeekRecipeSummary(t *testing.T) {
 		t.Errorf("display name = %q", r.DisplayName)
 	}
 	got := r.Summary()
-	for _, want := range []string{"2 nodes, sharded", "64K ctx", "3.0x conc"} {
+	for _, want := range []string{"2 nodes, sharded", "256K ctx", "2.6x conc"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("summary %q missing %q", got, want)
 		}
