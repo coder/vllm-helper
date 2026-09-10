@@ -102,6 +102,7 @@ func runRecipesShow(id string, jsonOut bool) error {
 	line("layout", r.Summary())
 	line("image", r.Image)
 	line("port", fmt.Sprintf("%d", r.Port))
+	line("derived from", r.Source.Describe())
 	fmt.Println()
 	fmt.Println("Verified")
 	v := r.Verified

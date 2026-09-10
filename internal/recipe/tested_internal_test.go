@@ -66,6 +66,29 @@ func TestTestedRecipesHoldTheArchInvariant(t *testing.T) {
 	}
 }
 
+// Provenance is what makes recipediff possible and satisfies upstream attribution,
+// so an entry without a pinned source commit is not shippable.
+func TestTestedRecipesCiteAPinnedSource(t *testing.T) {
+	tt, err := LoadTested()
+	if err != nil {
+		t.Fatalf("LoadTested: %v", err)
+	}
+	for _, r := range tt.Recipes {
+		if r.Source.Repo == "" {
+			t.Errorf("%s: no source.repo", r.ID)
+		}
+		if len(r.Source.Commit) != 40 {
+			t.Errorf("%s: source.commit %q is not a full 40-char sha", r.ID, r.Source.Commit)
+		}
+		if r.Source.License == "" {
+			t.Errorf("%s: no source.license", r.ID)
+		}
+		if !strings.Contains(r.Source.Describe(), r.Source.Repo) {
+			t.Errorf("%s: Describe() omits the repo: %q", r.ID, r.Source.Describe())
+		}
+	}
+}
+
 // A recipe that serves a different context than it claims to have verified is
 // worse than no recipe, so the two must be edited together.
 func TestVerifiedContextMatchesMaxModelLen(t *testing.T) {

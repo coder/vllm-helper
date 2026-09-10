@@ -64,6 +64,29 @@ vllm-project, `models/<org>/<Model>.yaml`: `model.model_id` (same join key),
 `compatible_strategies`. Only entries listed under `hardware:` are verified; everything
 else is a fail-open default, and we surface that distinction rather than inventing tiers.
 
+## Provenance
+
+Every tested recipe is authored in this repo but derived from an upstream, so each entry
+carries a structured `source`:
+
+```json
+"source": {
+  "repo": "eugr/spark-vllm-docker",
+  "path": "recipes/deepseek-v4-flash-0731.yaml",
+  "commit": "1761c49ad71ca9c8ca50772941ee4d06dcc40dc1",
+  "license": "MIT"
+}
+```
+
+Structured rather than a comment for three reasons: JSON has no comments; `recipediff`
+needs it to know which upstream file and commit to compare an entry against; and MIT and
+Apache-2.0 both want attribution. `recipes show` renders it as a "derived from" line, and
+`TestTestedRecipesCiteAPinnedSource` rejects an entry without a repo, a full 40-character
+commit and a licence.
+
+The pinned commit is also the staleness signal: when it trails upstream HEAD,
+`recipediff` has something to report.
+
 ## Phases
 
 - **P1 — done.** Tested-recipe schema, DeepSeek entry, `recipes list` / `recipes show`.

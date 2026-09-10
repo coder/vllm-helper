@@ -8,6 +8,12 @@
       "nodes": 2,
       "image": "eugr/spark-vllm-b12x@sha256:4f5482a24a3d966a4f1a942102232568cad438431cbdc2d17eeabcac33ede5a2",
       "port": 8001,
+      "source": {
+        "repo": "eugr/spark-vllm-docker",
+        "path": "recipes/deepseek-v4-flash-0731.yaml",
+        "commit": "1761c49ad71ca9c8ca50772941ee4d06dcc40dc1",
+        "license": "MIT"
+      },
       "args": [
         "--trust-remote-code",
         "--kv-cache-dtype",

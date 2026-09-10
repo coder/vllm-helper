@@ -29,9 +29,39 @@ type TestedRecipe struct {
 	Nodes       int               `json:"nodes"`
 	Image       string            `json:"image"`
 	Port        int               `json:"port"`
+	Source      Source            `json:"source"`
 	Args        []string          `json:"args"`
 	Env         map[string]string `json:"env,omitempty"`
 	Verified    Verification      `json:"verified"`
+}
+
+// Source is the upstream recipe an entry was derived from, pinned to a commit.
+// It is structured rather than a comment because JSON has no comments and, more
+// importantly, "recipediff" needs it to know what to compare an entry against.
+// It also carries the attribution MIT and Apache-2.0 upstreams require.
+type Source struct {
+	Repo    string `json:"repo"`
+	Path    string `json:"path,omitempty"`
+	Commit  string `json:"commit"`
+	License string `json:"license,omitempty"`
+}
+
+// Describe renders the provenance for "recipes show".
+func (s Source) Describe() string {
+	if s.Repo == "" {
+		return ""
+	}
+	out := s.Repo
+	if s.Path != "" {
+		out += " " + s.Path
+	}
+	if len(s.Commit) >= 8 {
+		out += " @" + s.Commit[:8]
+	}
+	if s.License != "" {
+		out += " (" + s.License + ")"
+	}
+	return out
 }
 
 // Verification is what separates our entries from an upstream claim: upstream
