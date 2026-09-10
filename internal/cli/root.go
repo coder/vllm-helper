@@ -60,6 +60,7 @@ func newRootCmd() *cobra.Command {
 		newListCmd(),
 		newSwitchCmd(),
 		newNewCmd(),
+		newRecipesCmd(),
 		newSearchCmd(),
 		newInspectCmd(),
 		newInstallGGUFCmd(),
