@@ -1,0 +1,337 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
+	"github.com/coder/vllm-helper/internal/nodes"
+	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/recipe"
+)
+
+// discoverScript reports the cluster interface, both RoCE devices and this
+// node's address on that interface. It runs on the node rather than being
+// configured because these are properties of the machine; hardcoding them
+// would bake one deployment into a shipped tool.
+const discoverScript = `set -u
+iface="${VH_IFACE:-}"
+if [ -z "$iface" ]; then
+  iface=$(ibdev2netdev 2>/dev/null | awk '$NF=="(Up)"{print $5; exit}')
+fi
+ibif=$(ibdev2netdev 2>/dev/null | awk '$NF=="(Up)"{printf "%s,", $1}' | sed 's/,$//')
+ip=$(ip -o -4 addr show dev "$iface" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+printf 'IFACE_NAME=%s\nIB_IF=%s\nNODE_IP=%s\nHOME_DIR=%s\n' "$iface" "$ibif" "$ip" "$HOME"
+`
+
+type recipeLaunchOptions struct {
+	nodeNames  []string
+	iface      string
+	masterPort int
+	container  string
+	sshKey     string
+	dryRun     bool
+	skipCoder  bool
+}
+
+func newRecipesLaunchCmd() *cobra.Command {
+	var o recipeLaunchOptions
+	c := &cobra.Command{
+		Use:   "launch <id>",
+		Short: "Launch a tested recipe, and point the active profile and Coder at it",
+		Args:  cobra.ExactArgs(1),
+		RunE:  func(cmd *cobra.Command, a []string) error { return runRecipeLaunch(cmd.Context(), a[0], o) },
+	}
+	f := c.Flags()
+	f.StringSliceVar(&o.nodeNames, "nodes", nil, "registry node names in rank order; rank 0 serves the API")
+	f.StringVar(&o.iface, "iface", "", "cluster interface to use instead of the discovered one")
+	f.IntVar(&o.masterPort, "master-port", 29501, "rendezvous port for the ranks")
+	f.StringVar(&o.container, "container-name", "vllm-node", "container name on each node")
+	f.StringVar(&o.sshKey, "ssh-key", "", "private key for reaching non-head nodes")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what would run and change nothing")
+	f.BoolVar(&o.skipCoder, "no-activate", false, "launch only; leave the active profile and Coder alone")
+	return c
+}
+
+func newRecipesStopCmd() *cobra.Command {
+	var o recipeLaunchOptions
+	c := &cobra.Command{
+		Use:   "stop <id>",
+		Short: "Stop the containers a tested recipe started",
+		Args:  cobra.ExactArgs(1),
+		RunE:  func(cmd *cobra.Command, a []string) error { return runRecipeStop(a[0], o) },
+	}
+	f := c.Flags()
+	f.StringSliceVar(&o.nodeNames, "nodes", nil, "registry node names")
+	f.StringVar(&o.container, "container-name", "vllm-node", "container name on each node")
+	f.StringVar(&o.sshKey, "ssh-key", "", "private key for reaching non-head nodes")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what would run and change nothing")
+	return c
+}
+
+// recipeMember is one node plus what we discovered about it.
+type recipeMember struct {
+	node       nodes.Node
+	rank       int
+	discovered map[string]string
+}
+
+func resolveRecipeMembers(r recipe.TestedRecipe, o recipeLaunchOptions) ([]recipeMember, error) {
+	reg, err := nodes.Load()
+	if err != nil {
+		return nil, err
+	}
+	names := o.nodeNames
+	if len(names) == 0 {
+		return nil, fmt.Errorf("--nodes is required: %s needs %d node(s), and rank order matters", r.ID, r.Nodes)
+	}
+	if len(names) != r.Nodes {
+		return nil, fmt.Errorf("%s is verified on %d node(s) but %d were given; a tested recipe is only tested at its own topology", r.ID, r.Nodes, len(names))
+	}
+	out := make([]recipeMember, 0, len(names))
+	for i, name := range names {
+		n, ok := reg.Get(name)
+		if !ok {
+			return nil, fmt.Errorf("no node %q in the registry; add it with 'vllm-helper node add'", name)
+		}
+		out = append(out, recipeMember{node: n, rank: i})
+	}
+	return out, nil
+}
+
+// nodeScript runs a script on a member and returns stdout. The head runs
+// locally; everything else goes over ssh with the script on stdin, which is
+// how shard start already reaches remote nodes.
+func nodeScript(m recipeMember, headName, key, script string, env []string) (string, error) {
+	var cmd *exec.Cmd
+	if m.node.Name == headName {
+		cmd = exec.Command("bash", "-s")
+	} else {
+		target, err := sshTarget(m.node)
+		if err != nil {
+			return "", err
+		}
+		args := []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"}
+		if key != "" {
+			args = append(args, "-i", key)
+		}
+		args = append(args, target, "bash", "-s")
+		cmd = exec.Command("ssh", args...)
+	}
+	cmd.Stdin = strings.NewReader(script + "\n")
+	cmd.Env = append(os.Environ(), env...)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		return out.String(), fmt.Errorf("%s: %w: %s", m.node.Name, err, strings.TrimSpace(errb.String()))
+	}
+	return out.String(), nil
+}
+
+func parseKeyValues(s string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(s, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && k != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	tested, err := recipe.LoadTested()
+	if err != nil {
+		return err
+	}
+	r, ok := tested.Get(id)
+	if !ok {
+		return fmt.Errorf("no tested recipe %q", id)
+	}
+	if r.Image == "" {
+		return fmt.Errorf("%s pins no image, so there is nothing to launch", r.ID)
+	}
+	members, err := resolveRecipeMembers(r, o)
+	if err != nil {
+		return err
+	}
+	head := members[0].node.Name
+
+	var denv []string
+	if o.iface != "" {
+		denv = append(denv, "VH_IFACE="+o.iface)
+	}
+	for i := range members {
+		envScript := discoverScript
+		if o.iface != "" {
+			envScript = "VH_IFACE=" + recipe.ShellQuote(o.iface) + "\n" + discoverScript
+		}
+		out, err := nodeScript(members[i], head, o.sshKey, envScript, denv)
+		if err != nil {
+			return fmt.Errorf("discover on %s: %w", members[i].node.Name, err)
+		}
+		members[i].discovered = parseKeyValues(out)
+		for _, need := range r.Placeholders() {
+			if members[i].discovered[need] == "" {
+				return fmt.Errorf("%s: could not discover %s (recipe %s needs it); pass --iface if autodiscovery is wrong", members[i].node.Name, need, r.ID)
+			}
+		}
+	}
+
+	masterAddr := members[0].discovered[recipe.PlaceholderNodeIP]
+	if masterAddr == "" {
+		return fmt.Errorf("head node %s has no address on the cluster interface", head)
+	}
+
+	specs := make([]recipe.ContainerSpec, len(members))
+	for i, m := range members {
+		env, err := r.NodeEnv(m.discovered)
+		if err != nil {
+			return fmt.Errorf("%s: %w", m.node.Name, err)
+		}
+		args := append([]string{"serve", r.Model}, r.ServeArgs()...)
+		args = append(args, r.DistArgs(m.rank, masterAddr, o.masterPort)...)
+		specs[i] = recipe.ContainerSpec{
+			Name:    o.container,
+			Image:   r.Image,
+			HomeDir: m.discovered["HOME_DIR"],
+			Env:     env,
+			Args:    args,
+		}
+	}
+
+	fmt.Printf("%s  %s\n", r.DisplayName, r.Summary())
+	fmt.Printf("  image      %s\n", r.Image)
+	fmt.Printf("  master     %s:%d\n", masterAddr, o.masterPort)
+	for i, m := range members {
+		role := "head, serves the API"
+		if m.rank != 0 {
+			role = "worker, headless"
+		}
+		fmt.Printf("  rank %d     %s (%s) iface=%s ib=%s ip=%s\n", m.rank, m.node.Name, role,
+			m.discovered[recipe.PlaceholderIface], m.discovered[recipe.PlaceholderIBIf], m.discovered[recipe.PlaceholderNodeIP])
+		_ = specs[i]
+	}
+	fmt.Println()
+
+	if o.dryRun {
+		for i, m := range members {
+			cmdline, err := specs[i].ShellCommand()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("# %s (rank %d)\n%s\n\n", m.node.Name, m.rank, cmdline)
+		}
+		fmt.Println("dry run: nothing was started and no profile or Coder state changed")
+		return nil
+	}
+
+	// Workers must be listening before the head starts its rendezvous, so
+	// launch in descending rank order and finish with rank 0.
+	for i := len(members) - 1; i >= 0; i-- {
+		m := members[i]
+		if _, err := nodeScript(m, head, o.sshKey, "docker rm -f "+recipe.ShellQuote(o.container)+" >/dev/null 2>&1 || true", nil); err != nil {
+			return fmt.Errorf("clear old container on %s: %w", m.node.Name, err)
+		}
+		cmdline, err := specs[i].ShellCommand()
+		if err != nil {
+			return err
+		}
+		if _, err := nodeScript(m, head, o.sshKey, cmdline, nil); err != nil {
+			return fmt.Errorf("start rank %d on %s: %w", m.rank, m.node.Name, err)
+		}
+		fmt.Printf("started rank %d on %s\n", m.rank, m.node.Name)
+	}
+
+	if o.skipCoder {
+		fmt.Println("skipped profile activation, so the active profile and Coder still describe whatever ran before")
+		return nil
+	}
+	return activateRecipeProfile(ctx, cfg, r)
+}
+
+// activateRecipeProfile records the launch as a profile and runs the same
+// activation switch does, so the active profile, active.env and Coder all
+// describe what is actually serving. The raw docker path bypassed all three.
+func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.TestedRecipe) error {
+	if r.Verified.Context <= 0 {
+		return fmt.Errorf("%s has no verified context, which Coder needs as a context limit", r.ID)
+	}
+	p, err := profile.Create(cfg.Dirs, profile.CreateOpts{
+		Repo:        r.Model,
+		Name:        r.ID,
+		MaxModelLen: strconv.Itoa(r.Verified.Context),
+		ExtraArgs:   strings.Join(r.Args, " "),
+		Status:      "tested recipe, runs in " + r.Image,
+		Source:      "recipe " + r.ID,
+	})
+	if err != nil {
+		return err
+	}
+	if r.DisplayName != "" {
+		p.File.Set("DISPLAY_NAME", r.DisplayName)
+		if err := p.File.Write(cfg.Dirs.ProfileFile(p.Name), 0o644); err != nil {
+			return err
+		}
+	}
+	if err := control.WriteActiveEnv(cfg, p); err != nil {
+		return err
+	}
+	// The containers are already up, so there is no service to restart here;
+	// the notify half is what syncs Coder.
+	if err := control.NotifyAndRestart(ctx, cfg, p, os.Stderr, func() error { return nil }); err != nil {
+		return err
+	}
+	fmt.Printf("active profile is now %s\n", p.Name)
+	return nil
+}
+
+func runRecipeStop(id string, o recipeLaunchOptions) error {
+	tested, err := recipe.LoadTested()
+	if err != nil {
+		return err
+	}
+	r, ok := tested.Get(id)
+	if !ok {
+		return fmt.Errorf("no tested recipe %q", id)
+	}
+	if len(o.nodeNames) == 0 {
+		return fmt.Errorf("--nodes is required")
+	}
+	reg, err := nodes.Load()
+	if err != nil {
+		return err
+	}
+	head := o.nodeNames[0]
+	cmdline := "docker rm -f " + recipe.ShellQuote(o.container)
+	for i, name := range o.nodeNames {
+		n, ok := reg.Get(name)
+		if !ok {
+			return fmt.Errorf("no node %q in the registry", name)
+		}
+		m := recipeMember{node: n, rank: i}
+		if o.dryRun {
+			fmt.Printf("# %s\n%s\n", name, cmdline)
+			continue
+		}
+		if _, err := nodeScript(m, head, o.sshKey, cmdline+" >/dev/null 2>&1 || true", nil); err != nil {
+			return fmt.Errorf("stop on %s: %w", name, err)
+		}
+		fmt.Printf("stopped %s on %s\n", o.container, name)
+	}
+	_ = r
+	return nil
+}

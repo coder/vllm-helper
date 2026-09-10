@@ -17,7 +17,7 @@ func newRecipesCmd() *cobra.Command {
 		Short:   "Tested launch configurations for known-good models",
 		GroupID: groupModels,
 	}
-	c.AddCommand(newRecipesListCmd(), newRecipesShowCmd())
+	c.AddCommand(newRecipesListCmd(), newRecipesShowCmd(), newRecipesLaunchCmd(), newRecipesStopCmd())
 	return c
 }
 

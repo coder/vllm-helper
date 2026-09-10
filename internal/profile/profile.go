@@ -36,9 +36,14 @@ func (p *Profile) Status() string {
 	return ""
 }
 
-// DisplayName derives a Coder-facing name from the model repo:
+// DisplayName is the Coder-facing name. An explicit DISPLAY_NAME wins, because
+// deriving from the repo cannot know that "DeepSeek-V4-Flash-0731" is published
+// as "DeepSeek V4 Flash"; otherwise it is derived from the model repo:
 // "deepreinforce-ai/Ornith-1.0-35B-FP8" -> "Ornith 1.0 35B FP8".
 func (p *Profile) DisplayName() string {
+	if explicit := strings.TrimSpace(p.File.Get("DISPLAY_NAME")); explicit != "" {
+		return explicit
+	}
 	name := p.Model()
 	if i := strings.LastIndex(name, "/"); i >= 0 {
 		name = name[i+1:]
