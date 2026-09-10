@@ -51,10 +51,7 @@
           "default_mode": "mtp",
           "modes": {
             "mtp": {
-              "variants": [
-                "fp8",
-                "nvfp4"
-              ],
+              "variants": ["fp8", "nvfp4"],
               "hardware": {
                 "rtx_pro_6000_8x": "unsupported"
               },
@@ -78,10 +75,7 @@
               }
             },
             "dspark": {
-              "variants": [
-                "default",
-                "dspark"
-              ],
+              "variants": ["default", "dspark"],
               "args": [
                 "--speculative-config",
                 "{\"method\":\"dspark\",\"num_speculative_tokens\":7,\"draft_sample_method\":\"probabilistic\"}"
@@ -98,9 +92,7 @@
           }
         }
       },
-      "opt_in_features": [
-        "spec_decoding"
-      ],
+      "opt_in_features": ["spec_decoding"],
       "variants": {
         "default": {
           "model_id": "deepseek-ai/DeepSeek-V4-Flash-0731",
@@ -183,10 +175,7 @@
               }
             },
             "blackwell": {
-              "extra_args": [
-                "--moe-backend",
-                "deep_gemm_mega_moe"
-              ]
+              "extra_args": ["--moe-backend", "deep_gemm_mega_moe"]
             }
           }
         },
@@ -292,10 +281,7 @@
       },
       "hardware_overrides": {
         "blackwell": {
-          "extra_args": [
-            "--attention_config.use_fp4_indexer_cache",
-            "True"
-          ]
+          "extra_args": ["--attention_config.use_fp4_indexer_cache", "True"]
         },
         "amd": {
           "extra_args": [
@@ -329,9 +315,7 @@
           "tp": 8,
           "hardware_overrides": {
             "hopper": {
-              "extra_args": [
-                "--no-enable-flashinfer-autotune"
-              ]
+              "extra_args": ["--no-enable-flashinfer-autotune"]
             },
             "blackwell": {
               "extra_args": [
@@ -347,10 +331,7 @@
               ]
             },
             "mi300x": {
-              "extra_args": [
-                "--gpu-memory-utilization",
-                "0.85"
-              ]
+              "extra_args": ["--gpu-memory-utilization", "0.85"]
             }
           }
         },
@@ -365,10 +346,7 @@
               ]
             },
             "mi300x": {
-              "extra_args": [
-                "--gpu-memory-utilization",
-                "0.85"
-              ]
+              "extra_args": ["--gpu-memory-utilization", "0.85"]
             }
           }
         },
