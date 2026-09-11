@@ -45,15 +45,15 @@ func writeProfile(t *testing.T, body string) *config.Config {
 func TestRecipeOverridesIgnoreRestatements(t *testing.T) {
 	r := testRecipe(t)
 	cfg := writeProfile(t, "MODEL="+r.Model+"\nMAX_MODEL_LEN=262144\nGPU_MEMORY_UTILIZATION=0.85\nKV_CACHE_MEMORY_BYTES=\nEXTRA_ARGS=\"\"\nRECIPE="+r.ID+"\n")
-	over, p, err := recipeOverrides(cfg, r)
+	local, err := recipeOverrides(cfg, r)
 	if err != nil {
 		t.Fatalf("recipeOverrides: %v", err)
 	}
-	if p == nil {
+	if local.profile == nil {
 		t.Fatal("the existing profile should have been returned")
 	}
-	if len(over) != 0 {
-		t.Errorf("expected no overrides, got %v", over)
+	if len(local.args) != 0 {
+		t.Errorf("expected no overrides, got %v", local.args)
 	}
 }
 
@@ -62,11 +62,11 @@ func TestRecipeOverridesIgnoreRestatements(t *testing.T) {
 func TestRecipeOverridesCarryEditsIntoArgv(t *testing.T) {
 	r := testRecipe(t)
 	cfg := writeProfile(t, "MODEL="+r.Model+"\nMAX_MODEL_LEN=131072\nEXTRA_ARGS=\"--max-num-seqs 16 --enforce-eager\"\nRECIPE="+r.ID+"\n")
-	over, _, err := recipeOverrides(cfg, r)
+	local, err := recipeOverrides(cfg, r)
 	if err != nil {
 		t.Fatalf("recipeOverrides: %v", err)
 	}
-	args := r.ServeArgsWith(over)
+	args := r.ServeArgsWith(local.args)
 	if v, _ := recipe.FlagValue(args, "--max-model-len"); v != "131072" {
 		t.Errorf("--max-model-len = %q, want the profile value", v)
 	}
@@ -76,8 +76,12 @@ func TestRecipeOverridesCarryEditsIntoArgv(t *testing.T) {
 	if _, ok := recipe.FlagValue(args, "--enforce-eager"); !ok {
 		t.Error("a flag only EXTRA_ARGS sets must be added")
 	}
-	if flags := recipe.OverrideFlags(over); len(flags) != 3 {
+	if flags := recipe.OverrideFlags(local.args); len(flags) != 3 {
 		t.Errorf("expected 3 overridden flags, got %v", flags)
+	}
+	// The EXTRA_ARGS written back keeps the real overrides and nothing else.
+	if got := strings.Join(local.extra, " "); got != "--max-num-seqs 16 --enforce-eager" {
+		t.Errorf("EXTRA_ARGS to write back = %q", got)
 	}
 }
 
@@ -86,24 +90,29 @@ func TestRecipeOverridesCarryEditsIntoArgv(t *testing.T) {
 func TestRecipeOverridesIgnoreAVerbatimExtraArgsCopy(t *testing.T) {
 	r := testRecipe(t)
 	body := "MODEL=" + r.Model + "\nMAX_MODEL_LEN=262144\nGPU_MEMORY_UTILIZATION=0.85\nEXTRA_ARGS=" + strconv.Quote(strings.Join(r.Args, " ")) + "\nRECIPE=" + r.ID + "\n"
-	over, p, err := recipeOverrides(writeProfile(t, body), r)
+	local, err := recipeOverrides(writeProfile(t, body), r)
 	if err != nil {
 		t.Fatalf("recipeOverrides: %v", err)
 	}
-	if p == nil {
+	if local.profile == nil {
 		t.Fatal("profile not loaded")
 	}
-	if len(over) != 0 {
-		t.Errorf("a verbatim copy of the recipe is not an override: %v", over)
+	if len(local.args) != 0 {
+		t.Errorf("a verbatim copy of the recipe is not an override: %v", local.args)
+	}
+	// It also has to be pruned on write: left in place, those tokens would
+	// override the recipe's own value the day the recipe changes.
+	if len(local.extra) != 0 || !local.pruned {
+		t.Errorf("expected the copy to be pruned, got extra=%v pruned=%v", local.extra, local.pruned)
 	}
 }
 
 // No profile yet is the first launch, not an error.
 func TestRecipeOverridesToleratesNoProfile(t *testing.T) {
 	r := testRecipe(t)
-	over, p, err := recipeOverrides(writeProfile(t, ""), r)
-	if err != nil || p != nil || over != nil {
-		t.Fatalf("first launch should be clean: over=%v p=%v err=%v", over, p, err)
+	local, err := recipeOverrides(writeProfile(t, ""), r)
+	if err != nil || local.profile != nil || local.args != nil {
+		t.Fatalf("first launch should be clean: %+v err=%v", local, err)
 	}
 }
 
@@ -112,7 +121,7 @@ func TestRecipeOverridesToleratesNoProfile(t *testing.T) {
 func TestRecipeOverridesRefuseADifferentModel(t *testing.T) {
 	r := testRecipe(t)
 	cfg := writeProfile(t, "MODEL=other/model\nRECIPE="+r.ID+"\n")
-	_, _, err := recipeOverrides(cfg, r)
+	_, err := recipeOverrides(cfg, r)
 	if err == nil || !strings.Contains(err.Error(), "other/model") {
 		t.Fatalf("expected a refusal naming the model, got %v", err)
 	}

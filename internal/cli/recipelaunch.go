@@ -164,7 +164,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	if r.Image == "" {
 		return fmt.Errorf("%s pins no image, so there is nothing to launch", r.ID)
 	}
-	overrides, existing, err := recipeOverrides(cfg, r)
+	local, err := recipeOverrides(cfg, r)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 		if err != nil {
 			return fmt.Errorf("%s: %w", m.node.Name, err)
 		}
-		args := append([]string{"serve", r.Model}, r.ServeArgsWith(overrides)...)
+		args := append([]string{"serve", r.Model}, r.ServeArgsWith(local.args)...)
 		args = append(args, r.DistArgs(m.rank, masterAddr, o.masterPort)...)
 		specs[i] = recipe.ContainerSpec{
 			Name:    o.container,
@@ -221,8 +221,8 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	fmt.Printf("%s  %s\n", r.DisplayName, r.Summary())
 	fmt.Printf("  image      %s\n", r.Image)
 	fmt.Printf("  master     %s:%d\n", masterAddr, o.masterPort)
-	if flags := recipe.OverrideFlags(overrides); len(flags) > 0 {
-		fmt.Println("  overrides  " + strings.Join(flags, " ") + " from profile " + existing.Name)
+	if flags := recipe.OverrideFlags(local.args); len(flags) > 0 {
+		fmt.Println("  overrides  " + strings.Join(flags, " ") + " from profile " + local.profile.Name)
 		fmt.Println("  claim      recipe plus local overrides -- the verified numbers no longer describe this launch")
 	}
 	if cfg.APIKey() == "" {
@@ -274,44 +274,65 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 		fmt.Println("skipped profile activation, so the active profile and Coder still describe whatever ran before")
 		return nil
 	}
-	return activateRecipeProfile(ctx, cfg, r, existing, overrides)
+	return activateRecipeProfile(ctx, cfg, r, local)
 }
 
 // recipeOverrides reads the local override layer for a recipe: the profile of
 // the same name. Editing that profile is allowed, and has to reach argv -- the
 // Coder sync already reads MAX_MODEL_LEN and DISPLAY_NAME from it, so an
 // ignored edit would advertise one server while another one runs.
-func recipeOverrides(cfg *config.Config, r recipe.TestedRecipe) ([]string, *profile.Profile, error) {
+func recipeOverrides(cfg *config.Config, r recipe.TestedRecipe) (overrideLayer, error) {
 	if _, err := os.Stat(cfg.Dirs.ProfileFile(r.ID)); err != nil {
-		return nil, nil, nil
+		return overrideLayer{}, nil
 	}
 	p, err := profile.Load(cfg.Dirs, r.ID)
 	if err != nil {
-		return nil, nil, err
+		return overrideLayer{}, err
 	}
 	if m := strings.TrimSpace(p.Model()); m != "" && m != r.Model {
-		return nil, nil, fmt.Errorf("profile %s names model %s but recipe %s serves %s; launch runs the recipe's model, so keep a different model in its own profile", p.Name, m, r.ID, r.Model)
+		return overrideLayer{}, fmt.Errorf("profile %s names model %s but recipe %s serves %s; launch runs the recipe's model, so keep a different model in its own profile", p.Name, m, r.ID, r.Model)
 	}
-	var over []string
+	var knobs []string
 	for _, k := range []struct{ key, flag string }{
 		{"MAX_MODEL_LEN", "--max-model-len"},
 		{"GPU_MEMORY_UTILIZATION", "--gpu-memory-utilization"},
 		{"KV_CACHE_MEMORY_BYTES", "--kv-cache-memory-bytes"},
 	} {
 		if v := strings.TrimSpace(p.File.Get(k.key)); v != "" {
-			over = append(over, k.flag, v)
+			knobs = append(knobs, k.flag, v)
 		}
 	}
-	if extra := strings.TrimSpace(p.ExtraArgs()); extra != "" {
-		words, err := config.SplitArgs(extra)
+	var extra []string
+	if raw := strings.TrimSpace(p.ExtraArgs()); raw != "" {
+		words, err := config.SplitArgs(raw)
 		if err != nil {
-			return nil, nil, fmt.Errorf("profile %s EXTRA_ARGS: %w", p.Name, err)
+			return overrideLayer{}, fmt.Errorf("profile %s EXTRA_ARGS: %w", p.Name, err)
 		}
-		over = append(over, words...)
+		extra = words
 	}
 	// Only a disagreement is an override: a profile that restates the recipe
 	// -- which the first launcher wrote out in full -- is still untouched.
-	return recipe.StripRestatements(r.ServeArgs(), over), p, nil
+	base := r.ServeArgs()
+	layer := overrideLayer{
+		profile: p,
+		extra:   recipe.StripRestatements(base, extra),
+		pruned:  len(extra) > 0,
+	}
+	layer.args = append(recipe.StripRestatements(base, knobs), layer.extra...)
+	layer.pruned = layer.pruned && len(layer.extra) < len(extra)
+	return layer, nil
+}
+
+// overrideLayer is what the local profile contributes on top of a recipe.
+// extra is kept apart from args because it is what gets written back to
+// EXTRA_ARGS: a token that restates the recipe carries no information, and
+// leaving it there would silently pin this profile to today's recipe if the
+// recipe's value ever changed.
+type overrideLayer struct {
+	profile *profile.Profile
+	args    []string
+	extra   []string
+	pruned  bool
 }
 
 // recipeForProfile finds the recipe a generated profile was launched from.
@@ -334,11 +355,11 @@ func overrideNote(r recipe.TestedRecipe) string {
 	if err != nil {
 		return ""
 	}
-	over, p, err := recipeOverrides(cfg, r)
-	if err != nil || p == nil || len(over) == 0 {
+	local, err := recipeOverrides(cfg, r)
+	if err != nil || local.profile == nil || len(local.args) == 0 {
 		return ""
 	}
-	return "profile " + p.Name + " overrides " + strings.Join(recipe.OverrideFlags(over), " ")
+	return "profile " + local.profile.Name + " overrides " + strings.Join(recipe.OverrideFlags(local.args), " ")
 }
 
 // recipeFlag reads a value out of the recipe's own flags, so a generated
@@ -353,10 +374,11 @@ func recipeFlag(r recipe.TestedRecipe, flag, fallback string) string {
 // activateRecipeProfile records the launch as a profile and runs the same
 // activation switch does, so the active profile, active.env and Coder all
 // describe what is actually serving. The raw docker path bypassed all three.
-func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.TestedRecipe, p *profile.Profile, overrides []string) error {
+func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.TestedRecipe, local overrideLayer) error {
 	if r.Verified.Context <= 0 {
 		return fmt.Errorf("%s has no verified context, which Coder needs as a context limit", r.ID)
 	}
+	p := local.profile
 	// An existing profile is updated in place, never replaced: its knobs and
 	// EXTRA_ARGS are the override layer this launch just honoured, so
 	// overwriting them would discard the user's edit after acting on it.
@@ -375,6 +397,9 @@ func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.Tes
 		p = created
 	}
 	p.File.Set(profile.RecipeKey, r.ID)
+	// Written back with restatements removed: those tokens change nothing now,
+	// and left in place they would override a future recipe value.
+	p.File.Set("EXTRA_ARGS", strings.Join(local.extra, " "))
 	if r.DisplayName != "" {
 		p.File.Set("DISPLAY_NAME", r.DisplayName)
 	}
@@ -390,7 +415,10 @@ func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.Tes
 		return err
 	}
 	fmt.Printf("active profile is now %s\n", p.Name)
-	if len(overrides) > 0 {
+	if local.pruned {
+		fmt.Println("EXTRA_ARGS: dropped the flags that only restated the recipe.")
+	}
+	if len(local.args) > 0 {
 		fmt.Printf("Coder is advertising %s tokens, which is what this launch serves.\n", p.MaxModelLen())
 	}
 	return nil
