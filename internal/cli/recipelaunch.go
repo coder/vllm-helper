@@ -210,12 +210,18 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 			HomeDir: m.discovered["HOME_DIR"],
 			Env:     env,
 			Args:    args,
+			APIKey:  cfg.APIKey(),
 		}
 	}
 
 	fmt.Printf("%s  %s\n", r.DisplayName, r.Summary())
 	fmt.Printf("  image      %s\n", r.Image)
 	fmt.Printf("  master     %s:%d\n", masterAddr, o.masterPort)
+	if cfg.APIKey() == "" {
+		fmt.Println("  auth       none -- VLLM_API_KEY is unset, so anyone who can reach the port can use it")
+	} else {
+		fmt.Println("  auth       VLLM_API_KEY from secrets.env")
+	}
 	for i, m := range members {
 		role := "head, serves the API"
 		if m.rank != 0 {
@@ -229,7 +235,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 
 	if o.dryRun {
 		for i, m := range members {
-			cmdline, err := specs[i].ShellCommand()
+			cmdline, err := specs[i].DisplayCommand()
 			if err != nil {
 				return err
 			}
@@ -270,22 +276,24 @@ func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.Tes
 	if r.Verified.Context <= 0 {
 		return fmt.Errorf("%s has no verified context, which Coder needs as a context limit", r.ID)
 	}
+	// EXTRA_ARGS is deliberately left empty: the recipe owns argv, and a second
+	// copy here is a field that can drift from what actually launched.
 	p, err := profile.Create(cfg.Dirs, profile.CreateOpts{
 		Repo:        r.Model,
 		Name:        r.ID,
 		MaxModelLen: strconv.Itoa(r.Verified.Context),
-		ExtraArgs:   strings.Join(r.Args, " "),
-		Status:      "tested recipe, runs in " + r.Image,
+		Status:      "generated from recipe " + r.ID + " -- edit the recipe, not this file",
 		Source:      "recipe " + r.ID,
 	})
 	if err != nil {
 		return err
 	}
+	p.File.Set(profile.RecipeKey, r.ID)
 	if r.DisplayName != "" {
 		p.File.Set("DISPLAY_NAME", r.DisplayName)
-		if err := p.File.Write(cfg.Dirs.ProfileFile(p.Name), 0o644); err != nil {
-			return err
-		}
+	}
+	if err := p.File.Write(cfg.Dirs.ProfileFile(p.Name), 0o644); err != nil {
+		return err
 	}
 	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err

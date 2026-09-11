@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/profile"
 )
 
 func newStartCmd() *cobra.Command {
@@ -42,6 +44,13 @@ func runStart() error {
 		return nil
 	case err != nil:
 		return fmt.Errorf("reading the active model config at %s: %w", cfg.Dirs.ActiveEnvFile(), err)
+	}
+
+	// A recipe-generated profile describes a container launch, so serving it
+	// natively here would start vLLM without the image's flags and quietly
+	// produce a different server than the one that was verified.
+	if id := active.Get(profile.RecipeKey); strings.TrimSpace(id) != "" {
+		return fmt.Errorf("the active profile is generated from recipe %q and runs in a container; start it with 'vllm-helper recipes launch %s'", strings.TrimSpace(id), strings.TrimSpace(id))
 	}
 
 	spec := serveSpecFromActive(active)

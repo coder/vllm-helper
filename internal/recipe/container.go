@@ -24,12 +24,21 @@ type ContainerSpec struct {
 	HomeDir string
 	Env     map[string]string
 	Args    []string
+	// APIKey is kept out of Env so it can be redacted when the command is
+	// printed, and passed as VLLM_API_KEY rather than --api-key so it stays out
+	// of the host process command line.
+	APIKey string
 }
 
 // RunArgs renders the argv for "docker run". Env is emitted in sorted order so
 // the rendered command is stable and two launches can be diffed against
 // each other.
-func (s ContainerSpec) RunArgs() ([]string, error) {
+func (s ContainerSpec) RunArgs() ([]string, error) { return s.runArgs(false) }
+
+// DisplayArgs is RunArgs with the API key redacted, for printing.
+func (s ContainerSpec) DisplayArgs() ([]string, error) { return s.runArgs(true) }
+
+func (s ContainerSpec) runArgs(redact bool) ([]string, error) {
 	if s.Name == "" || s.Image == "" || s.HomeDir == "" {
 		return nil, fmt.Errorf("container spec needs a name, image and home dir")
 	}
@@ -59,14 +68,26 @@ func (s ContainerSpec) RunArgs() ([]string, error) {
 	for _, k := range keys {
 		out = append(out, "-e", k+"="+s.Env[k])
 	}
+	if s.APIKey != "" {
+		shown := s.APIKey
+		if redact {
+			shown = "<redacted>"
+		}
+		out = append(out, "-e", "VLLM_API_KEY="+shown)
+	}
 	out = append(out, "--entrypoint", "vllm", s.Image)
 	return append(out, s.Args...), nil
 }
 
 // ShellCommand renders RunArgs as a single command line safe to pipe to a
 // remote shell.
-func (s ContainerSpec) ShellCommand() (string, error) {
-	args, err := s.RunArgs()
+func (s ContainerSpec) ShellCommand() (string, error) { return s.shellCommand(false) }
+
+// DisplayCommand is ShellCommand with the API key redacted, for printing.
+func (s ContainerSpec) DisplayCommand() (string, error) { return s.shellCommand(true) }
+
+func (s ContainerSpec) shellCommand(redact bool) (string, error) {
+	args, err := s.runArgs(redact)
 	if err != nil {
 		return "", err
 	}

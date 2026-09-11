@@ -26,6 +26,17 @@ func (p *Profile) MaxModelLen() string {
 }
 func (p *Profile) ExtraArgs() string { return p.File.Get("EXTRA_ARGS") }
 
+// RecipeKey names the recipe a profile was generated from. Its presence means
+// every field here is a projection of that recipe, so the file is generated and
+// editing it drifts from what actually launches.
+const RecipeKey = "RECIPE"
+
+// Recipe returns the recipe this profile was generated from, or "".
+func (p *Profile) Recipe() string { return strings.TrimSpace(p.File.Get(RecipeKey)) }
+
+// Generated reports whether a recipe owns this profile.
+func (p *Profile) Generated() bool { return p.Recipe() != "" }
+
 // Status returns the human "# Status: ..." line from the profile header.
 func (p *Profile) Status() string {
 	for _, line := range p.File.LeadingComments() {
