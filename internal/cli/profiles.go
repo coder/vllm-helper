@@ -297,6 +297,12 @@ func runRemove(args []string) error {
 // record the active profile, sync Coder, restart the service, and watch
 // the boot according to opts.
 func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) error {
+	// Refuse before WriteActiveEnv, because the Coder notify happens before the
+	// restart: switching to a recipe profile would publish its context limit to
+	// Coder and only then fail when start refuses to serve it natively.
+	if p.Generated() {
+		return fmt.Errorf("%s is generated from recipe %q and runs in a container; use 'vllm-helper recipes launch %s' instead of switch", p.Name, p.Recipe(), p.Recipe())
+	}
 	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err
 	}
