@@ -26,9 +26,9 @@ func (p *Profile) MaxModelLen() string {
 }
 func (p *Profile) ExtraArgs() string { return p.File.Get("EXTRA_ARGS") }
 
-// RecipeKey names the recipe a profile was generated from. Its presence means
-// every field here is a projection of that recipe, so the file is generated and
-// editing it drifts from what actually launches.
+// RecipeKey names the recipe a profile was generated from. The recipe supplies
+// the base flags; whatever this file says on top of them is a local override
+// that "recipes launch" honours, so a recipe profile stays editable.
 const RecipeKey = "RECIPE"
 
 // Recipe returns the recipe this profile was generated from, or "".

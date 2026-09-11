@@ -80,6 +80,13 @@ func printProfiles(cfg *config.Config) {
 		if p.Name == active {
 			marker = " [active]"
 		}
+		// A recipe profile with edits is no longer the thing we measured, so
+		// say so wherever it is listed.
+		if r, ok := recipeForProfile(p); ok {
+			if over, _, err := recipeOverrides(cfg, r); err == nil && len(over) > 0 {
+				marker = " (+ local overrides)" + marker
+			}
+		}
 		fmt.Printf("  %-24s %s%s\n", p.Name, p.Status(), marker)
 	}
 }

@@ -25,32 +25,18 @@ var standardProfileKeys = map[string]bool{
 	profile.RecipeKey:        true,
 }
 
-// refuseGenerated stops an edit to a profile a recipe owns. Every field in such
-// a profile is a projection of the recipe, so an edit here does not change what
-// launches -- the next launch overwrites it -- and an edited MAX_MODEL_LEN would
-// make Coder advertise a context the server does not serve.
-func refuseGenerated(p *profile.Profile, force bool) error {
-	if !p.Generated() || force {
-		return nil
-	}
-	return fmt.Errorf("%s is generated from recipe %q; edit the recipe and re-launch, or pass --force to edit anyway (the next 'recipes launch' will overwrite it)", p.Name, p.Recipe())
-}
-
 func newEditCmd() *cobra.Command {
-	var force bool
-	c := &cobra.Command{
+	return &cobra.Command{
 		Use:     "edit <profile>",
 		Short:   "Open a profile in $EDITOR and validate the result",
 		GroupID: groupModels,
 		Args:    cobra.MaximumNArgs(1),
-		RunE:    func(_ *cobra.Command, args []string) error { return runEdit(args, force) },
+		RunE:    func(_ *cobra.Command, args []string) error { return runEdit(args) },
 	}
-	c.Flags().BoolVar(&force, "force", false, "edit even a profile generated from a recipe")
-	return c
 }
 
 // runEdit opens a profile in $VISUAL/$EDITOR and validates the result.
-func runEdit(args []string, force bool) error {
+func runEdit(args []string) error {
 	if len(args) < 1 {
 		return errors.New("usage: vllm-helper edit <profile>")
 	}
@@ -59,12 +45,10 @@ func runEdit(args []string, force bool) error {
 		return err
 	}
 	name := args[0]
-	p, err := profile.Load(cfg.Dirs, name)
-	if err != nil {
+	// Loaded only to confirm the profile exists and parses before an editor
+	// is spawned on it.
+	if _, err := profile.Load(cfg.Dirs, name); err != nil {
 		printProfiles(cfg)
-		return err
-	}
-	if err := refuseGenerated(p, force); err != nil {
 		return err
 	}
 	editor := pickEditor()
@@ -100,25 +84,18 @@ func pickEditor() string {
 }
 
 func newSetCmd() *cobra.Command {
-	var force bool
-	c := newSetCmdWith(&force)
-	c.Flags().BoolVar(&force, "force", false, "change even a profile generated from a recipe")
-	return c
-}
-
-func newSetCmdWith(force *bool) *cobra.Command {
 	return &cobra.Command{
 		Use:     "set <profile> KEY=VALUE [KEY=VALUE ...]",
 		Short:   "Change profile settings from the command line",
 		GroupID: groupModels,
 		Example: "  vllm-helper set qwen MAX_MODEL_LEN=40960\n" +
 			"  vllm-helper set qwen -- EXTRA_ARGS=--enable-prefix-caching",
-		RunE: func(_ *cobra.Command, args []string) error { return runSet(args, *force) },
+		RunE: func(_ *cobra.Command, args []string) error { return runSet(args) },
 	}
 }
 
 // runSet updates profile keys in place: vllm-helper set <profile> KEY=VALUE...
-func runSet(args []string, force bool) error {
+func runSet(args []string) error {
 	if len(args) < 2 {
 		return errors.New("usage: vllm-helper set <profile> KEY=VALUE [KEY=VALUE ...]")
 	}
@@ -130,9 +107,6 @@ func runSet(args []string, force bool) error {
 	p, err := profile.Load(cfg.Dirs, name)
 	if err != nil {
 		printProfiles(cfg)
-		return err
-	}
-	if err := refuseGenerated(p, force); err != nil {
 		return err
 	}
 	// Validate everything against an in-memory copy first: a bad pair
@@ -207,6 +181,14 @@ func validateProfile(p *profile.Profile, name string) error {
 }
 
 func profileChangeHint(cfg *config.Config, name string) {
+	// A recipe profile is the override layer over its recipe, so the change is
+	// applied by re-launching the recipe rather than by restarting the service.
+	if p, err := profile.Load(cfg.Dirs, name); err == nil && p.Generated() {
+		fmt.Printf("Saved as a local override of recipe '%s' -- run 'vllm-helper recipes launch %s' to apply it.\n", p.Recipe(), p.Recipe())
+		fmt.Println("The launch will report itself as the recipe plus local overrides, so the verified")
+		fmt.Println("numbers no longer describe it.")
+		return
+	}
 	if name == cfg.ActiveProfile() {
 		fmt.Printf("'%s' is the active profile -- run 'vllm-helper restart' to apply the change.\n", name)
 	} else {

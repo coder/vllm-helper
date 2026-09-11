@@ -22,8 +22,8 @@ func loadFrom(t *testing.T, body string) *profile.Profile {
 	return &profile.Profile{Name: "p", File: f}
 }
 
-// Generated is what stops edit/set and native start from treating a
-// recipe-owned profile as editable, so it must not be fooled by whitespace.
+// Generated is what makes a profile the override layer of a recipe, and what
+// sends start/switch to "recipes launch", so it must not be fooled by whitespace.
 func TestGeneratedTracksTheRecipeKey(t *testing.T) {
 	cases := []struct {
 		name, body, wantRecipe string

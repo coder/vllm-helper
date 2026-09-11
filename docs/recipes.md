@@ -87,6 +87,37 @@ commit and a licence.
 The pinned commit is also the staleness signal: when it trails upstream HEAD,
 `recipediff` has something to report.
 
+## Local overrides
+
+A tested recipe is the **base layer**; the profile of the same name is the **override
+layer**. `recipes launch` merges them last-wins per flag, which is the precedence vLLM
+itself documents for a command line over a config file.
+
+Editing is allowed and honoured. The earlier design refused edits to a recipe profile, but
+the profile is not inert: the Coder sync reads `MAX_MODEL_LEN` and `DISPLAY_NAME` from it, while
+the launcher built argv from the recipe alone. An edit therefore did half of something — it
+moved what Coder advertised without moving what the server served. Merging removes that
+asymmetry by construction.
+
+What changes when overrides exist is the **claim**, not the permission:
+
+- `recipes list`, `recipes show`, `list` and the launch output report the entry as the recipe
+  plus local overrides, and `recipes show` stops presenting the verified numbers as if they
+  described the running server.
+- A future `recipe verify` must refuse to re-stamp measurements taken from an overridden
+  run, because "we ran this" would then be false.
+
+What is still refused is a **wrong command**, not an edit: native `start` and `switch` on a
+container recipe. `switch` is refused ahead of `WriteActiveEnv` because activation notifies
+Coder before restarting, so a late failure would leave Coder advertising a model that is
+not serving.
+
+Overriding any flag is allowed, including `--attention-backend` and `--load-format`. The
+`forbiddenArgs` check still fails closed on combinations known to abort on this arch. A
+profile that merely restates a recipe value is not an override, so a freshly generated
+profile reports none. Changing `MODEL` is refused: that is a different model, which the
+recipe's flags and measurements do not describe.
+
 ## Phases
 
 - **P1 — done.** Tested-recipe schema, DeepSeek entry, `recipes list` / `recipes show`.

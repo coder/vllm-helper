@@ -61,13 +61,48 @@ func placeholderName(v string) (string, bool) {
 	return strings.TrimPrefix(v, "$"), true
 }
 
-// ServeArgs is the argv after "vllm serve <model>". The recipe is authoritative:
-// these are the flags we verified, so nothing is recomputed from the profile.
-func (r TestedRecipe) ServeArgs() []string {
+// ServeArgs is the argv after "vllm serve <model>", with nothing overridden.
+func (r TestedRecipe) ServeArgs() []string { return r.ServeArgsWith(nil) }
+
+// ServeArgsWith layers local overrides on top of the recipe, last-wins per
+// flag. This is the precedence vLLM itself documents for a command line over a
+// config file: the recipe is the config layer, an override is the command line.
+// Honouring an override is what keeps the server and what Coder advertises in
+// agreement -- refusing the edit only moved the disagreement somewhere else.
+func (r TestedRecipe) ServeArgsWith(overrides []string) []string {
 	args := append([]string{}, r.Args...)
 	// Host and port are the launcher's business, not the model's, which is why
 	// the recipe carries "port" as a field instead of inside args.
-	return append(args, "--host", "0.0.0.0", "--port", strconv.Itoa(r.Port))
+	args = append(args, "--host", "0.0.0.0", "--port", strconv.Itoa(r.Port))
+	return dedupeArgs(append(args, overrides...))
+}
+
+// FlagValue reports whether a flag is present in an arg list and what value it
+// carries, so a caller can tell an override ("this disagrees with the recipe")
+// from a restatement. A flag that takes no value reports an empty one.
+func FlagValue(args []string, flag string) (string, bool) {
+	for _, p := range splitArgs(args) {
+		if p.flag == flag {
+			return p.value, true
+		}
+	}
+	return "", false
+}
+
+// OverrideFlags names the flags a set of overrides touches, for reporting how
+// far a launch has moved from the configuration we measured.
+func OverrideFlags(overrides []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range splitArgs(overrides) {
+		if p.flag == "" || seen[p.flag] {
+			continue
+		}
+		seen[p.flag] = true
+		out = append(out, p.flag)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // DistArgs adds the multi-node flags for one rank. Rank 0 is the head that

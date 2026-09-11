@@ -66,6 +66,9 @@ func runRecipesList(jsonOut bool) error {
 	fmt.Println("TESTED -- run on this hardware, pinned by image digest")
 	for _, r := range t.Recipes {
 		fmt.Printf("  %-*s  %-22s  %s", width, r.ID, r.DisplayName, r.Summary())
+		if overrideNote(r) != "" {
+			fmt.Print("  (+ local overrides)")
+		}
 		fmt.Println()
 	}
 	fmt.Println()
@@ -103,8 +106,13 @@ func runRecipesShow(id string, jsonOut bool) error {
 	line("image", r.Image)
 	line("port", fmt.Sprintf("%d", r.Port))
 	line("derived from", r.Source.Describe())
+	line("local", overrideNote(r))
 	fmt.Println()
-	fmt.Println("Verified")
+	if overrideNote(r) != "" {
+		fmt.Println("Verified before those overrides -- they do not describe this launch")
+	} else {
+		fmt.Println("Verified")
+	}
 	v := r.Verified
 	line("date", v.Date)
 	line("hardware", v.Hardware)
