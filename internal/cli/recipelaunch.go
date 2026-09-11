@@ -298,16 +298,9 @@ func recipeOverrides(cfg *config.Config, r recipe.TestedRecipe) ([]string, *prof
 		{"GPU_MEMORY_UTILIZATION", "--gpu-memory-utilization"},
 		{"KV_CACHE_MEMORY_BYTES", "--kv-cache-memory-bytes"},
 	} {
-		v := strings.TrimSpace(p.File.Get(k.key))
-		// Only a disagreement is an override, so a profile that merely
-		// restates the recipe still reports as untouched.
-		if v == "" {
-			continue
+		if v := strings.TrimSpace(p.File.Get(k.key)); v != "" {
+			over = append(over, k.flag, v)
 		}
-		if cur, ok := recipe.FlagValue(r.Args, k.flag); ok && cur == v {
-			continue
-		}
-		over = append(over, k.flag, v)
 	}
 	if extra := strings.TrimSpace(p.ExtraArgs()); extra != "" {
 		words, err := config.SplitArgs(extra)
@@ -316,7 +309,9 @@ func recipeOverrides(cfg *config.Config, r recipe.TestedRecipe) ([]string, *prof
 		}
 		over = append(over, words...)
 	}
-	return over, p, nil
+	// Only a disagreement is an override: a profile that restates the recipe
+	// -- which the first launcher wrote out in full -- is still untouched.
+	return recipe.StripRestatements(r.ServeArgs(), over), p, nil
 }
 
 // recipeForProfile finds the recipe a generated profile was launched from.

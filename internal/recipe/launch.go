@@ -89,6 +89,22 @@ func FlagValue(args []string, flag string) (string, bool) {
 	return "", false
 }
 
+// StripRestatements drops overrides that say exactly what the base already
+// says. The merged result is the same either way, so this only affects the
+// claim -- and a profile that repeats the recipe verbatim has not moved away
+// from what we measured. The first launcher wrote the recipe's own flags into
+// EXTRA_ARGS, so real profiles do repeat it verbatim.
+func StripRestatements(base, overrides []string) []string {
+	var out []string
+	for _, p := range splitArgs(overrides) {
+		if v, ok := FlagValue(base, p.flag); ok && v == p.value {
+			continue
+		}
+		out = append(out, p.render()...)
+	}
+	return out
+}
+
 // OverrideFlags names the flags a set of overrides touches, for reporting how
 // far a launch has moved from the configuration we measured.
 func OverrideFlags(overrides []string) []string {

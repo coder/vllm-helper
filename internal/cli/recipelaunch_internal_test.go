@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -77,6 +78,23 @@ func TestRecipeOverridesCarryEditsIntoArgv(t *testing.T) {
 	}
 	if flags := recipe.OverrideFlags(over); len(flags) != 3 {
 		t.Errorf("expected 3 overridden flags, got %v", flags)
+	}
+}
+
+// The first launcher wrote the recipe's whole flag list into EXTRA_ARGS. That
+// profile is byte-for-byte the recipe, so it must not be reported as drift.
+func TestRecipeOverridesIgnoreAVerbatimExtraArgsCopy(t *testing.T) {
+	r := testRecipe(t)
+	body := "MODEL=" + r.Model + "\nMAX_MODEL_LEN=262144\nGPU_MEMORY_UTILIZATION=0.85\nEXTRA_ARGS=" + strconv.Quote(strings.Join(r.Args, " ")) + "\nRECIPE=" + r.ID + "\n"
+	over, p, err := recipeOverrides(writeProfile(t, body), r)
+	if err != nil {
+		t.Fatalf("recipeOverrides: %v", err)
+	}
+	if p == nil {
+		t.Fatal("profile not loaded")
+	}
+	if len(over) != 0 {
+		t.Errorf("a verbatim copy of the recipe is not an override: %v", over)
 	}
 }
 

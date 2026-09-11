@@ -207,6 +207,18 @@ func splitArgs(in []string) []argPair {
 	return out
 }
 
+// render turns a pair back into argv tokens, keeping --flag=value inline.
+func (p argPair) render() []string {
+	switch {
+	case p.inline:
+		return []string{p.flag + "=" + p.value}
+	case p.hasValue:
+		return []string{p.flag, p.value}
+	default:
+		return []string{p.flag}
+	}
+}
+
 // dedupeArgs keeps the last occurrence of each flag, at its last position.
 func dedupeArgs(in []string) []string {
 	pairs := splitArgs(in)
@@ -219,14 +231,7 @@ func dedupeArgs(in []string) []string {
 		if last[p.flag] != i {
 			continue
 		}
-		switch {
-		case p.inline:
-			out = append(out, p.flag+"="+p.value)
-		case p.hasValue:
-			out = append(out, p.flag, p.value)
-		default:
-			out = append(out, p.flag)
-		}
+		out = append(out, p.render()...)
 	}
 	return out
 }
