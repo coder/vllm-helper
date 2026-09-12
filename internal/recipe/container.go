@@ -45,8 +45,12 @@ func (s ContainerSpec) runArgs(redact bool) ([]string, error) {
 	if !strings.Contains(s.Image, "@sha256:") {
 		return nil, fmt.Errorf("image %q is not pinned by digest", s.Image)
 	}
+	// Deliberately not --rm: an auto-removed container takes its logs with it,
+	// and those logs are the only post-mortem available when a node dies. The
+	// launcher clears a stale container by name before starting, so keeping the
+	// exited one costs nothing.
 	out := []string{
-		"docker", "run", "-d", "--rm",
+		"docker", "run", "-d",
 		"--name", s.Name,
 		// Host networking because the ranks address each other directly over the
 		// DAC link, and IPC/privileged/nofile because NCCL needs shared memory,

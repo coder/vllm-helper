@@ -83,6 +83,10 @@ func TestRunArgsRequiresADigest(t *testing.T) {
 	if !strings.HasSuffix(joined, r.Image) {
 		t.Errorf("image must come last so serve args are the container command: %s", joined)
 	}
+	// A node that dies is diagnosed from its logs, and --rm deletes them.
+	if strings.Contains(joined, "--rm") {
+		t.Errorf("--rm discards the logs needed to explain a dead node: %s", joined)
+	}
 }
 
 // The compilation-config value is JSON; losing its quoting corrupts the launch.
