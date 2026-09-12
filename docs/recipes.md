@@ -118,6 +118,37 @@ profile that merely restates a recipe value is not an override, so a freshly gen
 profile reports none. Changing `MODEL` is refused: that is a different model, which the
 recipe's flags and measurements do not describe.
 
+### Worked example: speculative decoding is a single-user override
+
+`dspark` speculative decoding is the clearest case for the override layer rather than the
+recipe. Measured on the two-Spark pair at 262K context, single stream:
+
+| workload              | recipe     | plus dspark |
+| --------------------- | ---------- | ----------- |
+| repetitive/structured | 28.8 tok/s | 80 tok/s    |
+| code                  | 28.8 tok/s | 44-56 tok/s |
+| prose                 | 28.8 tok/s | 40 tok/s    |
+
+It is not in the recipe because the cost lands on everyone else: KV cache falls from
+681,894 to 420,192 tokens, concurrency from 2.60x to 1.60x, and load time from 150s to
+195s. Speculation also spends spare compute between tokens, and on a busy server that
+compute is already carrying other requests, so the single-stream numbers above are an
+upper bound rather than what a shared box delivers. Time-to-first-token gets slightly
+worse, which every waiting request pays for.
+
+Enable it per-deployment when the box has one user:
+
+```
+vllm-helper set deepseek-v4-flash-2spark EXTRA_ARGS='--speculative-config {"method":"dspark","num_speculative_tokens":5,"draft_sample_method":"probabilistic","attention_backend":"B12X","draft_load_config":{"load_format":"safetensors","safetensors_load_strategy":"lazy"}} --max-cudagraph-capture-size 48'
+vllm-helper recipes launch deepseek-v4-flash-2spark
+```
+
+`num_speculative_tokens` must be a multiple of the checkpoint's `dspark_block_size` (5 for
+DeepSeek V4 Flash 0731); 3 truncates the block and 6 is rejected at boot. The capture size
+is `max_num_seqs x (k + 1)`. Confirm acceptance from the server's own `SpecDecoding
+metrics` log lines rather than from client-side tokens per second, because under
+speculation one streamed chunk carries several tokens.
+
 ## Phases
 
 - **P1 — done.** Tested-recipe schema, DeepSeek entry, `recipes list` / `recipes show`.
