@@ -31,6 +31,39 @@ func (p *Profile) ExtraArgs() string { return p.File.Get("EXTRA_ARGS") }
 // that "recipes launch" honours, so a recipe profile stays editable.
 const RecipeKey = "RECIPE"
 
+// How the recipe was launched. Recorded because the verbs that come after a
+// launch -- status, logs, restart -- have no --nodes flag to read, and asking
+// the user to repeat the topology every time is how the two drift apart.
+const (
+	NodesKey      = "NODES"
+	SSHKeyKey     = "SSH_KEY"
+	ContainerKey  = "CONTAINER"
+	MasterPortKey = "MASTER_PORT"
+)
+
+// Nodes is the registry node names in rank order; rank 0 serves the API.
+func (p *Profile) Nodes() []string {
+	var out []string
+	for _, n := range strings.Split(p.File.Get(NodesKey), ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func (p *Profile) SSHKey() string    { return strings.TrimSpace(p.File.Get(SSHKeyKey)) }
+func (p *Profile) Container() string { return strings.TrimSpace(p.File.Get(ContainerKey)) }
+
+// MasterPort returns 0 when unset, which callers read as "use the default".
+func (p *Profile) MasterPort() int {
+	n, err := strconv.Atoi(strings.TrimSpace(p.File.Get(MasterPortKey)))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // Recipe returns the recipe this profile was generated from, or "".
 func (p *Profile) Recipe() string { return strings.TrimSpace(p.File.Get(RecipeKey)) }
 

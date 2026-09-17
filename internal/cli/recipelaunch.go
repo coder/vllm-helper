@@ -290,7 +290,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 		fmt.Println("skipped profile activation, so the active profile and Coder still describe whatever ran before")
 		return nil
 	}
-	return activateRecipeProfile(ctx, cfg, r, local)
+	return activateRecipeProfile(ctx, cfg, r, local, o)
 }
 
 // recipeOverrides reads the local override layer for a recipe: the profile of
@@ -420,7 +420,7 @@ func recipeFlag(r recipe.TestedRecipe, flag, fallback string) string {
 // activateRecipeProfile records the launch as a profile and runs the same
 // activation switch does, so the active profile, active.env and Coder all
 // describe what is actually serving. The raw docker path bypassed all three.
-func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.TestedRecipe, local overrideLayer) error {
+func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.TestedRecipe, local overrideLayer, o recipeLaunchOptions) error {
 	if r.Verified.Context <= 0 {
 		return fmt.Errorf("%s has no verified context, which Coder needs as a context limit", r.ID)
 	}
@@ -443,6 +443,14 @@ func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.Tes
 		p = created
 	}
 	p.File.Set(profile.RecipeKey, r.ID)
+	// Record how this launch reached the nodes, so status, logs and restart can
+	// act on the same cluster without being handed the topology again.
+	p.File.Set(profile.NodesKey, strings.Join(o.nodeNames, ","))
+	p.File.Set(profile.ContainerKey, o.container)
+	p.File.Set(profile.MasterPortKey, strconv.Itoa(o.masterPort))
+	if o.sshKey != "" {
+		p.File.Set(profile.SSHKeyKey, o.sshKey)
+	}
 	// Written back with restatements removed: those tokens change nothing now,
 	// and left in place they would override a future recipe value.
 	p.File.Set("EXTRA_ARGS", strings.Join(local.extra, " "))

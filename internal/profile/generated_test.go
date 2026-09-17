@@ -22,6 +22,36 @@ func loadFrom(t *testing.T, body string) *profile.Profile {
 	return &profile.Profile{Name: "p", File: f}
 }
 
+// The launch topology is what lets status, logs and restart act on the same
+// cluster later without flags, so parsing has to survive the way people write
+// these files by hand: spaces after commas, a trailing comma, no master port.
+func TestLaunchTopologyRoundTrips(t *testing.T) {
+	p := loadFrom(t, "NODES=\" spark1, spark2 ,\"\nCONTAINER=vllm-node\nMASTER_PORT=29501\nSSH_KEY=/home/u/.ssh/k\n")
+	got := p.Nodes()
+	if len(got) != 2 || got[0] != "spark1" || got[1] != "spark2" {
+		t.Errorf("Nodes() = %q, want [spark1 spark2]", got)
+	}
+	if p.Container() != "vllm-node" {
+		t.Errorf("Container() = %q", p.Container())
+	}
+	if p.MasterPort() != 29501 {
+		t.Errorf("MasterPort() = %d", p.MasterPort())
+	}
+	if p.SSHKey() != "/home/u/.ssh/k" {
+		t.Errorf("SSHKey() = %q", p.SSHKey())
+	}
+
+	// A profile that predates this recording, or a native one, must read as
+	// "no topology" rather than as a one-node cluster called "".
+	empty := loadFrom(t, "MODEL=x\n")
+	if len(empty.Nodes()) != 0 {
+		t.Errorf("Nodes() on a profile without NODES = %q, want none", empty.Nodes())
+	}
+	if empty.MasterPort() != 0 {
+		t.Errorf("MasterPort() unset = %d, want 0 so callers can default it", empty.MasterPort())
+	}
+}
+
 // Generated is what makes a profile the override layer of a recipe, and what
 // sends start/switch to "recipes launch", so it must not be fooled by whitespace.
 func TestGeneratedTracksTheRecipeKey(t *testing.T) {
