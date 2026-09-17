@@ -126,3 +126,31 @@ func TestRecipeOverridesRefuseADifferentModel(t *testing.T) {
 		t.Fatalf("expected a refusal naming the model, got %v", err)
 	}
 }
+
+// A supervisor restarts the cluster without knowing which model is current, so
+// the id has to be derivable from the active profile. Keeping it in a separate
+// unit file instead is a second source of truth that silently reverts a switch.
+func TestActiveRecipeIDComesFromTheActiveProfile(t *testing.T) {
+	r := testRecipe(t)
+	cfg := writeProfile(t, "MODEL="+r.Model+"\nRECIPE="+r.ID+"\n")
+	cfg.Dirs.State = t.TempDir()
+	if err := os.WriteFile(filepath.Join(cfg.Dirs.State, "active-profile"), []byte(r.ID+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := activeRecipeID(cfg)
+	if err != nil {
+		t.Fatalf("activeRecipeID: %v", err)
+	}
+	if got != r.ID {
+		t.Errorf("resolved %q, want %q", got, r.ID)
+	}
+}
+
+// Guessing a recipe when nothing is active would launch an arbitrary model.
+func TestActiveRecipeIDRefusesToGuess(t *testing.T) {
+	cfg := writeProfile(t, "")
+	cfg.Dirs.State = t.TempDir()
+	if _, err := activeRecipeID(cfg); err == nil {
+		t.Fatal("with no active profile the id must be required, not guessed")
+	}
+}

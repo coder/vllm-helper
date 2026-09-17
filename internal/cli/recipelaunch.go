@@ -45,10 +45,20 @@ type recipeLaunchOptions struct {
 func newRecipesLaunchCmd() *cobra.Command {
 	var o recipeLaunchOptions
 	c := &cobra.Command{
-		Use:   "launch <id>",
+		Use:   "launch [id]",
 		Short: "Launch a tested recipe, and point the active profile and Coder at it",
-		Args:  cobra.ExactArgs(1),
-		RunE:  func(cmd *cobra.Command, a []string) error { return runRecipeLaunch(cmd.Context(), a[0], o) },
+		Long: `Launch a tested recipe, and point the active profile and Coder at it.
+
+With no id, relaunches whatever the active profile was launched from, so a
+supervisor can restart the current model without being told which one it is.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, a []string) error {
+			id, err := recipeIDArg(a)
+			if err != nil {
+				return err
+			}
+			return runRecipeLaunch(cmd.Context(), id, o)
+		},
 	}
 	f := c.Flags()
 	f.StringSliceVar(&o.nodeNames, "nodes", nil, "registry node names in rank order; rank 0 serves the API")
@@ -64,10 +74,16 @@ func newRecipesLaunchCmd() *cobra.Command {
 func newRecipesStopCmd() *cobra.Command {
 	var o recipeLaunchOptions
 	c := &cobra.Command{
-		Use:   "stop <id>",
+		Use:   "stop [id]",
 		Short: "Stop the containers a tested recipe started",
-		Args:  cobra.ExactArgs(1),
-		RunE:  func(cmd *cobra.Command, a []string) error { return runRecipeStop(a[0], o) },
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, a []string) error {
+			id, err := recipeIDArg(a)
+			if err != nil {
+				return err
+			}
+			return runRecipeStop(id, o)
+		},
 	}
 	f := c.Flags()
 	f.StringSliceVar(&o.nodeNames, "nodes", nil, "registry node names")
@@ -333,6 +349,36 @@ type overrideLayer struct {
 	args    []string
 	extra   []string
 	pruned  bool
+}
+
+// recipeIDArg resolves the recipe to act on: the argument if given, otherwise
+// whatever is already active. Without this, a supervisor unit has to be told
+// the id separately, which is a second source of truth that silently reverts a
+// "recipes launch <other>" on the next restart.
+func recipeIDArg(a []string) (string, error) {
+	if len(a) == 1 {
+		return a[0], nil
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return "", err
+	}
+	return activeRecipeID(cfg)
+}
+
+func activeRecipeID(cfg *config.Config) (string, error) {
+	name := cfg.ActiveProfile()
+	if name == "" {
+		return "", fmt.Errorf("no active profile, so there is no recipe to act on: pass an id")
+	}
+	p, err := profile.Load(cfg.Dirs, name)
+	if err != nil {
+		return "", err
+	}
+	if !p.Generated() {
+		return "", fmt.Errorf("active profile %q was not launched from a recipe: pass an id", name)
+	}
+	return p.Recipe(), nil
 }
 
 // recipeForProfile finds the recipe a generated profile was launched from.
