@@ -255,3 +255,5 @@ WantedBy=%s
 	run(nil, "sudo", "systemctl", "enable", s.Name)
 	return path, nil
 }
+
+func (s Service) Label() string { return "systemd" }

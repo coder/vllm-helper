@@ -31,6 +31,10 @@ type Health struct {
 	Crashed   bool   `json:"crashed"`   // the unit failed or is restarting after a failure
 }
 
+// Label names what is being reported, for callers that print a state next to
+// it. It lives on the runner rather than being read from a constant so a
+// container cluster is not announced as "systemd"; each platform file supplies
+// its own init system's name.
 func (s Service) userScope() bool { return s.Scope == "user" }
 
 // sudo builds a privileged invocation. Without a terminal to answer a

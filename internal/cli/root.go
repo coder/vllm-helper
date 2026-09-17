@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/plugin"
+	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/service"
 )
 
@@ -163,10 +164,36 @@ type runner interface {
 	PrintLogs(n int) error
 	LastLogs(n int) string
 	LogHint() string
+	Label() string
 }
 
-// svc is the runner for the active model.
-func svc(cfg *config.Config) runner { return systemdService(cfg) }
+// svc is the runner for the active model: the cluster when the active profile
+// is owned by a recipe, otherwise the init system. Picking on the profile is
+// the whole point -- status and logs used to report systemd regardless.
+func svc(cfg *config.Config) runner {
+	if c := activeClusterRunner(cfg); c != nil {
+		return c
+	}
+	return systemdService(cfg)
+}
+
+// activeClusterRunner returns nil when the active model is not a recipe, which
+// is the signal to fall back rather than an error worth surfacing here.
+func activeClusterRunner(cfg *config.Config) *clusterRunner {
+	name := cfg.ActiveProfile()
+	if name == "" {
+		return nil
+	}
+	p, err := profile.Load(cfg.Dirs, name)
+	if err != nil || !p.Generated() {
+		return nil
+	}
+	c, err := clusterRunnerFor(cfg, p)
+	if err != nil {
+		return nil
+	}
+	return c
+}
 
 // systemdService is the init-system runner. Setup needs the concrete type
 // because installing a unit is not part of the runner contract.

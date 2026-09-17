@@ -39,12 +39,12 @@ func clusterRunnerFor(cfg *config.Config, p *profile.Profile) (*clusterRunner, e
 	if !ok {
 		return nil, fmt.Errorf("profile %q is not owned by a tested recipe", p.Name)
 	}
-	names := p.Nodes()
-	if len(names) == 0 {
-		return nil, fmt.Errorf("profile %q does not record the nodes it was launched on, so this cannot reach the cluster; relaunch it with 'vllm-helper recipes launch %s --nodes <n1,n2>'", p.Name, r.ID)
-	}
+	// A profile written before the topology was recorded still gets a runner:
+	// reading it back as the init system is how status and logs came to report
+	// a dead unit while a container served. Read-only verbs degrade to "we
+	// cannot see it"; the verbs that would act refuse in needNodes.
 	o := recipeLaunchOptions{
-		nodeNames:  names,
+		nodeNames:  p.Nodes(),
 		container:  p.Container(),
 		sshKey:     p.SSHKey(),
 		masterPort: p.MasterPort(),
@@ -56,6 +56,15 @@ func clusterRunnerFor(cfg *config.Config, p *profile.Profile) (*clusterRunner, e
 		o.masterPort = defaultRecipeMasterPort
 	}
 	return &clusterRunner{cfg: cfg, recipe: r, opts: o}, nil
+}
+
+// needNodes guards the verbs that change something. Guessing a node list
+// would start or stop containers on machines nobody named.
+func (c *clusterRunner) needNodes() error {
+	if len(c.opts.nodeNames) == 0 {
+		return fmt.Errorf("the active profile does not record the nodes %s was launched on; relaunch it with 'vllm-helper recipes launch %s --nodes <n1,n2>'", c.recipe.ID, c.recipe.ID)
+	}
+	return nil
 }
 
 // head is the node serving the API: rank 0.
@@ -144,12 +153,20 @@ func (c *clusterRunner) Health() service.Health {
 // skipped: the profile and Coder already describe this recipe, and re-syncing
 // Coder on every watchdog recovery would write to it for no change.
 func (c *clusterRunner) Restart() error {
+	if err := c.needNodes(); err != nil {
+		return err
+	}
 	o := c.opts
 	o.skipCoder = true
 	return runRecipeLaunch(context.Background(), c.recipe.ID, o)
 }
 
-func (c *clusterRunner) Stop() error { return runRecipeStop(c.recipe.ID, c.opts) }
+func (c *clusterRunner) Stop() error {
+	if err := c.needNodes(); err != nil {
+		return err
+	}
+	return runRecipeStop(c.recipe.ID, c.opts)
+}
 
 // logScript tails the head container. The engine logs are what explain a slow
 // or failed load, and they live in the container, not in the host journal.
@@ -190,6 +207,10 @@ func (c *clusterRunner) StartTail(n int) (*exec.Cmd, error) {
 	}
 	return cmd, nil
 }
+
+// Label says "cluster" rather than the init system, because that is what is
+// actually holding the model up.
+func (c *clusterRunner) Label() string { return "cluster" }
 
 func (c *clusterRunner) LogHint() string {
 	return "docker logs " + c.opts.container + " on the head node"
