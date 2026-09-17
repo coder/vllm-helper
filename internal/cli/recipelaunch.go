@@ -63,8 +63,8 @@ supervisor can restart the current model without being told which one it is.`,
 	f := c.Flags()
 	f.StringSliceVar(&o.nodeNames, "nodes", nil, "registry node names in rank order; rank 0 serves the API")
 	f.StringVar(&o.iface, "iface", "", "cluster interface to use instead of the discovered one")
-	f.IntVar(&o.masterPort, "master-port", 29501, "rendezvous port for the ranks")
-	f.StringVar(&o.container, "container-name", "vllm-node", "container name on each node")
+	f.IntVar(&o.masterPort, "master-port", defaultRecipeMasterPort, "rendezvous port for the ranks")
+	f.StringVar(&o.container, "container-name", defaultRecipeContainer, "container name on each node")
 	f.StringVar(&o.sshKey, "ssh-key", "", "private key for reaching non-head nodes")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what would run and change nothing")
 	f.BoolVar(&o.skipCoder, "no-activate", false, "launch only; leave the active profile and Coder alone")
@@ -87,11 +87,19 @@ func newRecipesStopCmd() *cobra.Command {
 	}
 	f := c.Flags()
 	f.StringSliceVar(&o.nodeNames, "nodes", nil, "registry node names")
-	f.StringVar(&o.container, "container-name", "vllm-node", "container name on each node")
+	f.StringVar(&o.container, "container-name", defaultRecipeContainer, "container name on each node")
 	f.StringVar(&o.sshKey, "ssh-key", "", "private key for reaching non-head nodes")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what would run and change nothing")
 	return c
 }
+
+// Defaults shared by the launch flags and the cluster runner, so a runner
+// built from a profile that predates those keys lands on the same values the
+// launch would have used.
+const (
+	defaultRecipeContainer  = "vllm-node"
+	defaultRecipeMasterPort = 29501
+)
 
 // recipeMember is one node plus what we discovered about it.
 type recipeMember struct {
