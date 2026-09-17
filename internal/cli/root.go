@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 
@@ -144,7 +145,32 @@ func loadConfig() (*config.Config, error) {
 	return config.Load()
 }
 
-func svc(cfg *config.Config) service.Service {
+// runner is how the CLI drives whatever is actually serving the active model.
+// The only implementation today is the init-system service, but a recipe that
+// runs as a container cluster needs the same verbs, and status/logs currently
+// report the init system even when a container is doing the serving.
+//
+// Deliberately excluded: Installed/Install, which are setup-only and have no
+// meaning for a container, and Start, which is not a lifecycle call at all --
+// "vllm-helper start" is the exec entrypoint the service manager runs.
+type runner interface {
+	IsActive() string
+	NRestarts() int
+	Health() service.Health
+	Restart() error
+	Stop() error
+	StartTail(n int) (*exec.Cmd, error)
+	PrintLogs(n int) error
+	LastLogs(n int) string
+	LogHint() string
+}
+
+// svc is the runner for the active model.
+func svc(cfg *config.Config) runner { return systemdService(cfg) }
+
+// systemdService is the init-system runner. Setup needs the concrete type
+// because installing a unit is not part of the runner contract.
+func systemdService(cfg *config.Config) service.Service {
 	return service.Service{
 		Name:  cfg.ServiceName(),
 		Scope: cfg.ServiceScope(),
