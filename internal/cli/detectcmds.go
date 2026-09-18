@@ -111,14 +111,21 @@ func gatherDoctor() doctorReport {
 				binOK = true
 			}
 		}
-		health := svc(cfg).Health()
+		runner := svc(cfg)
+		health := runner.Health()
+		// Name what is actually serving. Reporting the configured unit beside
+		// the cluster's state described a dead unit as healthy.
+		service, scope := cfg.ServiceName(), cfg.ServiceScope()
+		if c, ok := runner.(*clusterRunner); ok {
+			service, scope = c.Label(), ""
+		}
 		r.Config = &doctorConfig{
 			Path:            cfg.Dirs.ConfigFile(),
 			Port:            cfg.Port(),
 			VLLMBin:         bin,
 			VLLMBinOK:       binOK,
-			Service:         cfg.ServiceName(),
-			Scope:           cfg.ServiceScope(),
+			Service:         service,
+			Scope:           scope,
 			ServiceState:    health.State,
 			ServiceCrashed:  health.Crashed,
 			ServiceRestarts: health.NRestarts,
@@ -283,7 +290,11 @@ func renderDoctor(r doctorReport, yes bool) {
 				state += fmt.Sprintf(" (%d restarts)", c.ServiceRestarts)
 			}
 		}
-		fmt.Printf("  service:    %s (%s scope) -- %s\n", c.Service, c.Scope, state)
+		if c.Scope == "" {
+			fmt.Printf("  service:    %s -- %s\n", c.Service, state)
+		} else {
+			fmt.Printf("  service:    %s (%s scope) -- %s\n", c.Service, c.Scope, state)
+		}
 		fmt.Println()
 	}
 

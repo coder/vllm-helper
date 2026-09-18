@@ -8,8 +8,36 @@ import (
 	"testing"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/nodes"
 	"github.com/coder/vllm-helper/internal/recipe"
 )
+
+// Locality decides the hop. Before this was a property of the node, every
+// call ran locally, so a container with the same name on another box could be
+// inspected and reported as the head's.
+func TestNodeCommandHopsByNodeLocality(t *testing.T) {
+	local := recipeMember{node: nodes.Node{Name: "head", Host: "http://127.0.0.1:8001"}}
+	remote := recipeMember{node: nodes.Node{Name: "worker", Host: "http://not-this-machine.invalid:8001"}}
+
+	cmd, err := nodeCommand(local, "", "echo hi", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Args[0] != "bash" {
+		t.Errorf("local node ran %q, want bash", cmd.Args[0])
+	}
+
+	cmd, err = nodeCommand(remote, "/tmp/key", "echo hi", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Args[0] != "ssh" {
+		t.Errorf("remote node ran %q, want ssh", cmd.Args[0])
+	}
+	if joined := strings.Join(cmd.Args, " "); !strings.Contains(joined, "-i /tmp/key") {
+		t.Errorf("ssh lost the key flag: %s", joined)
+	}
+}
 
 func testRecipe(t *testing.T) recipe.TestedRecipe {
 	t.Helper()

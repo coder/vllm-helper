@@ -85,7 +85,7 @@ func (c *clusterRunner) inspect() (status string, exitCode, restarts int) {
 	}
 	script := "docker inspect " + recipe.ShellQuote(c.opts.container) +
 		" --format '{{.State.Status}} {{.State.ExitCode}} {{.RestartCount}}' 2>/dev/null || true"
-	out, err := nodeScript(m, m.node.Name, c.opts.sshKey, script, nil)
+	out, err := nodeScript(m, c.opts.sshKey, script, nil)
 	if err != nil {
 		return "", 0, -1
 	}
@@ -183,7 +183,7 @@ func (c *clusterRunner) LastLogs(n int) string {
 	if err != nil {
 		return ""
 	}
-	out, _ := nodeScript(m, m.node.Name, c.opts.sshKey, c.logScript(n, false), nil)
+	out, _ := nodeScript(m, c.opts.sshKey, c.logScript(n, false), nil)
 	return out
 }
 
@@ -193,13 +193,18 @@ func (c *clusterRunner) PrintLogs(n int) error {
 }
 
 // StartTail starts a follower and hands back the command so the caller can
-// kill it, matching the init-system runner. The head runs locally by the same
-// convention nodeScript uses, so there is no ssh hop here.
+// kill it, matching the init-system runner. It goes through nodeCommand so a
+// head on another machine is tailed over ssh; killing the command closes that
+// hop, which ends the remote follow.
 func (c *clusterRunner) StartTail(n int) (*exec.Cmd, error) {
-	if _, err := c.head(); err != nil {
+	m, err := c.head()
+	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("bash", "-c", c.logScript(n, true))
+	cmd, err := nodeCommand(m, c.opts.sshKey, c.logScript(n, true), nil)
+	if err != nil {
+		return nil, err
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {

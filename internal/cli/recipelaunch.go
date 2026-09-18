@@ -119,17 +119,19 @@ func resolveRecipeMembers(r recipe.TestedRecipe, o recipeLaunchOptions) ([]recip
 	return out, nil
 }
 
-// nodeScript runs a script on a member and returns stdout. The head runs
-// locally; everything else goes over ssh with the script on stdin, which is
-// how shard start already reaches remote nodes.
-func nodeScript(m recipeMember, headName, key, script string, env []string) (string, error) {
+// nodeCommand builds the command that runs a script on a member: directly
+// when the node is this machine, over ssh with the script on stdin otherwise.
+// Locality is a property of the node, not of its rank -- assuming the head was
+// wherever the CLI happened to run meant a container with the same name on
+// another node could be inspected and reported as the head's.
+func nodeCommand(m recipeMember, key, script string, env []string) (*exec.Cmd, error) {
 	var cmd *exec.Cmd
-	if m.node.Name == headName {
+	if m.node.IsLocal() {
 		cmd = exec.Command("bash", "-s")
 	} else {
 		target, err := sshTarget(m.node)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		args := []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"}
 		if key != "" {
@@ -140,6 +142,16 @@ func nodeScript(m recipeMember, headName, key, script string, env []string) (str
 	}
 	cmd.Stdin = strings.NewReader(script + "\n")
 	cmd.Env = append(os.Environ(), env...)
+	return cmd, nil
+}
+
+// nodeScript runs a script on a member and returns stdout. Callers that need
+// to stream and kill the command build it with nodeCommand instead.
+func nodeScript(m recipeMember, key, script string, env []string) (string, error) {
+	cmd, err := nodeCommand(m, key, script, env)
+	if err != nil {
+		return "", err
+	}
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
@@ -195,7 +207,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 		if o.iface != "" {
 			envScript = "VH_IFACE=" + recipe.ShellQuote(o.iface) + "\n" + discoverScript
 		}
-		out, err := nodeScript(members[i], head, o.sshKey, envScript, denv)
+		out, err := nodeScript(members[i], o.sshKey, envScript, denv)
 		if err != nil {
 			return fmt.Errorf("discover on %s: %w", members[i].node.Name, err)
 		}
@@ -269,14 +281,14 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	// launch in descending rank order and finish with rank 0.
 	for i := len(members) - 1; i >= 0; i-- {
 		m := members[i]
-		if _, err := nodeScript(m, head, o.sshKey, "docker rm -f "+recipe.ShellQuote(o.container)+" >/dev/null 2>&1 || true", nil); err != nil {
+		if _, err := nodeScript(m, o.sshKey, "docker rm -f "+recipe.ShellQuote(o.container)+" >/dev/null 2>&1 || true", nil); err != nil {
 			return fmt.Errorf("clear old container on %s: %w", m.node.Name, err)
 		}
 		cmdline, err := specs[i].ShellCommand()
 		if err != nil {
 			return err
 		}
-		if _, err := nodeScript(m, head, o.sshKey, cmdline, nil); err != nil {
+		if _, err := nodeScript(m, o.sshKey, cmdline, nil); err != nil {
 			return fmt.Errorf("start rank %d on %s: %w", m.rank, m.node.Name, err)
 		}
 		fmt.Printf("started rank %d on %s\n", m.rank, m.node.Name)
@@ -460,7 +472,6 @@ func runRecipeStop(id string, o recipeLaunchOptions) error {
 	if err != nil {
 		return err
 	}
-	head := o.nodeNames[0]
 	cmdline := "docker rm -f " + recipe.ShellQuote(o.container)
 	for i, name := range o.nodeNames {
 		n, ok := reg.Get(name)
@@ -472,7 +483,7 @@ func runRecipeStop(id string, o recipeLaunchOptions) error {
 			fmt.Printf("# %s\n%s\n", name, cmdline)
 			continue
 		}
-		if _, err := nodeScript(m, head, o.sshKey, cmdline+" >/dev/null 2>&1 || true", nil); err != nil {
+		if _, err := nodeScript(m, o.sshKey, cmdline+" >/dev/null 2>&1 || true", nil); err != nil {
 			return fmt.Errorf("stop on %s: %w", name, err)
 		}
 		fmt.Printf("stopped %s on %s\n", o.container, name)
