@@ -186,6 +186,12 @@ speculation one streamed chunk carries several tokens.
   also reports when upstream has moved past that pin. Exits non-zero while anything is
   undeclared. The vllm-project side is not implemented: neither shipped entry cites it, and
   it needs a model-id to file mapping the `source` block does not carry.
+- **P3b — supervision. Done.** `recipes install-service` writes a systemd unit whose
+  `ExecStart` is plain `vllm-helper restart`: the unit names no recipe, so switching one
+  is not a unit edit. It allows 30 minutes for a load by default, and stands the native
+  single-node unit down (stop, disable, reset-failed) because that unit cannot serve a
+  container recipe and a stale failure leaves the whole host reported as degraded. The
+  unit file stays: native mode is still how most machines serve anything.
 - **P4 — instantiate.** `new --recipe <id>` creates a local profile. Fit math changes
   role: it validates the recipe's declared topology against the actual machine instead
   of deciding topology. Backend names validated against the image before launch.

@@ -199,11 +199,10 @@ func TestNon2xxIsAnError(t *testing.T) {
 func TestUnreachableDeployment(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.NotFoundHandler())
-	url := srv.URL
-	srv.Close()
-
-	if err := coder.NewClient(url, "tok", "prov", "default").Check(); err == nil {
+	// Port 1 refuses immediately and nothing can bind it by accident. This
+	// used to start a server and close it, which left the result depending on
+	// whether the freed port stayed free for the length of the test.
+	if err := coder.NewClient("http://127.0.0.1:1", "tok", "prov", "default").Check(); err == nil {
 		t.Error("Check should fail when nothing is listening")
 	}
 }
