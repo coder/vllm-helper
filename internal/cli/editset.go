@@ -185,8 +185,16 @@ func profileChangeHint(cfg *config.Config, name string) {
 	// applied by re-launching the recipe rather than by restarting the service.
 	if p, err := profile.Load(cfg.Dirs, name); err == nil && p.Generated() {
 		fmt.Printf("Saved as a local override of recipe '%s' -- run 'vllm-helper recipes launch %s' to apply it.\n", p.Recipe(), p.Recipe())
-		fmt.Println("The launch will report itself as the recipe plus local overrides, so the verified")
-		fmt.Println("numbers no longer describe it.")
+		// Only downgrade the claim if something still differs from the recipe.
+		// Setting a knob back to the recipe's own value, or clearing it, leaves
+		// nothing overridden, and warning anyway teaches people to ignore the
+		// warning that matters.
+		if r, ok := recipeForProfile(p); ok {
+			if local, err := recipeOverrides(cfg, r); err == nil && len(local.args) > 0 {
+				fmt.Println("The launch will report itself as the recipe plus local overrides, so the verified")
+				fmt.Println("numbers no longer describe it.")
+			}
+		}
 		return
 	}
 	if name == cfg.ActiveProfile() {

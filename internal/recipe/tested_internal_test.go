@@ -129,7 +129,10 @@ func TestDeepSeekRecipeSummary(t *testing.T) {
 		t.Errorf("display name = %q", r.DisplayName)
 	}
 	got := r.Summary()
-	for _, want := range []string{"2 nodes, sharded", "256K ctx", "2.6x conc"} {
+	// Derive the concurrency from the entry rather than pinning the number: a
+	// re-measurement is supposed to change it, and a test that breaks on every
+	// honest re-stamp teaches people to edit tests without reading them.
+	for _, want := range []string{"2 nodes, sharded", "256K ctx", fmt.Sprintf("%.1fx conc", r.Verified.Concurrency)} {
 		if !strings.Contains(got, want) {
 			t.Errorf("summary %q missing %q", got, want)
 		}
