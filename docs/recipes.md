@@ -87,6 +87,32 @@ commit and a licence.
 The pinned commit is also the staleness signal: when it trails upstream HEAD,
 `recipediff` has something to report.
 
+### Declared deviations
+
+Where an entry departs from its source, `source.deviations` records it as data:
+
+```json
+{
+  "setting": "max_num_seqs",
+  "upstream": "8",
+  "ours": "32",
+  "why": "measured ..."
+}
+```
+
+An empty `ours` means we dropped the setting. `setting` must name the thing the way
+upstream does — the flag without its dashes (`max_model_len`), the env key, or the mod
+path — because that is the key `recipediff` matches on, and
+`TestDeviationsMatchTheArgsTheyDescribe` checks the claim against the entry's own args.
+Prose in `notes` cannot do either job.
+
+Running the tool against both entries found eight differences that were never decisions,
+only transcription. Four per entry remain open and are deliberately left undeclared so the
+report keeps raising them: `--max-cudagraph-capture-size` 48 to 64,
+`--reasoning-config` dropped, both `--default-chat-template-kwargs` dropped,
+`VLLM_USE_MEGA_AOT_ARTIFACT` 1 to -1, and `VLLM_MOE_SKIP_PADDING` dropped. Each needs a
+measurement or a reason, not a sentence invented after the fact.
+
 ## Local overrides
 
 A tested recipe is the **base layer**; the profile of the same name is the **override
@@ -154,9 +180,12 @@ speculation one streamed chunk carries several tokens.
 - **P1 — done.** Tested-recipe schema, DeepSeek entry, `recipes list` / `recipes show`.
 - **P2 — DeepSeek deltas.** Resolve the seven divergences below, re-verify on the two
   Sparks, re-stamp. A tested entry that disagrees with reality is worse than none.
-- **P3 — diff tool.** `tools/recipediff` with its own `go.mod` so the CLI keeps its two
-  direct deps. Parses both upstreams at pinned commits, emits a conflict report. Reports
-  disagreement; never silently resolves it.
+- **P3 — diff tool. Done for eugr.** `tools/recipediff` with its own `go.mod` so the CLI
+  keeps its two direct deps. `go run . -upstream-dir testdata` compares offline against
+  checked-in fixtures; with no flag it fetches each entry's source at its pinned commit and
+  also reports when upstream has moved past that pin. Exits non-zero while anything is
+  undeclared. The vllm-project side is not implemented: neither shipped entry cites it, and
+  it needs a model-id to file mapping the `source` block does not carry.
 - **P4 — instantiate.** `new --recipe <id>` creates a local profile. Fit math changes
   role: it validates the recipe's declared topology against the actual machine instead
   of deciding topology. Backend names validated against the image before launch.

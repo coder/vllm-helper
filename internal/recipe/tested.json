@@ -19,6 +19,22 @@
             "upstream": "8",
             "ours": "32",
             "why": "Measured 8 vs 16 vs 32 on this pair: 32 gave about twice the aggregate throughput at 24 concurrent (222.5 vs 107.4 tok/s) and half the tail latency (10.4s vs 21.4s), for 2.5% less KV cache and no change to single-stream speed. Upstream's 8 is a single-user default."
+          },
+          {
+            "setting": "max_model_len",
+            "upstream": "auto",
+            "ours": "262144",
+            "why": "auto resolves to 1048576 on this checkpoint, which does not fit on two GB10s."
+          },
+          {
+            "setting": "mods/instanttensor-hybrid-draft-loader",
+            "upstream": "applied",
+            "why": "The mod is opt-in and only serves speculative decoding, which is off here. The stock loader in this image is already correct for the checkpoint."
+          },
+          {
+            "setting": "speculative_config",
+            "upstream": "dspark, num_speculative_tokens 5",
+            "why": "Measured 1.4-2.8x single stream, but KV cache falls 681,894 to 420,192 tokens, concurrency 2.60x to 1.60x and load 150s to 195s, and the gains shrink under load. Kept as a documented per-deployment override for single-user boxes rather than a shared-server default."
           }
         ]
       },
@@ -125,9 +141,15 @@
             "why": "The mod is opt-in and only serves speculative decoding, which is off here. The stock loader in this image is already correct for the checkpoint."
           },
           {
-            "setting": "num_speculative_tokens",
-            "upstream": "6",
-            "why": "6 is not a multiple of the checkpoint's dspark_block_size 5. Speculative decoding is left off and unmeasured: it costs 38% of KV cache and a third of concurrency, and its gains shrink under load."
+            "setting": "speculative_config",
+            "upstream": "dspark, num_speculative_tokens 6",
+            "why": "6 is not a multiple of the checkpoint's dspark_block_size 5, so upstream's value is rejected at boot. Speculative decoding is left off and unmeasured here: on the text model it cost 38% of KV cache and a third of concurrency."
+          },
+          {
+            "setting": "max_num_seqs",
+            "upstream": "8",
+            "ours": "32",
+            "why": "Same choice as the text entry, whose 8 vs 16 vs 32 measurement on this pair showed 32 roughly doubling aggregate throughput at 24 concurrent for 2.5% less KV. Not separately measured on the vision checkpoint."
           },
           {
             "setting": "max_model_len",
