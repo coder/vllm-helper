@@ -12,7 +12,15 @@
         "repo": "eugr/spark-vllm-docker",
         "path": "recipes/deepseek-v4-flash-0731.yaml",
         "commit": "1761c49ad71ca9c8ca50772941ee4d06dcc40dc1",
-        "license": "MIT"
+        "license": "MIT",
+        "deviations": [
+          {
+            "setting": "max_num_seqs",
+            "upstream": "8",
+            "ours": "32",
+            "why": "Measured 8 vs 16 vs 32 on this pair: 32 gave about twice the aggregate throughput at 24 concurrent (222.5 vs 107.4 tok/s) and half the tail latency (10.4s vs 21.4s), for 2.5% less KV cache and no change to single-stream speed. Upstream's 8 is a single-user default."
+          }
+        ]
       },
       "args": [
         "--trust-remote-code",
@@ -93,7 +101,6 @@
           "attention-backend is B12X; vllm-project/recipes says B12X_MLA_SPARSE, which this image rejects at startup.",
           "Needs both RoCE twins via NCCL_IB_HCA and a routable DAC subnet; NetworkManager must own the addresses or they vanish.",
           "Per-token KV cost falls as context rises (CSA/HCA sparse attention): 32K gave 99,949 tokens, 64K gave 196,022 and 256K gave 675,260 for the same ~19 GiB. A linear KV estimator is badly wrong for deepseek_v4.",
-          "max_num_seqs is 32, not upstream's 8: measured 8 vs 16 vs 32 on this pair, 32 gave about twice the aggregate throughput at 24 concurrent (222.5 vs 107.4 tok/s) and half the tail latency (10.4s vs 21.4s), for 2.5% less KV cache and no change to single-stream speed. Upstream's 8 is a single-user default.",
           "Aggregate throughput looking flat past the seqs limit means requests are queueing, not that the GPU is saturated; the tell is tail latency diverging from p50."
         ]
       }
@@ -110,7 +117,25 @@
         "repo": "eugr/spark-vllm-docker",
         "path": "recipes/deepseek-v4-flash-vision-exp.yaml",
         "commit": "798528a2e04a5e0f19c6b22d3603431af472ce1a",
-        "license": "MIT"
+        "license": "MIT",
+        "deviations": [
+          {
+            "setting": "mods/instanttensor-hybrid-draft-loader",
+            "upstream": "applied",
+            "why": "The mod is opt-in and only serves speculative decoding, which is off here. The stock loader in this image is already correct for the checkpoint."
+          },
+          {
+            "setting": "num_speculative_tokens",
+            "upstream": "6",
+            "why": "6 is not a multiple of the checkpoint's dspark_block_size 5. Speculative decoding is left off and unmeasured: it costs 38% of KV cache and a third of concurrency, and its gains shrink under load."
+          },
+          {
+            "setting": "max_model_len",
+            "upstream": "auto",
+            "ours": "262144",
+            "why": "auto resolves to 1048576 on this checkpoint, which does not fit on two GB10s."
+          }
+        ]
       },
       "args": [
         "--trust-remote-code",
@@ -188,8 +213,6 @@
         "smoke": "corn.jpeg -> \"Corn on the cob.\"; 28.1 tok/s single stream, 238.8 tok/s at 24 concurrent",
         "notes": [
           "Runs on the same image as the text recipe; the checkpoint declares architectures DeepseekV4ForCausalLM but this image auto-resolves DeepseekV4ForConditionalGeneration, so no --hf-overrides is needed.",
-          "Upstream lists mods/instanttensor-hybrid-draft-loader and num_speculative_tokens 6. Neither is used here: the mod is opt-in and 6 is not a multiple of the checkpoint dspark_block_size 5. Speculative decoding is left off and unmeasured.",
-          "Upstream also sets max_model_len auto, which resolves to 1048576 and does not fit. Pinned to 262144.",
           "Do not pass --enforce-eager. CUDA graphs capture fine and eager costs about 7x decode speed.",
           "temperature 0 makes the model loop in reasoning and never emit content. Send temperature 1.0 and top_p 0.95, which is what DeepSeek evaluated; generation_config.json disagrees at top_p 1.0.",
           "An image costs at most 387 prompt tokens (vision_max_n_token 384 plus compressor pad), measured 404 with text for a 207 KB photo. Long multi-image prompts are untested here.",

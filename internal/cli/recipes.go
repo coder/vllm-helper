@@ -108,6 +108,14 @@ func runRecipesShow(id string, jsonOut bool) error {
 	line("derived from", r.Source.Describe())
 	line("local", overrideNote(r))
 	fmt.Println()
+	if devs := r.Source.Deviations; len(devs) > 0 {
+		fmt.Println("Deviations from upstream")
+		for _, d := range devs {
+			fmt.Printf("  %s: %s\n", d.Setting, d.Change())
+			fmt.Println("    " + d.Why)
+		}
+		fmt.Println()
+	}
 	if overrideNote(r) != "" {
 		fmt.Println("Verified before those overrides -- they do not describe this launch")
 	} else {

@@ -40,10 +40,37 @@ type TestedRecipe struct {
 // importantly, "recipediff" needs it to know what to compare an entry against.
 // It also carries the attribution MIT and Apache-2.0 upstreams require.
 type Source struct {
-	Repo    string `json:"repo"`
-	Path    string `json:"path,omitempty"`
-	Commit  string `json:"commit"`
-	License string `json:"license,omitempty"`
+	Repo       string      `json:"repo"`
+	Path       string      `json:"path,omitempty"`
+	Commit     string      `json:"commit"`
+	License    string      `json:"license,omitempty"`
+	Deviations []Deviation `json:"deviations,omitempty"`
+}
+
+// Deviation is one place an entry deliberately departs from its source. It is
+// structured because prose cannot be compared: "recipes diff" has to tell a
+// decision we made from drift nobody noticed, and a reader has to see what was
+// changed without trusting a sentence to still be true.
+type Deviation struct {
+	Setting  string `json:"setting"`            // what upstream calls it
+	Upstream string `json:"upstream,omitempty"` // upstream's value, empty when it is ours alone
+	Ours     string `json:"ours,omitempty"`     // ours, empty when we drop it
+	Why      string `json:"why"`
+}
+
+// Change renders the move for display. An absent side is a drop or an
+// addition, which reads better than an empty column.
+func (d Deviation) Change() string {
+	switch {
+	case d.Upstream == "" && d.Ours == "":
+		return "not used here"
+	case d.Ours == "":
+		return d.Upstream + " -> not used"
+	case d.Upstream == "":
+		return "added: " + d.Ours
+	default:
+		return d.Upstream + " -> " + d.Ours
+	}
 }
 
 // Describe renders the provenance for "recipes show".

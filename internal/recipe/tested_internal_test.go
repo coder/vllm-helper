@@ -144,3 +144,70 @@ func TestDeepSeekRecipeSummary(t *testing.T) {
 		t.Errorf("attention backend must be B12X, got: %s", joined)
 	}
 }
+
+// Deviations are the entry's claim about how it differs from its source, so
+// they have to stay true to the args beside them. A setting that names a flag
+// must match that flag's value, and a setting recorded as dropped must not
+// appear in the args at all.
+func TestDeviationsMatchTheArgsTheyDescribe(t *testing.T) {
+	tt, err := LoadTested()
+	if err != nil {
+		t.Fatalf("LoadTested: %v", err)
+	}
+	for _, r := range tt.Recipes {
+		seen := map[string]bool{}
+		for _, d := range r.Source.Deviations {
+			if d.Setting == "" || d.Why == "" {
+				t.Errorf("%s: a deviation needs a setting and a reason, got %+v", r.ID, d)
+				continue
+			}
+			if seen[d.Setting] {
+				t.Errorf("%s: duplicate deviation for %q", r.ID, d.Setting)
+			}
+			seen[d.Setting] = true
+			if d.Upstream == d.Ours {
+				t.Errorf("%s: %q records no change at all", r.ID, d.Setting)
+			}
+
+			flag := "--" + strings.ReplaceAll(d.Setting, "_", "-")
+			got, present := deviationArgValue(r.Args, flag)
+			switch {
+			case present && got != d.Ours:
+				t.Errorf("%s: %s says ours is %q but the args carry %q", r.ID, d.Setting, d.Ours, got)
+			case !present && d.Ours != "":
+				t.Errorf("%s: %s claims ours is %q but %s is not in the args", r.ID, d.Setting, d.Ours, flag)
+			}
+		}
+	}
+}
+
+// deviationArgValue reports a flag's value, and whether the flag is there.
+func deviationArgValue(args []string, flag string) (string, bool) {
+	for i, a := range args {
+		if a != flag {
+			continue
+		}
+		if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+			return args[i+1], true
+		}
+		return "", true
+	}
+	return "", false
+}
+
+func TestDeviationChangeReadsAsAMove(t *testing.T) {
+	cases := []struct {
+		dev  Deviation
+		want string
+	}{
+		{Deviation{Upstream: "auto", Ours: "262144"}, "auto -> 262144"},
+		{Deviation{Upstream: "6"}, "6 -> not used"},
+		{Deviation{Ours: "32"}, "added: 32"},
+		{Deviation{}, "not used here"},
+	}
+	for _, c := range cases {
+		if got := c.dev.Change(); got != c.want {
+			t.Errorf("Change() = %q, want %q", got, c.want)
+		}
+	}
+}
