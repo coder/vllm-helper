@@ -304,12 +304,11 @@ func runRemove(args []string) error {
 // record the active profile, sync Coder, restart the service, and watch
 // the boot according to opts.
 func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) error {
-	// Refuse before WriteActiveEnv, because the Coder notify happens before the
-	// restart: switching to a recipe profile would publish its context limit to
-	// Coder and only then fail when start refuses to serve it natively.
-	if p.Generated() {
-		return fmt.Errorf("%s is generated from recipe %q and runs in a container; use 'vllm-helper recipes launch %s' instead of switch", p.Name, p.Recipe(), p.Recipe())
-	}
+	// WriteActiveEnv records the active profile as its last step, so the restart
+	// below resolves the runner for the profile being switched to rather than
+	// the one being left. That ordering is what lets a recipe profile go through
+	// here at all: it used to be refused because the restart could only ever
+	// mean the init system.
 	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err
 	}
@@ -333,8 +332,8 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	// nothing happening yet.
 	restart := func() error {
 		fmt.Println()
-		fmt.Printf("Restarting %s (this reloads the model -- can take several minutes,\n", cfg.ServiceName())
-		fmt.Println("longer if the model isn't cached on disk yet)...")
+		fmt.Println("Reloading the model (this can take several minutes, longer if it")
+		fmt.Println("isn't cached on disk yet)...")
 		return svc(cfg).Restart()
 	}
 	if err := control.NotifyAndRestart(context.Background(), cfg, p, os.Stderr, restart); err != nil {

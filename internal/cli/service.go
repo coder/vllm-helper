@@ -54,9 +54,11 @@ func newRestartCmd() *cobra.Command {
 	return c
 }
 
-// runRestart re-applies the active profile (picking up any edits to it or
-// to config.env) and restarts the service. Unlike switch, it never changes
-// which profile is active and never touches Coder.
+// runRestart re-applies the active profile (picking up any edits to it or to
+// config.env) and restarts it through whichever runner owns it. Unlike switch
+// it never changes which profile is active and never touches Coder, which is
+// what makes it the right verb for a supervisor: a recovery should bring the
+// same model back, not re-publish it.
 func runRestart(o watchOpts) error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -75,7 +77,7 @@ func runRestart(o watchOpts) error {
 		return err
 	}
 
-	fmt.Printf("Restarting %s with profile '%s'...\n", cfg.ServiceName(), name)
+	fmt.Printf("Reloading profile '%s' (%s)...\n", name, svc(cfg).Label())
 	if err := svc(cfg).Restart(); err != nil {
 		return fmt.Errorf("restarting service: %w", err)
 	}
