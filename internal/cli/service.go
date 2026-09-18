@@ -26,14 +26,17 @@ func runStop() error {
 	if err != nil {
 		return err
 	}
+	// Name the runner, not a unit: a container recipe has no systemd unit, and
+	// saying "stopped vllm.service" about a two-node cluster is a lie.
+	label := svc(cfg).Label()
 	if state := svc(cfg).IsActive(); state != "active" && state != "activating" {
-		fmt.Printf("%s is not running (state: %s) -- nothing to stop.\n", cfg.ServiceName(), state)
+		fmt.Printf("the %s is not running (state: %s) -- nothing to stop.\n", label, state)
 		return nil
 	}
 	if err := svc(cfg).Stop(); err != nil {
-		return fmt.Errorf("stopping %s: %w", cfg.ServiceName(), err)
+		return fmt.Errorf("stopping the %s: %w", label, err)
 	}
-	fmt.Printf("Stopped %s. Start it again with 'vllm-helper restart' or by\n", cfg.ServiceName())
+	fmt.Printf("Stopped the %s. Start it again with 'vllm-helper restart' or by\n", label)
 	fmt.Println("switching to a profile.")
 	if cfg.CoderConfigured() {
 		fmt.Println("Note: the active model stays enabled in Coder's picker until the next switch.")

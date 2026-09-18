@@ -309,6 +309,20 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	// the one being left. That ordering is what lets a recipe profile go through
 	// here at all: it used to be refused because the restart could only ever
 	// mean the init system.
+	//
+	// Check the runner can act BEFORE publishing anything. The Coder notify
+	// happens before the restart, so a failure after this point leaves Coder
+	// advertising a model that is not being served -- switching to a recipe
+	// whose profile had no recorded topology did exactly that.
+	if p.Generated() {
+		c, err := clusterRunnerFor(cfg, p)
+		if err != nil {
+			return err
+		}
+		if err := c.needNodes(); err != nil {
+			return err
+		}
+	}
 	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err
 	}
@@ -438,7 +452,14 @@ func runStatus(jsonOut bool) error {
 			fmt.Printf("last log: %s\n", r.LastLog)
 		}
 	} else {
-		fmt.Printf("endpoint: not responding (http %03d on port %s) -- still loading, or check the service logs\n", r.HTTPStatus, r.Port)
+		// "still loading" is wrong when nothing is running: a stopped model is
+		// waiting for someone to start it, not making progress.
+		switch r.Service {
+		case "inactive", "unknown":
+			fmt.Printf("endpoint: not responding (http %03d on port %s) -- nothing is running; start it with 'vllm-helper restart'\n", r.HTTPStatus, r.Port)
+		default:
+			fmt.Printf("endpoint: not responding (http %03d on port %s) -- still loading, or check the logs\n", r.HTTPStatus, r.Port)
+		}
 	}
 	if hint := svc(cfg).LogHint(); hint != "" {
 		fmt.Printf("logs:     %s\n", hint)
