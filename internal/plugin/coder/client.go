@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -62,14 +63,19 @@ func NewClient(url, token, providerID, organization string) *Client {
 
 // ModelConfig is one entry in the deployment's model picker. Every field is
 // always sent, which both API generations accept.
+//
+// Options carries Coder's per-model overrides. It is omitted when empty: an
+// absent model_config means the stored options are NULL, and sending an empty
+// object would clear whatever an operator set in the UI.
 type ModelConfig struct {
-	ID           string `json:"id,omitempty"`
-	AIProviderID string `json:"ai_provider_id,omitempty"`
-	Model        string `json:"model"`
-	DisplayName  string `json:"display_name"`
-	ContextLimit int64  `json:"context_limit"`
-	Enabled      bool   `json:"enabled"`
-	IsDefault    bool   `json:"is_default"`
+	ID           string         `json:"id,omitempty"`
+	AIProviderID string         `json:"ai_provider_id,omitempty"`
+	Model        string         `json:"model"`
+	DisplayName  string         `json:"display_name"`
+	ContextLimit int64          `json:"context_limit"`
+	Enabled      bool           `json:"enabled"`
+	IsDefault    bool           `json:"is_default"`
+	Options      map[string]any `json:"model_config,omitempty"`
 }
 
 // resolveRoute asks the deployment which collection path it serves. Anything
@@ -187,6 +193,73 @@ func (c *Client) List() ([]Entry, error) {
 		}
 	}
 	return mine, nil
+}
+
+// FindByModel reports an existing entry on our provider serving this model.
+//
+// Entries are tracked locally by profile name, but Coder's picker is keyed by
+// model: two profiles naming one model, or a profile renamed, used to leave a
+// second row behind. Adopting the existing row instead of posting another is
+// what keeps the picker honest.
+//
+// An enabled row wins, so adoption converges on the one actually in use.
+func (c *Client) FindByModel(model string) (string, error) {
+	entries, err := c.List()
+	if err != nil {
+		return "", err
+	}
+	found := ""
+	for _, e := range entries {
+		if e.Model != model {
+			continue
+		}
+		if e.Enabled {
+			return e.ID, nil
+		}
+		if found == "" {
+			found = e.ID
+		}
+	}
+	return found, nil
+}
+
+// TokenKey describes the API key the token belongs to.
+type TokenKey struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"token_name"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// TokenExpiry reads when this token stops working. Coder caps token lifetime,
+// so a working sync is always some days from breaking, and an expired token
+// disappears from the token list entirely -- there is no later signal.
+//
+// A key id is the part of the token before the first dash; anything else is
+// not a shape we can ask about.
+func (c *Client) TokenExpiry() (TokenKey, error) {
+	id, _, ok := strings.Cut(c.Token, "-")
+	if !ok || id == "" {
+		return TokenKey{}, fmt.Errorf("token is not in the id-secret form this check needs")
+	}
+	req, err := http.NewRequest("GET", c.URL+"/api/v2/users/me/keys/"+id, nil)
+	if err != nil {
+		return TokenKey{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Coder-Session-Token", c.Token)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return TokenKey{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return TokenKey{}, fmt.Errorf("coder API GET /api/v2/users/me/keys/%s: HTTP %d", id, resp.StatusCode)
+	}
+	var k TokenKey
+	if err := json.NewDecoder(resp.Body).Decode(&k); err != nil {
+		return TokenKey{}, err
+	}
+	return k, nil
 }
 
 // Create posts a new model-config entry and returns its ID.

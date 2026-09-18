@@ -146,7 +146,11 @@ A 0.6B model in BF16 serves at roughly 30 tokens/sec on an M4 Pro, which is enou
 
 If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm-helper can keep Coder's model picker truthful: every profile gets a model-config entry, and only the loaded model is enabled. Set `CODER_URL` and `CODER_AI_PROVIDER_ID` in `config.env` and `CODER_API_TOKEN` in `secrets.env`. Sync failures never block a local switch.
 
-`vllm-helper coder-sync register-all` adds a disabled entry for any profile that doesn't have one yet; existing entries are left as-is. `vllm-helper doctor` verifies the configured URL and token against the API.
+`vllm-helper coder-sync register-all` adds a disabled entry for any profile that doesn't have one yet; existing entries are left as-is. `vllm-helper doctor` verifies the configured URL and token against the API, and warns when that token is within two days of expiring — Coder caps token lifetime, and an expired one simply stops the picker being updated.
+
+Entries are matched by model, so a profile that is renamed, or a second machine serving the same model, adopts the existing entry instead of adding a second row for it. `coder-sync prune` reports any model that already has more than one entry; it never picks which to keep.
+
+Coder caps a reply at its own server-side default (32,000 tokens). Set `CODER_MAX_OUTPUT_TOKENS` in `config.env` to raise it for the models this machine serves; leave it unset and vllm-helper sends nothing, so whatever is configured in Coder stays.
 
 ## Troubleshooting
 
