@@ -146,10 +146,12 @@ func loadConfig() (*config.Config, error) {
 	return config.Load()
 }
 
-// runner is how the CLI drives whatever is actually serving the active model.
-// The only implementation today is the init-system service, but a recipe that
-// runs as a container cluster needs the same verbs, and status/logs currently
-// report the init system even when a container is doing the serving.
+// runner is how the CLI drives whatever is actually serving the active model:
+// the init-system service, or a recipe's container cluster. Before this split,
+// status and logs reported the init system even when a container was serving.
+//
+// Label names the runner so those reports say what they are describing rather
+// than printing "systemd" about a two-node cluster.
 //
 // Deliberately excluded: Installed/Install, which are setup-only and have no
 // meaning for a container, and Start, which is not a lifecycle call at all --
