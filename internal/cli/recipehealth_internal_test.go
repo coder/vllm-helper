@@ -55,7 +55,14 @@ func TestLaunchMarkerExpires(t *testing.T) {
 	if !launchInProgress(cfg) {
 		t.Error("marker written, but no launch was reported")
 	}
-	clearLaunching(cfg)
+	// A check that lands seconds into a launch is still seeing the OLD
+	// server, so it must not clear the marker. This is the bug that left a
+	// real load unguarded: the marker was gone 20s in.
+	clearLaunching(cfg, time.Minute)
+	if !launchInProgress(cfg) {
+		t.Error("a fresh marker was cleared by a healthy check, which is the old server answering")
+	}
+	clearLaunching(cfg, 0)
 	if launchInProgress(cfg) {
 		t.Error("marker cleared, but a launch was still reported")
 	}
@@ -82,7 +89,7 @@ func TestHealthUnitsRunTheCheckerAgainstTheirUnit(t *testing.T) {
 		recipeSystemdUnit{Home: "/home/serve", Self: "/usr/local/bin/vllm-helper"},
 		"vllm-cluster.service", 2)
 	for _, want := range []string{
-		"ExecStart=/usr/local/bin/vllm-helper recipes health-check --unit vllm-cluster.service",
+		"ExecStart=/usr/local/bin/vllm-helper recipes health-check --unit vllm-cluster.service --interval 2",
 		"Environment=HOME=/home/serve",
 		"Type=oneshot",
 	} {

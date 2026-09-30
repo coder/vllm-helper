@@ -29,6 +29,7 @@ func newRecipesHealthCheckCmd() *cobra.Command {
 		unit      string
 		threshold int
 		statePath string
+		interval  int
 	)
 	c := &cobra.Command{
 		Use:    "health-check",
@@ -43,12 +44,13 @@ func newRecipesHealthCheckCmd() *cobra.Command {
 			if statePath == "" {
 				statePath = healthStatePath(unit)
 			}
-			return runHealthCheck(unit, threshold, statePath)
+			return runHealthCheck(unit, threshold, statePath, time.Duration(interval)*time.Minute)
 		},
 	}
 	c.Flags().StringVar(&unit, "unit", defaultRecipeServiceName, "unit to relaunch")
 	c.Flags().IntVar(&threshold, "misses", defaultHealthMisses, "consecutive failures before relaunching")
 	c.Flags().StringVar(&statePath, "state", "", "where the miss count is kept")
+	c.Flags().IntVar(&interval, "interval", defaultHealthInterval, "minutes between checks, which is also how long a fresh launch marker is trusted")
 	return c
 }
 
@@ -96,12 +98,25 @@ func markLaunching(cfg *config.Config, ttl time.Duration) {
 	}
 }
 
-// clearLaunching ends the stand-off, which the watchdog does as soon as the
-// endpoint answers.
-func clearLaunching(cfg *config.Config) {
-	if cfg != nil {
-		_ = os.Remove(filepath.Join(cfg.Dirs.State, launchMarkerName))
+// clearLaunching ends the stand-off once the endpoint answers, but refuses
+// while the marker is younger than minAge.
+//
+// The age guard is the whole point: for the first seconds of a launch the
+// PREVIOUS server is still answering, so a health check that lands there sees
+// "healthy" and clears a marker whose load has not even started. That is what
+// happened in practice -- the marker was gone within 20s and the watchdog was
+// free to restart the unit mid-load again. One check interval is enough,
+// because by the next tick the old server is down.
+func clearLaunching(cfg *config.Config, minAge time.Duration) {
+	if cfg == nil {
+		return
 	}
+	path := filepath.Join(cfg.Dirs.State, launchMarkerName)
+	fi, err := os.Stat(path)
+	if err != nil || time.Since(fi.ModTime()) < minAge {
+		return
+	}
+	_ = os.Remove(path)
 }
 
 // launchInProgress reports whether a launch is working right now. A marker
@@ -152,7 +167,7 @@ func healthDecision(unitState string, launching, healthy bool, misses, threshold
 	return healthCount, misses
 }
 
-func runHealthCheck(unit string, threshold int, statePath string) error {
+func runHealthCheck(unit string, threshold int, statePath string, interval time.Duration) error {
 	cfg, _ := loadConfig()
 	state := strings.TrimSpace(systemctlOutput("is-active", unit))
 	healthy := endpointHealthy()
@@ -164,8 +179,9 @@ func runHealthCheck(unit string, threshold int, statePath string) error {
 		return nil
 	case healthClear:
 		_ = os.Remove(statePath)
-		// The endpoint is up, so whatever launch was in flight is done.
-		clearLaunching(cfg)
+		// The endpoint is up, so whatever launch was in flight is done --
+		// unless the marker is so fresh that this is the old server answering.
+		clearLaunching(cfg, interval)
 		return nil
 	case healthCount:
 		writeMisses(statePath, next)
@@ -228,8 +244,8 @@ func renderHealthUnits(u recipeSystemdUnit, unitName string, intervalMin int) (s
 		"[Service]\n"+
 		"Type=oneshot\n"+
 		"Environment=HOME=%s\n"+
-		"ExecStart=%s recipes health-check --unit %s\n",
-		unitName, u.Home, u.Self, unitName)
+		"ExecStart=%s recipes health-check --unit %s --interval %d\n",
+		unitName, u.Home, u.Self, unitName, intervalMin)
 	timer = fmt.Sprintf("[Unit]\n"+
 		"Description=Run the health check for %s every %d minutes\n\n"+
 		"[Timer]\n"+
