@@ -24,6 +24,8 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 		timeout   int
 		now       bool
 		supersede bool
+		watchdog  bool
+		interval  int
 	)
 	c := &cobra.Command{
 		Use:   "install-service",
@@ -47,6 +49,8 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 				Start:     now,
 				Supersede: supersede,
 				Native:    native,
+				Watchdog:  watchdog,
+				Interval:  interval,
 				Service:   defaultRecipeServiceRunner{},
 			})
 		},
@@ -56,6 +60,8 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 	c.Flags().IntVar(&timeout, "timeout", defaultRecipeServiceTimeout, "seconds to allow for the model to load")
 	c.Flags().BoolVar(&now, "now", false, "enable and start the service immediately")
 	c.Flags().BoolVar(&supersede, "supersede-native", true, "stop and disable the single-node unit this replaces")
+	c.Flags().BoolVar(&watchdog, "watchdog", true, "also install a timer that relaunches the cluster when the endpoint stops answering")
+	c.Flags().IntVar(&interval, "watchdog-interval", defaultHealthInterval, "minutes between health checks")
 	return c
 }
 
@@ -66,6 +72,8 @@ type recipeServiceOptions struct {
 	Start     bool
 	Supersede bool
 	Native    string
+	Watchdog  bool
+	Interval  int
 	Service   recipeServiceRunner
 }
 
@@ -122,11 +130,38 @@ func installRecipeService(o recipeServiceOptions) error {
 			fmt.Printf("Stopped, disabled and cleared %s; it cannot serve a container recipe.\n", o.Native)
 		}
 	}
+	// The watchdog is what makes this unattended: a cluster that dies at 3am
+	// otherwise stays dead until somebody looks. It restarts the unit rather
+	// than the containers, so recovery goes through the same path as a boot.
+	healthTimer := ""
+	if o.Watchdog {
+		interval := o.Interval
+		if interval <= 0 {
+			interval = defaultHealthInterval
+		}
+		healthService, timer := healthUnitNames(o.Name)
+		healthTimer = timer
+		svcUnit, timerUnit := renderHealthUnits(recipeSystemdUnit{Home: home, Self: self}, o.Name, interval)
+		if _, err := o.Service.InstallSystemd(healthService, svcUnit); err != nil {
+			return err
+		}
+		if _, err := o.Service.InstallSystemd(timer, timerUnit); err != nil {
+			return err
+		}
+		fmt.Printf("Installed %s, checking every %d minutes after %d misses\n", timer, interval, defaultHealthMisses)
+	}
+
 	if o.Start {
 		if err := o.Service.EnableStart(o.Name); err != nil {
 			return err
 		}
 		fmt.Printf("Enabled and started %s\n", o.Name)
+		if healthTimer != "" {
+			if err := o.Service.EnableStart(healthTimer); err != nil {
+				return err
+			}
+			fmt.Printf("Enabled %s\n", healthTimer)
+		}
 		return nil
 	}
 	fmt.Printf("Not started. Launch a recipe first so the profile records its nodes, then: sudo systemctl enable --now %s\n", o.Name)

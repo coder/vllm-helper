@@ -18,7 +18,7 @@ func newRecipesCmd() *cobra.Command {
 		GroupID: groupModels,
 	}
 	c.AddCommand(newRecipesListCmd(), newRecipesShowCmd(), newRecipesLaunchCmd(), newRecipesStopCmd(),
-		newRecipesInstallServiceCmd())
+		newRecipesInstallServiceCmd(), newRecipesHealthCheckCmd())
 	return c
 }
 

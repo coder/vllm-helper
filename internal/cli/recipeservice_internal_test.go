@@ -8,18 +8,25 @@ import (
 )
 
 type fakeRecipeService struct {
-	installed  string
-	unit       string
-	enabled    string
+	units      map[string]string // unit name -> rendered contents
+	enabled    []string
 	superseded string
 	failStop   bool
 }
 
+func (f *fakeRecipeService) installed(name string) bool {
+	_, ok := f.units[name]
+	return ok
+}
+
 func (f *fakeRecipeService) Self() (string, error)       { return "/usr/local/bin/vllm-helper", nil }
 func (f *fakeRecipeService) Home(string) (string, error) { return "/home/serve", nil }
-func (f *fakeRecipeService) EnableStart(n string) error  { f.enabled = n; return nil }
+func (f *fakeRecipeService) EnableStart(n string) error  { f.enabled = append(f.enabled, n); return nil }
 func (f *fakeRecipeService) InstallSystemd(n, u string) (string, error) {
-	f.installed, f.unit = n, u
+	if f.units == nil {
+		f.units = map[string]string{}
+	}
+	f.units[n] = u
 	return "/etc/systemd/system/" + n, nil
 }
 func (f *fakeRecipeService) Supersede(n string) error {
@@ -69,7 +76,7 @@ func TestInstallRecipeServiceStandsDownTheNativeUnit(t *testing.T) {
 		name       string
 		opts       recipeServiceOptions
 		superseded string
-		enabled    string
+		enabled    []string
 	}{
 		{
 			name:       "supersedes the configured unit",
@@ -87,7 +94,12 @@ func TestInstallRecipeServiceStandsDownTheNativeUnit(t *testing.T) {
 		{
 			name:    "starts only when asked",
 			opts:    recipeServiceOptions{Name: "vllm-cluster.service", User: "serve", Timeout: 60, Start: true},
-			enabled: "vllm-cluster.service",
+			enabled: []string{"vllm-cluster.service"},
+		},
+		{
+			name:    "enables the watchdog timer alongside the unit",
+			opts:    recipeServiceOptions{Name: "vllm-cluster.service", User: "serve", Timeout: 60, Start: true, Watchdog: true, Interval: 2},
+			enabled: []string{"vllm-cluster.service", "vllm-cluster-health.timer"},
 		},
 	}
 	for _, c := range cases {
@@ -100,11 +112,14 @@ func TestInstallRecipeServiceStandsDownTheNativeUnit(t *testing.T) {
 			if fake.superseded != c.superseded {
 				t.Errorf("superseded %q, want %q", fake.superseded, c.superseded)
 			}
-			if fake.enabled != c.enabled {
-				t.Errorf("enabled %q, want %q", fake.enabled, c.enabled)
+			if strings.Join(fake.enabled, ",") != strings.Join(c.enabled, ",") {
+				t.Errorf("enabled %v, want %v", fake.enabled, c.enabled)
 			}
-			if fake.installed != c.opts.Name {
-				t.Errorf("installed %q, want %q", fake.installed, c.opts.Name)
+			if !fake.installed(c.opts.Name) {
+				t.Errorf("did not install %q, only %v", c.opts.Name, fake.units)
+			}
+			if c.opts.Watchdog && !fake.installed("vllm-cluster-health.timer") {
+				t.Errorf("watchdog asked for but not installed: %v", fake.units)
 			}
 		})
 	}
@@ -124,7 +139,7 @@ func TestInstallRecipeServiceSurvivesAFailedSupersede(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install failed because supersede did: %v", err)
 	}
-	if fake.installed == "" {
+	if !fake.installed("vllm-cluster.service") {
 		t.Error("the unit was not installed")
 	}
 }
