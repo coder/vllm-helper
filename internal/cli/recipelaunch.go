@@ -177,6 +177,10 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	if err != nil {
 		return err
 	}
+	// Stand the watchdog off for the length of the load: the endpoint is
+	// deliberately down while a model loads, and a timer that reads that as
+	// an outage will relaunch the previous profile over the top of this one.
+	markLaunching(cfg, launchStandOff)
 	tested, err := recipe.LoadTested()
 	if err != nil {
 		return err
@@ -399,8 +403,18 @@ func recipeFlag(r recipe.TestedRecipe, flag, fallback string) string {
 // activation switch does, so the active profile, active.env and Coder all
 // describe what is actually serving. The raw docker path bypassed all three.
 func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.TestedRecipe, local overrideLayer, o recipeLaunchOptions) error {
-	if r.Verified.Context <= 0 {
-		return fmt.Errorf("%s has no verified context, which Coder needs as a context limit", r.ID)
+	// The context Coder advertises is what the server is configured to serve,
+	// so the recipe's own --max-model-len is the answer whenever it has one.
+	// Requiring a verified context here refused to activate an entry that
+	// had not been measured yet, which left the launch serving a model the
+	// active profile did not name -- the exact incoherence this path exists
+	// to prevent.
+	limit := recipeFlag(r, "--max-model-len", "")
+	if limit == "" && r.Verified.Context > 0 {
+		limit = strconv.Itoa(r.Verified.Context)
+	}
+	if limit == "" {
+		return fmt.Errorf("%s sets no --max-model-len and records no verified context, so there is no context limit to advertise", r.ID)
 	}
 	p := local.profile
 	// An existing profile is updated in place, never replaced: its knobs and
@@ -410,7 +424,7 @@ func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.Tes
 		created, err := profile.Create(cfg.Dirs, profile.CreateOpts{
 			Repo:           r.Model,
 			Name:           r.ID,
-			MaxModelLen:    recipeFlag(r, "--max-model-len", strconv.Itoa(r.Verified.Context)),
+			MaxModelLen:    limit,
 			MemUtilization: recipeFlag(r, "--gpu-memory-utilization", ""),
 			Status:         "tested recipe " + r.ID + ", runs in a container",
 			Source:         "recipes launch",

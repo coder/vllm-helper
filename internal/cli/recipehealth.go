@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/detect"
 )
 
@@ -55,6 +58,72 @@ func healthStatePath(unit string) string {
 	return "/run/" + strings.TrimSuffix(unit, ".service") + "-misses"
 }
 
+// launchMarkerName is the file a launch leaves behind while it is working.
+// It lives in the state dir so the launcher (the serving user) writes it and
+// the watchdog (root, with HOME set to that user) reads it.
+const launchMarkerName = "launch-in-progress"
+
+// launchStandOff bounds how long a launch can hold the watchdog off. Loads
+// here take about five minutes, so this leaves room for a slow one without
+// leaving the cluster unwatched for long if the launch never comes up.
+const launchStandOff = 15 * time.Minute
+
+// markLaunching announces that a launch is under way.
+//
+// Without it the watchdog treats a deliberate launch as an outage: a model
+// takes minutes to load, the endpoint is silent for all of it, and two misses
+// later the timer restarts the unit -- which relaunches the OLD active
+// profile over the top of the new one. That is not hypothetical; it killed a
+// MiMo launch mid-load and put DeepSeek back.
+//
+// The stand-off deliberately outlives the launcher. "vllm-helper recipes
+// launch" returns once the containers are started and the profile is
+// recorded, which is minutes before the endpoint answers, so a marker cleared
+// when the command exits protects almost none of the load. It is cleared by
+// the first health check that sees the endpoint up, and otherwise expires, so
+// a launch that dies cannot leave the cluster unwatched for long.
+func markLaunching(cfg *config.Config, ttl time.Duration) {
+	if cfg == nil {
+		return
+	}
+	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
+		return
+	}
+	path := filepath.Join(cfg.Dirs.State, launchMarkerName)
+	deadline := time.Now().Add(ttl).UTC().Format(time.RFC3339)
+	if err := os.WriteFile(path, []byte(deadline), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "could not tell the watchdog a launch is starting:", err)
+	}
+}
+
+// clearLaunching ends the stand-off, which the watchdog does as soon as the
+// endpoint answers.
+func clearLaunching(cfg *config.Config) {
+	if cfg != nil {
+		_ = os.Remove(filepath.Join(cfg.Dirs.State, launchMarkerName))
+	}
+}
+
+// launchInProgress reports whether a launch is working right now. A marker
+// past its deadline is ignored and cleared: a crashed launcher must not leave
+// the cluster unwatched.
+func launchInProgress(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	path := filepath.Join(cfg.Dirs.State, launchMarkerName)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	deadline, err := time.Parse(time.RFC3339, strings.TrimSpace(string(b)))
+	if err != nil || time.Now().After(deadline) {
+		_ = os.Remove(path)
+		return false
+	}
+	return true
+}
+
 type healthAction string
 
 const (
@@ -69,8 +138,8 @@ const (
 //
 // "activating" is left alone because a load takes minutes and the endpoint is
 // legitimately silent for all of it; restarting then would loop forever.
-func healthDecision(unitState string, healthy bool, misses, threshold int) (healthAction, int) {
-	if unitState == "activating" {
+func healthDecision(unitState string, launching, healthy bool, misses, threshold int) (healthAction, int) {
+	if unitState == "activating" || launching {
 		return healthSkip, misses
 	}
 	if healthy {
@@ -84,16 +153,19 @@ func healthDecision(unitState string, healthy bool, misses, threshold int) (heal
 }
 
 func runHealthCheck(unit string, threshold int, statePath string) error {
+	cfg, _ := loadConfig()
 	state := strings.TrimSpace(systemctlOutput("is-active", unit))
 	healthy := endpointHealthy()
 	misses := readMisses(statePath)
 
-	action, next := healthDecision(state, healthy, misses, threshold)
+	action, next := healthDecision(state, launchInProgress(cfg), healthy, misses, threshold)
 	switch action {
 	case healthSkip:
 		return nil
 	case healthClear:
 		_ = os.Remove(statePath)
+		// The endpoint is up, so whatever launch was in flight is done.
+		clearLaunching(cfg)
 		return nil
 	case healthCount:
 		writeMisses(statePath, next)

@@ -3,6 +3,9 @@ package cli
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/coder/vllm-helper/internal/config"
 )
 
 // The watchdog's whole job is deciding when a silent endpoint means trouble.
@@ -12,26 +15,53 @@ func TestHealthDecision(t *testing.T) {
 	cases := []struct {
 		name      string
 		state     string
+		launching bool
 		healthy   bool
 		misses    int
 		want      healthAction
 		wantCount int
 	}{
-		{"loading is not a failure", "activating", false, 1, healthSkip, 1},
-		{"healthy clears the count", "active", true, 1, healthClear, 0},
-		{"first miss only counts", "active", false, 0, healthCount, 1},
-		{"second miss relaunches", "active", false, 1, healthRestart, 0},
-		{"a dead unit still relaunches", "failed", false, 1, healthRestart, 0},
-		{"healthy while inactive is still healthy", "inactive", true, 1, healthClear, 0},
+		{"loading is not a failure", "activating", false, false, 1, healthSkip, 1},
+		{"healthy clears the count", "active", false, true, 1, healthClear, 0},
+		{"first miss only counts", "active", false, false, 0, healthCount, 1},
+		{"second miss relaunches", "active", false, false, 1, healthRestart, 0},
+		{"a dead unit still relaunches", "failed", false, false, 1, healthRestart, 0},
+		{"healthy while inactive is still healthy", "inactive", false, true, 1, healthClear, 0},
+		// The case that cost a launch: a deliberate launch looks exactly like
+		// an outage from the outside, and the unit is not "activating"
+		// because the launch was started by hand rather than by systemd.
+		{"a launch in progress is left alone", "active", true, false, 1, healthSkip, 1},
+		{"even a failed-looking unit is left alone mid-launch", "failed", true, false, 1, healthSkip, 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, n := healthDecision(c.state, c.healthy, c.misses, 2)
+			got, n := healthDecision(c.state, c.launching, c.healthy, c.misses, 2)
 			if got != c.want || n != c.wantCount {
-				t.Errorf("healthDecision(%q, %v, %d) = %v/%d, want %v/%d",
-					c.state, c.healthy, c.misses, got, n, c.want, c.wantCount)
+				t.Errorf("healthDecision(%q, launching=%v, %v, %d) = %v/%d, want %v/%d",
+					c.state, c.launching, c.healthy, c.misses, got, n, c.want, c.wantCount)
 			}
 		})
+	}
+}
+
+// A launcher that dies must not disable the watchdog forever, so the marker
+// carries a deadline rather than a pid.
+func TestLaunchMarkerExpires(t *testing.T) {
+	cfg := &config.Config{Dirs: config.Dirs{State: t.TempDir()}}
+	if launchInProgress(cfg) {
+		t.Error("no marker, but a launch was reported")
+	}
+	markLaunching(cfg, time.Minute)
+	if !launchInProgress(cfg) {
+		t.Error("marker written, but no launch was reported")
+	}
+	clearLaunching(cfg)
+	if launchInProgress(cfg) {
+		t.Error("marker cleared, but a launch was still reported")
+	}
+	markLaunching(cfg, -time.Minute)
+	if launchInProgress(cfg) {
+		t.Error("an expired marker must not hold the watchdog off")
 	}
 }
 
