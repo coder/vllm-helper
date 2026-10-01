@@ -147,14 +147,10 @@ func loadConfig() (*config.Config, error) {
 }
 
 // runner is how the CLI drives whatever is actually serving the active model:
-// the init-system service, or a recipe's container cluster. Before this split,
-// status and logs reported the init system even when a container was serving.
+// the init-system service, or a recipe's container cluster. Label names which
+// one, so a report about a two-node cluster does not say "systemd".
 //
-// Label names the runner so those reports say what they are describing rather
-// than printing "systemd" about a two-node cluster.
-//
-// Deliberately excluded: Installed/Install, which are setup-only and have no
-// meaning for a container, and Start, which is not a lifecycle call at all --
+// Installed/Install are excluded as setup-only, and Start because
 // "vllm-helper start" is the exec entrypoint the service manager runs.
 type runner interface {
 	IsActive() string

@@ -27,8 +27,8 @@ func newPoolNewCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&nodesCSV, "nodes", "", "Comma-separated node names")
-	cmd.Flags().StringVar(&bind, "bind", ":8001", "Bind address for router")
-	cmd.Flags().StringVar(&sticky, "sticky", "auto", "Stickiness (auto|authorization|header:Name)")
+	cmd.Flags().StringVar(&nodesCSV, "nodes", "", "comma-separated node names")
+	cmd.Flags().StringVar(&bind, "bind", ":8001", "bind address for router")
+	cmd.Flags().StringVar(&sticky, "sticky", "auto", "stickiness (auto|authorization|header:Name)")
 	return cmd
 }

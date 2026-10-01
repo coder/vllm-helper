@@ -70,20 +70,13 @@ const launchMarkerName = "launch-in-progress"
 // leaving the cluster unwatched for long if the launch never comes up.
 const launchStandOff = 15 * time.Minute
 
-// markLaunching announces that a launch is under way.
+// markLaunching announces that a launch is under way. Without it the watchdog
+// reads the silence of a loading model as an outage and restarts the unit,
+// which relaunches the OLD active profile over the top of the new one.
 //
-// Without it the watchdog treats a deliberate launch as an outage: a model
-// takes minutes to load, the endpoint is silent for all of it, and two misses
-// later the timer restarts the unit -- which relaunches the OLD active
-// profile over the top of the new one. That is not hypothetical; it killed a
-// MiMo launch mid-load and put DeepSeek back.
-//
-// The stand-off deliberately outlives the launcher. "vllm-helper recipes
-// launch" returns once the containers are started and the profile is
-// recorded, which is minutes before the endpoint answers, so a marker cleared
-// when the command exits protects almost none of the load. It is cleared by
-// the first health check that sees the endpoint up, and otherwise expires, so
-// a launch that dies cannot leave the cluster unwatched for long.
+// The marker outlives the launcher on purpose: "recipes launch" returns
+// minutes before the endpoint answers. It is cleared by the first health
+// check that sees the endpoint up, and otherwise expires.
 func markLaunching(cfg *config.Config, ttl time.Duration) {
 	if cfg == nil {
 		return
@@ -99,14 +92,10 @@ func markLaunching(cfg *config.Config, ttl time.Duration) {
 }
 
 // clearLaunching ends the stand-off once the endpoint answers, but refuses
-// while the marker is younger than minAge.
-//
-// The age guard is the whole point: for the first seconds of a launch the
-// PREVIOUS server is still answering, so a health check that lands there sees
-// "healthy" and clears a marker whose load has not even started. That is what
-// happened in practice -- the marker was gone within 20s and the watchdog was
-// free to restart the unit mid-load again. One check interval is enough,
-// because by the next tick the old server is down.
+// while the marker is younger than minAge: for the first seconds of a launch
+// the PREVIOUS server is still answering, and a check landing there would
+// clear a marker whose load has not started. One interval is enough, because
+// by the next tick the old server is down.
 func clearLaunching(cfg *config.Config, minAge time.Duration) {
 	if cfg == nil {
 		return

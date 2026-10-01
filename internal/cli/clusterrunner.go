@@ -19,7 +19,6 @@ import (
 // so status, logs, stop and restart do not have to know which one is serving:
 // before this, they reported systemd even while a container did the work.
 type clusterRunner struct {
-	cfg    *config.Config
 	recipe recipe.TestedRecipe
 	opts   recipeLaunchOptions
 }
@@ -55,7 +54,7 @@ func clusterRunnerFor(cfg *config.Config, p *profile.Profile) (*clusterRunner, e
 	if o.masterPort == 0 {
 		o.masterPort = defaultRecipeMasterPort
 	}
-	return &clusterRunner{cfg: cfg, recipe: r, opts: o}, nil
+	return &clusterRunner{recipe: r, opts: o}, nil
 }
 
 // needNodes guards the verbs that change something. Guessing a node list

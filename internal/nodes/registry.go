@@ -106,18 +106,3 @@ func (r *Registry) List() []Node {
 	}
 	return out
 }
-
-func (r *Registry) SetLabel(name, k, v string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	n, ok := r.m[name]
-	if !ok {
-		return false
-	}
-	if n.Labels == nil {
-		n.Labels = map[string]string{}
-	}
-	n.Labels[k] = v
-	r.m[name] = n
-	return true
-}

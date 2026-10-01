@@ -258,14 +258,13 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	} else {
 		fmt.Println("  auth       VLLM_API_KEY from secrets.env")
 	}
-	for i, m := range members {
+	for _, m := range members {
 		role := "head, serves the API"
 		if m.rank != 0 {
 			role = "worker, headless"
 		}
 		fmt.Printf("  rank %d     %s (%s) iface=%s ib=%s ip=%s\n", m.rank, m.node.Name, role,
 			m.discovered[recipe.PlaceholderIface], m.discovered[recipe.PlaceholderIBIf], m.discovered[recipe.PlaceholderNodeIP])
-		_ = specs[i]
 	}
 	fmt.Println()
 
@@ -475,8 +474,7 @@ func runRecipeStop(id string, o recipeLaunchOptions) error {
 	if err != nil {
 		return err
 	}
-	r, ok := tested.Get(id)
-	if !ok {
+	if _, ok := tested.Get(id); !ok {
 		return fmt.Errorf("no tested recipe %q", id)
 	}
 	if len(o.nodeNames) == 0 {
@@ -502,6 +500,5 @@ func runRecipeStop(id string, o recipeLaunchOptions) error {
 		}
 		fmt.Printf("stopped %s on %s\n", o.container, name)
 	}
-	_ = r
 	return nil
 }

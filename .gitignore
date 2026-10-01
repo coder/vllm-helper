@@ -4,6 +4,7 @@ THISBOX.md
 # Build output
 bin/
 dist/
+*.exe
 
 # Prettier is the only JS dependency and is not vendored.
 node_modules/

@@ -34,7 +34,7 @@ func newNodeAddCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&host, "host", "", "Base URL (scheme://host:port)")
+	c.Flags().StringVar(&host, "host", "", "base URL (scheme://host:port)")
 	c.Flags().StringVar(&sshTarget, "ssh", "", "SSH target for orchestration (user@host)")
 	return c
 }
