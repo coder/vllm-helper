@@ -10,10 +10,9 @@ import (
 //go:embed tested.json
 var testedJSON []byte
 
-// Tested holds the recipes we have actually run on our own hardware. It is kept
-// separate from catalog.json because the two have different provenance and
-// update paths: the catalog is generated from upstream, this is hand-authored
-// from a real deployment and re-stamped by "recipe verify".
+// Tested holds the recipes we have actually run on our own hardware. Entries
+// are hand-authored from a real deployment: a configuration nobody has run is
+// not a recipe, so nothing generates them.
 type Tested struct {
 	Recipes []TestedRecipe `json:"recipes"`
 }
