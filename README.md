@@ -60,6 +60,7 @@ vllm-helper stop                # stop the server
 vllm-helper logs                # follow the server journal
 vllm-helper doctor              # hardware, running servers, integrations, drift
 vllm-helper serve               # web panel for this machine
+vllm-helper recipes list        # tested launch configurations, and what verified them
 ```
 
 ### Web panel
@@ -81,7 +82,7 @@ Switching and stopping need permission to control the service. On Linux the unit
 youruser ALL=(root) NOPASSWD: /usr/bin/systemctl restart vllm.service, /usr/bin/systemctl stop vllm.service, /usr/bin/systemctl start vllm.service
 ```
 
-Without it the panel still reports everything, and says why the buttons are disabled rather than failing when you press them.
+Without it the panel still reports everything, and says why the buttons are disabled rather than failing when you press them. On a machine serving a recipe, name `vllm-cluster.service` in those three rules instead — `recipes install-service` stands the native unit down, because it cannot serve a container.
 
 Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the key from `~/.config/vllm-helper/secrets.env`. Switching reloads the model, which takes a few minutes when the weights are cached and longer on first download. `switch` waits until the endpoint responds; if the service fails or crash-loops, it exits with the last log lines.
 
@@ -125,6 +126,25 @@ vllm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0
 
 Two things vLLM constrains here, and they are reported rather than worked around. GGUF support **left vLLM core in 0.27.1** for an out-of-tree package — `vllm-helper install-gguf` adds it, after telling you what you are getting. And split-file or per-quant-subfolder GGUFs cannot be loaded on any released version of that plugin, so those are listed but not offered.
 
+## Recipes
+
+A recipe is a launch configuration that has actually been run and measured: a model, an image pinned by digest, the exact argv, and the numbers it produced on named hardware. Where a profile records what you want, a recipe records what worked.
+
+```bash
+vllm-helper recipes list                      # what is tested, and on what
+vllm-helper recipes show <id>                 # argv, provenance, measured numbers
+vllm-helper recipes launch <id> --nodes a,b   # run it, and point Coder at it
+vllm-helper recipes stop <id>
+```
+
+A recipe may span several machines, so launching one starts containers over SSH on the nodes you name and writes a profile of the same name. From then on `status`, `logs`, `restart` and `stop` work as they always did — they follow whatever is serving rather than assuming the local service.
+
+Editing that profile is allowed and reaches the command line, but the entry then reports itself as "recipe plus local overrides" and stops claiming the verified numbers, because they no longer describe what is running.
+
+`recipes install-service` installs a unit that keeps the active recipe serving, with a timer that relaunches it if the endpoint stops answering. It stands the native `vllm.service` down, which cannot serve a container.
+
+Each entry records where its settings came from and every place we deliberately differ from upstream, with the reason. `tools/recipediff` compares the entries against the upstream recipes they were derived from and reports anything that differs without being declared. See [docs/recipes.md](docs/recipes.md) for the schema, the provenance rules and what adding an entry requires.
+
 ## macOS
 
 vLLM has no GPU backend on Apple Silicon, so a Mac runs models on the CPU through vLLM's experimental CPU backend. Expect it to be useful for small models and development, not for serving anything large.
@@ -161,7 +181,7 @@ Coder caps a reply at its own server-side default (32,000 tokens). Set `CODER_MA
 
 ## Troubleshooting
 
-Run `vllm-helper doctor` first. It checks the build toolchain vLLM needs, inventories running servers, and warns when config has drifted from reality. For crash loops, read the actual traceback: `journalctl -u vllm.service -n 100` on Linux, or `tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log` on macOS. `vllm-helper status` prints the right command for your platform when the endpoint isn't responding, and says whether the service is still loading or failing to start — a large model can take many minutes to load, so the two look identical from the outside.
+Run `vllm-helper doctor` first. It checks the build toolchain vLLM needs, inventories running servers, and warns when config has drifted from reality. For crash loops, read the actual traceback: `journalctl -u vllm.service -n 100` on Linux, or `tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log` on macOS. A machine serving a recipe runs `vllm-cluster.service` instead, and its traceback is in the container — `vllm-helper logs` reads the right one either way. `vllm-helper status` prints the right command for your platform when the endpoint isn't responding, and says whether the service is still loading or failing to start — a large model can take many minutes to load, so the two look identical from the outside.
 
 A first `switch` or `new` downloads the weights, which can keep the boot log on screen for a long time. Ctrl+C there only stops watching; the server keeps loading in the background, and `vllm-helper status` will tell you when it's up. Use `--no-follow` to skip the wait entirely.
 

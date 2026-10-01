@@ -133,10 +133,12 @@ What changes when overrides exist is the **claim**, not the permission:
 - A future `recipe verify` must refuse to re-stamp measurements taken from an overridden
   run, because "we ran this" would then be false.
 
-What is still refused is a **wrong command**, not an edit: native `start` and `switch` on a
-container recipe. `switch` is refused ahead of `WriteActiveEnv` because activation notifies
-Coder before restarting, so a late failure would leave Coder advertising a model that is
-not serving.
+What is still refused is a **wrong command**, not an edit: native `start` on a container
+recipe, which would run vLLM on the local machine while the cluster serves. `switch` to a
+recipe is allowed, but only once that recipe has been launched at least once, because the
+launch is what records its node topology. That precondition is checked ahead of
+`WriteActiveEnv`: activation notifies Coder before restarting, so a late failure would
+leave Coder advertising a model that is not serving.
 
 Overriding any flag is allowed, including `--attention-backend` and `--load-format`. The
 `forbiddenArgs` check still fails closed on combinations known to abort on this arch. A
@@ -174,31 +176,6 @@ DeepSeek V4 Flash 0731); 3 truncates the block and 6 is rejected at boot. The ca
 is `max_num_seqs x (k + 1)`. Confirm acceptance from the server's own `SpecDecoding
 metrics` log lines rather than from client-side tokens per second, because under
 speculation one streamed chunk carries several tokens.
-
-## Phases
-
-- **P1 — done.** Tested-recipe schema, DeepSeek entry, `recipes list` / `recipes show`.
-- **P2 — DeepSeek deltas.** Resolve the seven divergences below, re-verify on the two
-  Sparks, re-stamp. A tested entry that disagrees with reality is worse than none.
-- **P3 — diff tool. Done for eugr.** `tools/recipediff` with its own `go.mod` so the CLI
-  keeps its two direct deps. `go run . -upstream-dir testdata` compares offline against
-  checked-in fixtures; with no flag it fetches each entry's source at its pinned commit and
-  also reports when upstream has moved past that pin. Exits non-zero while anything is
-  undeclared. The vllm-project side is not implemented: neither shipped entry cites it, and
-  it needs a model-id to file mapping the `source` block does not carry.
-- **P3b — supervision. Done.** `recipes install-service` writes a systemd unit whose
-  `ExecStart` is plain `vllm-helper restart`: the unit names no recipe, so switching one
-  is not a unit edit. It allows 30 minutes for a load by default, and stands the native
-  single-node unit down (stop, disable, reset-failed) because that unit cannot serve a
-  container recipe and a stale failure leaves the whole host reported as degraded. The
-  unit file stays: native mode is still how most machines serve anything.
-- **P4 — instantiate.** `new --recipe <id>` creates a local profile. Fit math changes
-  role: it validates the recipe's declared topology against the actual machine instead
-  of deciding topology. Backend names validated against the image before launch.
-- **P5 — launch.** Spark hardware profile discovering `IFACE_NAME`, `IB_IF`, `HEAD_IP`
-  with placeholder expansion; native Go two-node launcher that restores profile, router
-  and Coder sync (the raw `docker run` path bypassed all three).
-- **P6 — maintain.** `recipe verify` re-stamps from a live run. Relabel search tiers.
 
 ## Recipe #1: DeepSeek V4 Flash
 
