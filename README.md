@@ -100,8 +100,13 @@ A profile is a small env file in `~/.config/vllm-helper/models/`:
 MODEL=Qwen/Qwen3-Coder-Next-FP8
 MAX_MODEL_LEN=131072
 GPU_MEMORY_UTILIZATION=0.85
+KV_CACHE_MEMORY_BYTES=17179869184
 EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser qwen3_coder"
 ```
+
+`KV_CACHE_MEMORY_BYTES` is sized when the profile is written, from the model's own attention shape and `KV_CONTEXT_TARGET` (`config.env`, four full contexts by default). With it set, `GPU_MEMORY_UTILIZATION` is a ceiling on what vLLM may touch rather than the size of the cache. Profiles written before this key existed keep working; re-create one to get a sized cache.
+
+The model budget `search` and `doctor` compare against is measured from the machine on every run. Set `MODEL_BUDGET_GB` in `config.env` to override it — `doctor` says when one is in force.
 
 Keep `EXTRA_ARGS` quoted if it has more than one flag; flag values with spaces (like JSON) can be quoted inside it.
 
@@ -148,7 +153,9 @@ If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm
 
 `vllm-helper coder-sync register-all` adds a disabled entry for any profile that doesn't have one yet; existing entries are left as-is. `vllm-helper doctor` verifies the configured URL and token against the API, and warns when that token is within two days of expiring — Coder caps token lifetime, and an expired one simply stops the picker being updated.
 
-Entries are matched by model, so a profile that is renamed, or a second machine serving the same model, adopts the existing entry instead of adding a second row for it. `coder-sync prune` reports any model that already has more than one entry; it never picks which to keep.
+Entries are matched by model, so a profile that is renamed, or a second machine serving the same model, adopts the existing entry instead of adding a second row for it. `vllm-helper coder-sync prune` reports entries this provider offers that no local profile can serve and deletes them with `--yes`; it also names any model that already has more than one entry, but never picks which of those to keep. Entries belonging to other providers are never touched.
+
+On a deployment with more than one organization, name yours with `CODER_ORGANIZATION`.
 
 Coder caps a reply at its own server-side default (32,000 tokens). Set `CODER_MAX_OUTPUT_TOKENS` in `config.env` to raise it for the models this machine serves; leave it unset and vllm-helper sends nothing, so whatever is configured in Coder stays.
 
