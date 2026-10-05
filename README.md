@@ -145,6 +145,38 @@ Editing that profile is allowed and reaches the command line, but the entry then
 
 Each entry records where its settings came from and every place we deliberately differ from upstream, with the reason. `tools/recipediff` compares the entries against the upstream recipes they were derived from and reports anything that differs without being declared. See [docs/recipes.md](docs/recipes.md) for the schema, the provenance rules and what adding an entry requires.
 
+## More than one machine
+
+Three commands cover the ways a model can span machines. They share one registry: `node` records a machine once, and `pool`, `shard` and `recipes launch` all refer to it by name.
+
+```bash
+vllm-helper node add spark2 --host http://spark2:8001 --ssh coder@spark2
+vllm-helper node ls
+vllm-helper node rm spark2
+```
+
+`--host` is where the node answers OpenAI requests; `--ssh` is how this machine orchestrates it. The registry lives in `nodes.json` beside your config.
+
+**A pool is replicas.** Every node serves the same model, and a router in front of them spreads requests across the healthy ones:
+
+```bash
+vllm-helper pool serve --nodes spark1,spark2 --bind :8011 --sticky auto
+vllm-helper pool install-service --nodes spark1,spark2   # the same thing, as a unit
+vllm-helper pool status                                  # per-backend health
+```
+
+Stickiness keeps a conversation on the node that already has its prefix cached, which matters because a repeated long prompt is nearly free on a warm node and expensive on a cold one. `auto` keys on an `X-Session-ID` header when the client sends one and falls back to the `Authorization` header, so a plain OpenAI client is still sticky per API key.
+
+**A shard is one model split across machines**, for a model too large for any single node:
+
+```bash
+vllm-helper shard start --profile big --nodes spark1,spark2 --tp 2
+vllm-helper shard status --nodes spark1,spark2
+vllm-helper shard stop --nodes spark1,spark2
+```
+
+`shard start` runs in the foreground against a native vLLM install and does not write any state, so it is the command for trying a split before there is a recipe for it. `--tp` splits each layer across nodes and `--pp` splits by layer; which one wins is a property of the workload, not a default worth trusting. A sharded configuration that works is worth turning into a recipe, and `recipes launch` is what runs it afterwards with state, supervision and Coder sync attached.
+
 ## macOS
 
 vLLM has no GPU backend on Apple Silicon, so a Mac runs models on the CPU through vLLM's experimental CPU backend. Expect it to be useful for small models and development, not for serving anything large.
