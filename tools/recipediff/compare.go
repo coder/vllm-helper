@@ -23,6 +23,7 @@ type entry struct {
 
 // deviation mirrors recipe.Deviation: what an entry claims about one setting.
 type deviation struct {
+	Kind     string `json:"kind"`
 	Setting  string `json:"setting"`
 	Upstream string `json:"upstream"`
 	Ours     string `json:"ours"`
@@ -85,15 +86,26 @@ func (d declaration) fits(f finding) bool {
 // meant to make must be declared in source.deviations, and anything else is
 // something nobody has looked at yet.
 func compare(e entry, up eugrRecipe) []finding {
+	// Keyed on the kind as well as the name, because the two namespaces
+	// overlap in spirit if not in spelling: an env key and a flag are
+	// different settings even when they describe the same behaviour.
 	declared := map[string]declaration{}
+	byName := map[string]bool{}
 	for _, d := range e.Source.Deviations {
-		declared[d.Setting] = declaration{upstream: d.Upstream, ours: d.Ours}
+		declared[d.Kind+" "+d.Setting] = declaration{upstream: d.Upstream, ours: d.Ours}
+		byName[d.Setting] = true
 	}
 	var out []finding
 	add := func(f finding) {
-		if d, ok := declared[f.Setting]; ok {
+		switch d, ok := declared[f.Kind+" "+f.Setting]; {
+		case ok:
 			f.Declared = d.fits(f)
 			f.Misdeclared = !f.Declared
+		case byName[f.Setting]:
+			// Declared under the wrong kind, which is how the env keys were
+			// written before the kind existed. Say so rather than reporting
+			// it as something nobody has looked at.
+			f.Misdeclared = true
 		}
 		out = append(out, f)
 	}

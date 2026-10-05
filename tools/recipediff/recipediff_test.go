@@ -81,7 +81,7 @@ func TestCompareSeparatesDeclaredFromDrift(t *testing.T) {
 	e.Model = "m"
 	e.Args = []string{"--max-num-seqs", "32", "--stays", "yes", "--extra", "1"}
 	e.Env = map[string]string{"KEEP": "1", "CHANGED": "2", "MINE": "1"}
-	e.Source.Deviations = []deviation{{Setting: "max_num_seqs", Upstream: "8", Ours: "32", Why: "measured"}}
+	e.Source.Deviations = []deviation{{Kind: "flag", Setting: "max_num_seqs", Upstream: "8", Ours: "32", Why: "measured"}}
 
 	got := map[string]finding{}
 	for _, f := range compare(e, up) {
@@ -187,7 +187,7 @@ func TestAStaleDeclarationDoesNotSilenceTheDifference(t *testing.T) {
 	e.Args = []string{"--max-num-seqs", "32"}
 	// Upstream used to pass 8 and now passes 16: the declaration describes a
 	// move that no longer exists.
-	e.Source.Deviations = []deviation{{Setting: "max_num_seqs", Upstream: "8", Ours: "32", Why: "measured"}}
+	e.Source.Deviations = []deviation{{Kind: "flag", Setting: "max_num_seqs", Upstream: "8", Ours: "32", Why: "measured"}}
 
 	fs := compare(e, up)
 	if n := undeclared(fs); n != 1 {

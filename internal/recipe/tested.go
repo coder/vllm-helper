@@ -51,11 +51,23 @@ type Source struct {
 // decision we made from drift nobody noticed, and a reader has to see what was
 // changed without trusting a sentence to still be true.
 type Deviation struct {
+	Kind     string `json:"kind"`               // flag, env or mod: where the setting lives
 	Setting  string `json:"setting"`            // what upstream calls it
 	Upstream string `json:"upstream,omitempty"` // upstream's value, empty when it is ours alone
 	Ours     string `json:"ours,omitempty"`     // ours, empty when we drop it
 	Why      string `json:"why"`
 }
+
+// Deviation kinds. A flag is named the way upstream names it in defaults
+// (max_model_len, not --max-model-len), an env key is the raw key, and a mod
+// is the path upstream lists. Without the kind, a checker has to guess, and
+// the guess that was there turned VLLM_MOE_SKIP_PADDING into the flag
+// --VLLM-MOE-SKIP-PADDING and then failed to find it.
+const (
+	DeviationFlag = "flag"
+	DeviationEnv  = "env"
+	DeviationMod  = "mod"
+)
 
 // Change renders the move for display. An absent side is a drop or an
 // addition, which reads better than an empty column.

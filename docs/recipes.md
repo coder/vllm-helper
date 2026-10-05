@@ -93,12 +93,21 @@ Where an entry departs from its source, `source.deviations` records it as data:
 
 ```json
 {
+  "kind": "flag",
   "setting": "max_num_seqs",
   "upstream": "8",
   "ours": "32",
   "why": "measured ..."
 }
 ```
+
+`kind` is `flag`, `env` or `mod`, and it says where to look for the claim: the args, the
+entry's `env`, or upstream's `mods` list. It exists because the two guards used to
+contradict each other. The entry-side test built `"--" + setting` for every declaration,
+so an env key became the flag `--VLLM-MOE-SKIP-PADDING` and could never be found, while
+`recipediff` keyed env findings on the raw key -- which made two of the open differences
+impossible to declare at all. With the kind recorded, each guard checks the place the
+setting actually lives.
 
 A declaration has to be falsifiable, so `recipediff` reads the values and not just the
 key: the direction must agree (a drop cannot be declared as a change), `ours` must match
@@ -113,8 +122,10 @@ nobody can compare is an entry whose differences nobody has seen.
 An empty `ours` means we dropped the setting. `setting` must name the thing the way
 upstream does — the flag without its dashes (`max_model_len`), the env key, or the mod
 path — because that is the key `recipediff` matches on, and
-`TestDeviationsMatchTheArgsTheyDescribe` checks the claim against the entry's own args.
-Prose in `notes` cannot do either job.
+`TestDeviationsMatchTheArgsTheyDescribe` checks the claim against the entry itself. A
+dropped setting leaves no trace to check, so the test also holds the name to the shape its
+kind implies: a mod path has a slash, an env key is upper case, a flag is neither. Prose
+in `notes` cannot do any of this.
 
 Running the tool against both entries found eight differences that were never decisions,
 only transcription. Four per entry remain open and are deliberately left undeclared so the

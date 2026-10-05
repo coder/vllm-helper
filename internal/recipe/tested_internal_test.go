@@ -169,13 +169,46 @@ func TestDeviationsMatchTheArgsTheyDescribe(t *testing.T) {
 				t.Errorf("%s: %q records no change at all", r.ID, d.Setting)
 			}
 
-			flag := "--" + strings.ReplaceAll(d.Setting, "_", "-")
-			got, present := deviationArgValue(r.Args, flag)
-			switch {
-			case present && got != d.Ours:
-				t.Errorf("%s: %s says ours is %q but the args carry %q", r.ID, d.Setting, d.Ours, got)
-			case !present && d.Ours != "":
-				t.Errorf("%s: %s claims ours is %q but %s is not in the args", r.ID, d.Setting, d.Ours, flag)
+			// Where the setting lives decides where the claim is checked.
+			// Guessing it from the name turned an env key into the flag
+			// --VLLM-MOE-SKIP-PADDING, which no entry could ever carry.
+			switch d.Kind {
+			case DeviationFlag:
+				// A dropped setting leaves no trace in the entry, so the
+				// shape of the name is the only local check on the kind.
+				if strings.Contains(d.Setting, "/") || d.Setting != strings.ToLower(d.Setting) {
+					t.Errorf("%s: %q is declared as a flag but is not named like one", r.ID, d.Setting)
+				}
+				flag := "--" + strings.ReplaceAll(d.Setting, "_", "-")
+				got, present := deviationArgValue(r.Args, flag)
+				switch {
+				case present && got != d.Ours:
+					t.Errorf("%s: %s says ours is %q but the args carry %q", r.ID, d.Setting, d.Ours, got)
+				case !present && d.Ours != "":
+					t.Errorf("%s: %s claims ours is %q but %s is not in the args", r.ID, d.Setting, d.Ours, flag)
+				}
+			case DeviationEnv:
+				if d.Setting != strings.ToUpper(d.Setting) {
+					t.Errorf("%s: %q is declared as an env key but is not named like one", r.ID, d.Setting)
+				}
+				got, present := r.Env[d.Setting]
+				switch {
+				case present && got != d.Ours:
+					t.Errorf("%s: env %s says ours is %q but the entry sets %q", r.ID, d.Setting, d.Ours, got)
+				case !present && d.Ours != "":
+					t.Errorf("%s: env %s claims ours is %q but the entry does not set it", r.ID, d.Setting, d.Ours)
+				}
+			case DeviationMod:
+				if !strings.Contains(d.Setting, "/") {
+					t.Errorf("%s: %q is declared as a mod but is not a mod path", r.ID, d.Setting)
+				}
+				// We consume the published image by digest and apply no mods,
+				// so the only honest claim about one is that we dropped it.
+				if d.Ours != "" {
+					t.Errorf("%s: mod %s claims ours is %q, but we apply no mods", r.ID, d.Setting, d.Ours)
+				}
+			default:
+				t.Errorf("%s: %s has kind %q, want flag, env or mod", r.ID, d.Setting, d.Kind)
 			}
 		}
 	}
