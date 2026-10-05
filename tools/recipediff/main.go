@@ -47,10 +47,14 @@ func run(testedPath, dir string, w io.Writer) (int, error) {
 		return 0, fmt.Errorf("parse %s: %w", testedPath, err)
 	}
 
-	total := 0
+	total, unchecked := 0, 0
 	for _, e := range t.Recipes {
 		if e.Source.Repo != "eugr/spark-vllm-docker" {
-			fmt.Fprintf(w, "%s: no parser for %s, skipped\n\n", e.ID, e.Source.Repo)
+			// Counted, not waved through: an entry nobody can compare is an
+			// entry whose differences nobody has seen. Skipping it silently
+			// let the tool exit 0 while saying so on the line above.
+			fmt.Fprintf(w, "%s: NOT CHECKED -- no parser for %s\n\n", e.ID, e.Source.Repo)
+			unchecked++
 			continue
 		}
 		body, err := upstreamBytes(e, dir)
@@ -70,8 +74,8 @@ func run(testedPath, dir string, w io.Writer) (int, error) {
 		total += undeclared(fs)
 		report(w, e, fs, dir, up)
 	}
-	fmt.Fprintf(w, "%d undeclared difference(s) across %d entries\n", total, len(t.Recipes))
-	return total, nil
+	fmt.Fprintf(w, "%d undeclared difference(s) and %d unchecked entr(ies) across %d entries\n", total, unchecked, len(t.Recipes))
+	return total + unchecked, nil
 }
 
 // reportStaleness says whether the pin still describes upstream. A commit
@@ -128,7 +132,8 @@ func report(w io.Writer, e entry, fs []finding, dir string, pinned eugrRecipe) {
 		}
 	}
 	section("declared", func(f finding) bool { return f.Declared })
-	section("UNDECLARED", func(f finding) bool { return !f.Declared && !f.Info })
+	section("MISDECLARED -- the declaration describes a different move", func(f finding) bool { return f.Misdeclared })
+	section("UNDECLARED", func(f finding) bool { return !f.Declared && !f.Misdeclared && !f.Info })
 	section("ours alone, not a conflict", func(f finding) bool { return f.Info })
 	fmt.Fprintln(w)
 }

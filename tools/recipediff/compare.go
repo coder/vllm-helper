@@ -14,16 +14,19 @@ type entry struct {
 	Args   []string          `json:"args"`
 	Env    map[string]string `json:"env"`
 	Source struct {
-		Repo       string `json:"repo"`
-		Path       string `json:"path"`
-		Commit     string `json:"commit"`
-		Deviations []struct {
-			Setting  string `json:"setting"`
-			Upstream string `json:"upstream"`
-			Ours     string `json:"ours"`
-			Why      string `json:"why"`
-		} `json:"deviations"`
+		Repo       string      `json:"repo"`
+		Path       string      `json:"path"`
+		Commit     string      `json:"commit"`
+		Deviations []deviation `json:"deviations"`
 	} `json:"source"`
+}
+
+// deviation mirrors recipe.Deviation: what an entry claims about one setting.
+type deviation struct {
+	Setting  string `json:"setting"`
+	Upstream string `json:"upstream"`
+	Ours     string `json:"ours"`
+	Why      string `json:"why"`
 }
 
 type tested struct {
@@ -32,26 +35,66 @@ type tested struct {
 
 // finding is one place an entry and its upstream disagree.
 type finding struct {
-	Kind     string // flag, env or mod
-	Setting  string // the deviation key this would need to declare
-	Label    string // how it reads in the report
-	Upstream string
-	Ours     string
-	Declared bool
-	Info     bool // reported, but not a conflict
+	Kind        string // flag, env or mod
+	Setting     string // the deviation key this would need to declare
+	Label       string // how it reads in the report
+	Upstream    string
+	Ours        string
+	Declared    bool
+	Misdeclared bool // declared, but the declaration describes a different move
+	Info        bool // reported, but not a conflict
+}
+
+// maxLiteralValue is how long a value may be before a declaration is allowed
+// to summarise it. Upstream carries whole JSON blobs for --speculative-config
+// and --reasoning-config, which no one can usefully restate verbatim; a short
+// value like 8 or auto has no such excuse and must be stated literally.
+const maxLiteralValue = 32
+
+// declaration is what an entry claims about one setting.
+type declaration struct {
+	upstream string
+	ours     string
+}
+
+// fits reports whether a declaration actually describes the finding it
+// silences. Keying on the setting name alone made every declaration
+// unfalsifiable: the values were parsed and never read, so a stale claim went
+// on hiding a difference that had since moved.
+func (d declaration) fits(f finding) bool {
+	// The direction must agree whatever the values are. A drop cannot be
+	// declared as a change, nor a change as a drop.
+	if (d.upstream == "") != (f.Upstream == "") {
+		return false
+	}
+	if (d.ours == "") != (f.Ours == "") {
+		return false
+	}
+	// Our own value is ours to state exactly; the args test beside it holds
+	// the same claim to the same standard.
+	if d.ours != f.Ours {
+		return false
+	}
+	if len(f.Upstream) > maxLiteralValue {
+		return true
+	}
+	return d.upstream == f.Upstream
 }
 
 // compare reports every disagreement. It never resolves one: a difference we
 // meant to make must be declared in source.deviations, and anything else is
 // something nobody has looked at yet.
 func compare(e entry, up eugrRecipe) []finding {
-	declared := map[string]bool{}
+	declared := map[string]declaration{}
 	for _, d := range e.Source.Deviations {
-		declared[d.Setting] = true
+		declared[d.Setting] = declaration{upstream: d.Upstream, ours: d.Ours}
 	}
 	var out []finding
 	add := func(f finding) {
-		f.Declared = declared[f.Setting]
+		if d, ok := declared[f.Setting]; ok {
+			f.Declared = d.fits(f)
+			f.Misdeclared = !f.Declared
+		}
 		out = append(out, f)
 	}
 

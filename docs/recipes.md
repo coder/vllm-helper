@@ -100,6 +100,16 @@ Where an entry departs from its source, `source.deviations` records it as data:
 }
 ```
 
+A declaration has to be falsifiable, so `recipediff` reads the values and not just the
+key: the direction must agree (a drop cannot be declared as a change), `ours` must match
+the entry's own value exactly, and `upstream` must match exactly unless upstream's value
+is longer than 32 characters -- its `--speculative-config` and `--reasoning-config` JSON
+blobs cannot usefully be restated, so prose is allowed there. A declaration that no longer
+fits reads as `MISDECLARED` and still counts against the exit code; keying on the name
+alone let a stale claim go on hiding a difference that had moved underneath it. An entry
+whose source has no parser is reported as `NOT CHECKED` and counted too, because an entry
+nobody can compare is an entry whose differences nobody has seen.
+
 An empty `ours` means we dropped the setting. `setting` must name the thing the way
 upstream does — the flag without its dashes (`max_model_len`), the env key, or the mod
 path — because that is the key `recipediff` matches on, and
