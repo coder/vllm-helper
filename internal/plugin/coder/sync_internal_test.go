@@ -31,7 +31,7 @@ func profileWith(t *testing.T, body string) *profile.Profile {
 func TestModelConfigFromProfile(t *testing.T) {
 	p := profileWith(t, "MODEL=deepreinforce-ai/Ornith-1.0-35B-FP8\nMAX_MODEL_LEN=65536\n")
 
-	enabled, err := modelConfig(p, true)
+	enabled, err := modelConfig(nil, p, true)
 	if err != nil {
 		t.Fatalf("modelConfig: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestModelConfigFromProfile(t *testing.T) {
 		t.Error("the active model should be both enabled and the default")
 	}
 
-	disabled, err := modelConfig(p, false)
+	disabled, err := modelConfig(nil, p, false)
 	if err != nil {
 		t.Fatalf("modelConfig: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestModelConfigRejectsAContextLimitCoderWouldRefuse(t *testing.T) {
 	for _, length := range []string{"", "lots", "0", "-1"} {
 		t.Run(length, func(t *testing.T) {
 			p := profileWith(t, "MODEL=some/model\nMAX_MODEL_LEN="+length+"\n")
-			if _, err := modelConfig(p, true); err == nil {
+			if _, err := modelConfig(nil, p, true); err == nil {
 				t.Errorf("MAX_MODEL_LEN=%q was accepted, want an error naming the setting", length)
 			}
 		})

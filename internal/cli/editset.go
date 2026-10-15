@@ -22,6 +22,7 @@ var standardProfileKeys = map[string]bool{
 	"GPU_MEMORY_UTILIZATION": true,
 	"KV_CACHE_MEMORY_BYTES":  true,
 	"EXTRA_ARGS":             true,
+	profile.RecipeKey:        true,
 }
 
 func newEditCmd() *cobra.Command {
@@ -44,6 +45,8 @@ func runEdit(args []string) error {
 		return err
 	}
 	name := args[0]
+	// Loaded only to confirm the profile exists and parses before an editor
+	// is spawned on it.
 	if _, err := profile.Load(cfg.Dirs, name); err != nil {
 		printProfiles(cfg)
 		return err
@@ -178,6 +181,22 @@ func validateProfile(p *profile.Profile, name string) error {
 }
 
 func profileChangeHint(cfg *config.Config, name string) {
+	// A recipe profile is the override layer over its recipe, so the change is
+	// applied by re-launching the recipe rather than by restarting the service.
+	if p, err := profile.Load(cfg.Dirs, name); err == nil && p.Generated() {
+		fmt.Printf("Saved as a local override of recipe '%s' -- run 'vllm-helper recipes launch %s' to apply it.\n", p.Recipe(), p.Recipe())
+		// Only downgrade the claim if something still differs from the recipe.
+		// Setting a knob back to the recipe's own value, or clearing it, leaves
+		// nothing overridden, and warning anyway teaches people to ignore the
+		// warning that matters.
+		if r, ok := recipeForProfile(p); ok {
+			if local, err := recipeOverrides(cfg, r); err == nil && len(local.args) > 0 {
+				fmt.Println("The launch will report itself as the recipe plus local overrides, so the verified")
+				fmt.Println("numbers no longer describe it.")
+			}
+		}
+		return
+	}
 	if name == cfg.ActiveProfile() {
 		fmt.Printf("'%s' is the active profile -- run 'vllm-helper restart' to apply the change.\n", name)
 	} else {

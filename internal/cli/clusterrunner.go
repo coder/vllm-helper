@@ -1,0 +1,221 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+
+	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/recipe"
+	"github.com/coder/vllm-helper/internal/service"
+)
+
+// clusterRunner drives a recipe that serves from containers on the nodes it
+// was verified on. It satisfies the same contract as the init-system service
+// so status, logs, stop and restart do not have to know which one is serving:
+// before this, they reported systemd even while a container did the work.
+type clusterRunner struct {
+	recipe recipe.TestedRecipe
+	opts   recipeLaunchOptions
+}
+
+// Both runners must stay interchangeable; the compiler is the only reliable
+// guard against one of them drifting out of the contract.
+var (
+	_ runner = (*clusterRunner)(nil)
+	_ runner = service.Service{}
+)
+
+// clusterRunnerFor builds the runner from what the launch recorded on the
+// profile. A profile that predates that recording cannot be driven safely, so
+// this says so instead of guessing a node list.
+func clusterRunnerFor(cfg *config.Config, p *profile.Profile) (*clusterRunner, error) {
+	r, ok := recipeForProfile(p)
+	if !ok {
+		return nil, fmt.Errorf("profile %q is not owned by a tested recipe", p.Name)
+	}
+	// A profile written before the topology was recorded still gets a runner:
+	// reading it back as the init system is how status and logs came to report
+	// a dead unit while a container served. Read-only verbs degrade to "we
+	// cannot see it"; the verbs that would act refuse in needNodes.
+	o := recipeLaunchOptions{
+		nodeNames:  p.Nodes(),
+		container:  p.Container(),
+		sshKey:     p.SSHKey(),
+		masterPort: p.MasterPort(),
+	}
+	if o.container == "" {
+		o.container = defaultRecipeContainer
+	}
+	if o.masterPort == 0 {
+		o.masterPort = defaultRecipeMasterPort
+	}
+	return &clusterRunner{recipe: r, opts: o}, nil
+}
+
+// needNodes guards the verbs that change something. Guessing a node list
+// would start or stop containers on machines nobody named.
+func (c *clusterRunner) needNodes() error {
+	if len(c.opts.nodeNames) == 0 {
+		return fmt.Errorf("the active profile does not record the nodes %s was launched on; relaunch it with 'vllm-helper recipes launch %s --nodes <n1,n2>'", c.recipe.ID, c.recipe.ID)
+	}
+	return nil
+}
+
+// head is the node serving the API: rank 0.
+func (c *clusterRunner) head() (recipeMember, error) {
+	members, err := resolveRecipeMembers(c.recipe, c.opts)
+	if err != nil {
+		return recipeMember{}, err
+	}
+	return members[0], nil
+}
+
+// inspect reads the head container. Absent is not an error: a stopped cluster
+// is a normal state that status has to be able to describe.
+func (c *clusterRunner) inspect() (status string, exitCode, restarts int) {
+	m, err := c.head()
+	if err != nil {
+		return "", 0, -1
+	}
+	script := "docker inspect " + recipe.ShellQuote(c.opts.container) +
+		" --format '{{.State.Status}} {{.State.ExitCode}} {{.RestartCount}}' 2>/dev/null || true"
+	out, err := nodeScript(m, c.opts.sshKey, script, nil)
+	if err != nil {
+		return "", 0, -1
+	}
+	fields := strings.Fields(out)
+	if len(fields) < 3 {
+		return "", 0, -1
+	}
+	code, _ := strconv.Atoi(fields[1])
+	n, err := strconv.Atoi(fields[2])
+	if err != nil {
+		n = -1
+	}
+	return fields[0], code, n
+}
+
+// IsActive speaks the init system's vocabulary so callers can treat both
+// runners alike. "activating" matters most: a model can take minutes to load,
+// and reporting that as inactive sends people looking for a fault.
+func (c *clusterRunner) IsActive() string {
+	status, code, _ := c.inspect()
+	return containerState(status, code)
+}
+
+// containerState translates docker's vocabulary into the init system's. A
+// clean exit is "inactive" rather than "failed" because that is what stopping
+// the cluster on purpose looks like, and an empty status means no container at
+// all, which is the same thing to a caller.
+func containerState(status string, exitCode int) string {
+	switch status {
+	case "running":
+		return "active"
+	case "created", "restarting":
+		return "activating"
+	case "":
+		return "inactive"
+	case "exited", "dead":
+		if exitCode != 0 {
+			return "failed"
+		}
+		return "inactive"
+	default:
+		return status
+	}
+}
+
+func (c *clusterRunner) NRestarts() int {
+	_, _, n := c.inspect()
+	return n
+}
+
+func (c *clusterRunner) Health() service.Health {
+	status, code, restarts := c.inspect()
+	h := service.Health{State: c.IsActive(), SubState: status, NRestarts: restarts}
+	if (status == "exited" || status == "dead") && code != 0 {
+		h.Result = "exit-code " + strconv.Itoa(code)
+		h.Crashed = true
+	}
+	if status == "restarting" {
+		h.Crashed = true
+	}
+	return h
+}
+
+// Restart relaunches every rank. It reuses the launch path with activation
+// skipped: the profile and Coder already describe this recipe, and re-syncing
+// Coder on every watchdog recovery would write to it for no change.
+func (c *clusterRunner) Restart() error {
+	if err := c.needNodes(); err != nil {
+		return err
+	}
+	o := c.opts
+	o.skipCoder = true
+	return runRecipeLaunch(context.Background(), c.recipe.ID, o)
+}
+
+func (c *clusterRunner) Stop() error {
+	if err := c.needNodes(); err != nil {
+		return err
+	}
+	return runRecipeStop(c.recipe.ID, c.opts)
+}
+
+// logScript tails the head container. The engine logs are what explain a slow
+// or failed load, and they live in the container, not in the host journal.
+func (c *clusterRunner) logScript(n int, follow bool) string {
+	s := "docker logs --tail " + strconv.Itoa(n)
+	if follow {
+		s += " -f"
+	}
+	return s + " " + recipe.ShellQuote(c.opts.container) + " 2>&1"
+}
+
+func (c *clusterRunner) LastLogs(n int) string {
+	m, err := c.head()
+	if err != nil {
+		return ""
+	}
+	out, _ := nodeScript(m, c.opts.sshKey, c.logScript(n, false), nil)
+	return out
+}
+
+func (c *clusterRunner) PrintLogs(n int) error {
+	fmt.Print(c.LastLogs(n))
+	return nil
+}
+
+// StartTail starts a follower and hands back the command so the caller can
+// kill it, matching the init-system runner. It goes through nodeCommand so a
+// head on another machine is tailed over ssh; killing the command closes that
+// hop, which ends the remote follow.
+func (c *clusterRunner) StartTail(n int) (*exec.Cmd, error) {
+	m, err := c.head()
+	if err != nil {
+		return nil, err
+	}
+	cmd, err := nodeCommand(m, c.opts.sshKey, c.logScript(n, true), nil)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return cmd, nil
+}
+
+// Label says "cluster" rather than the init system, because that is what is
+// actually holding the model up.
+func (c *clusterRunner) Label() string { return "cluster" }
+
+func (c *clusterRunner) LogHint() string {
+	return "docker logs " + c.opts.container + " on the head node"
+}

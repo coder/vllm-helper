@@ -9,6 +9,7 @@ import (
 	// from the plugin package, keeps the dependency pointing one way:
 	// plugins may use the core, the core never imports a plugin.
 	_ "github.com/coder/vllm-helper/internal/plugin/coder"
+	_ "github.com/coder/vllm-helper/internal/plugin/spark"
 )
 
 // localBaseURL is where this machine serves the OpenAI-compatible API.

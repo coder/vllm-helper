@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/plugin"
+	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/service"
 )
 
@@ -60,6 +62,7 @@ func newRootCmd() *cobra.Command {
 		newListCmd(),
 		newSwitchCmd(),
 		newNewCmd(),
+		newRecipesCmd(),
 		newSearchCmd(),
 		newInspectCmd(),
 		newInstallGGUFCmd(),
@@ -80,6 +83,11 @@ func newRootCmd() *cobra.Command {
 
 		newStartCmd(),
 		newVersionCmd(),
+
+		// Multi-node scaffolding
+		newNodeCmd(),
+		newPoolCmd(),
+		newShardCmd(),
 	)
 	// Integrations contribute their own commands, so the set of them is a
 	// property of what's registered rather than a list maintained here.
@@ -138,7 +146,56 @@ func loadConfig() (*config.Config, error) {
 	return config.Load()
 }
 
-func svc(cfg *config.Config) service.Service {
+// runner is how the CLI drives whatever is actually serving the active model:
+// the init-system service, or a recipe's container cluster. Label names which
+// one, so a report about a two-node cluster does not say "systemd".
+//
+// Installed/Install are excluded as setup-only, and Start because
+// "vllm-helper start" is the exec entrypoint the service manager runs.
+type runner interface {
+	IsActive() string
+	NRestarts() int
+	Health() service.Health
+	Restart() error
+	Stop() error
+	StartTail(n int) (*exec.Cmd, error)
+	PrintLogs(n int) error
+	LastLogs(n int) string
+	LogHint() string
+	Label() string
+}
+
+// svc is the runner for the active model: the cluster when the active profile
+// is owned by a recipe, otherwise the init system. Picking on the profile is
+// the whole point -- status and logs used to report systemd regardless.
+func svc(cfg *config.Config) runner {
+	if c := activeClusterRunner(cfg); c != nil {
+		return c
+	}
+	return systemdService(cfg)
+}
+
+// activeClusterRunner returns nil when the active model is not a recipe, which
+// is the signal to fall back rather than an error worth surfacing here.
+func activeClusterRunner(cfg *config.Config) *clusterRunner {
+	name := cfg.ActiveProfile()
+	if name == "" {
+		return nil
+	}
+	p, err := profile.Load(cfg.Dirs, name)
+	if err != nil || !p.Generated() {
+		return nil
+	}
+	c, err := clusterRunnerFor(cfg, p)
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
+// systemdService is the init-system runner. Setup needs the concrete type
+// because installing a unit is not part of the runner contract.
+func systemdService(cfg *config.Config) service.Service {
 	return service.Service{
 		Name:  cfg.ServiceName(),
 		Scope: cfg.ServiceScope(),

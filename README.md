@@ -60,6 +60,7 @@ vllm-helper stop                # stop the server
 vllm-helper logs                # follow the server journal
 vllm-helper doctor              # hardware, running servers, integrations, drift
 vllm-helper serve               # web panel for this machine
+vllm-helper recipes list        # tested launch configurations, and what verified them
 ```
 
 ### Web panel
@@ -81,7 +82,7 @@ Switching and stopping need permission to control the service. On Linux the unit
 youruser ALL=(root) NOPASSWD: /usr/bin/systemctl restart vllm.service, /usr/bin/systemctl stop vllm.service, /usr/bin/systemctl start vllm.service
 ```
 
-Without it the panel still reports everything, and says why the buttons are disabled rather than failing when you press them.
+Without it the panel still reports everything, and says why the buttons are disabled rather than failing when you press them. On a machine serving a recipe, name `vllm-cluster.service` in those three rules instead — `recipes install-service` stands the native unit down, because it cannot serve a container.
 
 Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the key from `~/.config/vllm-helper/secrets.env`. Switching reloads the model, which takes a few minutes when the weights are cached and longer on first download. `switch` waits until the endpoint responds; if the service fails or crash-loops, it exits with the last log lines.
 
@@ -125,6 +126,57 @@ vllm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q8_0
 
 Two things vLLM constrains here, and they are reported rather than worked around. GGUF support **left vLLM core in 0.27.1** for an out-of-tree package — `vllm-helper install-gguf` adds it, after telling you what you are getting. And split-file or per-quant-subfolder GGUFs cannot be loaded on any released version of that plugin, so those are listed but not offered.
 
+## Recipes
+
+A recipe is a launch configuration that has actually been run and measured: a model, an image pinned by digest, the exact argv, and the numbers it produced on named hardware. Where a profile records what you want, a recipe records what worked.
+
+```bash
+vllm-helper recipes list                      # what is tested, and on what
+vllm-helper recipes show <id>                 # argv, provenance, measured numbers
+vllm-helper recipes launch <id> --nodes a,b   # run it, and point Coder at it
+vllm-helper recipes stop <id>
+```
+
+A recipe may span several machines, so launching one starts containers over SSH on the nodes you name and writes a profile of the same name. From then on `status`, `logs`, `restart` and `stop` work as they always did — they follow whatever is serving rather than assuming the local service.
+
+Editing that profile is allowed and reaches the command line, but the entry then reports itself as "recipe plus local overrides" and stops claiming the verified numbers, because they no longer describe what is running.
+
+`recipes install-service` installs a unit that keeps the active recipe serving, with a timer that relaunches it if the endpoint stops answering. It stands the native `vllm.service` down, which cannot serve a container.
+
+Each entry records where its settings came from and every place we deliberately differ from upstream, with the reason. `tools/recipediff` compares the entries against the upstream recipes they were derived from and reports anything that differs without being declared. See [docs/recipes.md](docs/recipes.md) for the schema, the provenance rules and what adding an entry requires.
+
+## More than one machine
+
+Three commands cover the ways a model can span machines. They share one registry: `node` records a machine once, and `pool`, `shard` and `recipes launch` all refer to it by name.
+
+```bash
+vllm-helper node add spark2 --host http://spark2:8001 --ssh coder@spark2
+vllm-helper node ls
+vllm-helper node rm spark2
+```
+
+`--host` is where the node answers OpenAI requests; `--ssh` is how this machine orchestrates it. The registry lives in `nodes.json` beside your config.
+
+**A pool is replicas.** Every node serves the same model, and a router in front of them spreads requests across the healthy ones:
+
+```bash
+vllm-helper pool serve --nodes spark1,spark2 --bind :8011 --sticky auto
+vllm-helper pool install-service --nodes spark1,spark2   # the same thing, as a unit
+vllm-helper pool status                                  # per-backend health
+```
+
+Stickiness keeps a conversation on the node that already has its prefix cached, which matters because a repeated long prompt is nearly free on a warm node and expensive on a cold one. `auto` keys on an `X-Session-ID` header when the client sends one and falls back to the `Authorization` header, so a plain OpenAI client is still sticky per API key.
+
+**A shard is one model split across machines**, for a model too large for any single node:
+
+```bash
+vllm-helper shard start --profile big --nodes spark1,spark2 --tp 2
+vllm-helper shard status --nodes spark1,spark2
+vllm-helper shard stop --nodes spark1,spark2
+```
+
+`shard start` runs in the foreground against a native vLLM install and does not write any state, so it is the command for trying a split before there is a recipe for it. `--tp` splits each layer across nodes and `--pp` splits by layer; which one wins is a property of the workload, not a default worth trusting. A sharded configuration that works is worth turning into a recipe, and `recipes launch` is what runs it afterwards with state, supervision and Coder sync attached.
+
 ## macOS
 
 vLLM has no GPU backend on Apple Silicon, so a Mac runs models on the CPU through vLLM's experimental CPU backend. Expect it to be useful for small models and development, not for serving anything large.
@@ -151,11 +203,17 @@ A 0.6B model in BF16 serves at roughly 30 tokens/sec on an M4 Pro, which is enou
 
 If this machine backs an `openai-compat` AI provider in a Coder deployment, vllm-helper can keep Coder's model picker truthful: every profile gets a model-config entry, and only the loaded model is enabled. Set `CODER_URL` and `CODER_AI_PROVIDER_ID` in `config.env` and `CODER_API_TOKEN` in `secrets.env`. Sync failures never block a local switch.
 
-`vllm-helper coder-sync register-all` adds a disabled entry for any profile that doesn't have one yet; existing entries are left as-is. `vllm-helper coder-sync prune` reports entries this provider offers that no local profile can serve, and deletes them with `--yes`. `vllm-helper doctor` verifies the configured URL and token against the API. On a deployment with more than one organization, name yours with `CODER_ORGANIZATION`.
+`vllm-helper coder-sync register-all` adds a disabled entry for any profile that doesn't have one yet; existing entries are left as-is. `vllm-helper doctor` verifies the configured URL and token against the API, and warns when that token is within two days of expiring — Coder caps token lifetime, and an expired one simply stops the picker being updated.
+
+Entries are matched by model, so a profile that is renamed, or a second machine serving the same model, adopts the existing entry instead of adding a second row for it. `vllm-helper coder-sync prune` reports entries this provider offers that no local profile can serve and deletes them with `--yes`; it also names any model that already has more than one entry, but never picks which of those to keep. Entries belonging to other providers are never touched.
+
+On a deployment with more than one organization, name yours with `CODER_ORGANIZATION`.
+
+Coder caps a reply at its own server-side default (32,000 tokens). Set `CODER_MAX_OUTPUT_TOKENS` in `config.env` to raise it for the models this machine serves; leave it unset and vllm-helper sends nothing, so whatever is configured in Coder stays.
 
 ## Troubleshooting
 
-Run `vllm-helper doctor` first. It checks the build toolchain vLLM needs, inventories running servers, and warns when config has drifted from reality. For crash loops, read the actual traceback: `journalctl -u vllm.service -n 100` on Linux, or `tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log` on macOS. `vllm-helper status` prints the right command for your platform when the endpoint isn't responding, and says whether the service is still loading or failing to start — a large model can take many minutes to load, so the two look identical from the outside.
+Run `vllm-helper doctor` first. It checks the build toolchain vLLM needs, inventories running servers, and warns when config has drifted from reality. For crash loops, read the actual traceback: `journalctl -u vllm.service -n 100` on Linux, or `tail -n 100 ~/Library/Logs/vllm-helper/com.coder.vllm.log` on macOS. A machine serving a recipe runs `vllm-cluster.service` instead, and its traceback is in the container — `vllm-helper logs` reads the right one either way. `vllm-helper status` prints the right command for your platform when the endpoint isn't responding, and says whether the service is still loading or failing to start — a large model can take many minutes to load, so the two look identical from the outside.
 
 A first `switch` or `new` downloads the weights, which can keep the boot log on screen for a long time. Ctrl+C there only stops watching; the server keeps loading in the background, and `vllm-helper status` will tell you when it's up. Use `--no-follow` to skip the wait entirely.
 

@@ -366,3 +366,5 @@ func (s Service) renderPlist(self string) ([]byte, error) {
 `, label, prog, log, log)
 	return []byte(body), nil
 }
+
+func (s Service) Label() string { return "launchd" }

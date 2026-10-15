@@ -26,14 +26,17 @@ func runStop() error {
 	if err != nil {
 		return err
 	}
+	// Name the runner, not a unit: a container recipe has no systemd unit, and
+	// saying "stopped vllm.service" about a two-node cluster is a lie.
+	label := svc(cfg).Label()
 	if state := svc(cfg).IsActive(); state != "active" && state != "activating" {
-		fmt.Printf("%s is not running (state: %s) -- nothing to stop.\n", cfg.ServiceName(), state)
+		fmt.Printf("the %s is not running (state: %s) -- nothing to stop.\n", label, state)
 		return nil
 	}
 	if err := svc(cfg).Stop(); err != nil {
-		return fmt.Errorf("stopping %s: %w", cfg.ServiceName(), err)
+		return fmt.Errorf("stopping the %s: %w", label, err)
 	}
-	fmt.Printf("Stopped %s. Start it again with 'vllm-helper restart' or by\n", cfg.ServiceName())
+	fmt.Printf("Stopped the %s. Start it again with 'vllm-helper restart' or by\n", label)
 	fmt.Println("switching to a profile.")
 	if cfg.CoderConfigured() {
 		fmt.Println("Note: the active model stays enabled in Coder's picker until the next switch.")
@@ -54,9 +57,11 @@ func newRestartCmd() *cobra.Command {
 	return c
 }
 
-// runRestart re-applies the active profile (picking up any edits to it or
-// to config.env) and restarts the service. Unlike switch, it never changes
-// which profile is active and never touches Coder.
+// runRestart re-applies the active profile (picking up any edits to it or to
+// config.env) and restarts it through whichever runner owns it. Unlike switch
+// it never changes which profile is active and never touches Coder, which is
+// what makes it the right verb for a supervisor: a recovery should bring the
+// same model back, not re-publish it.
 func runRestart(o watchOpts) error {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -75,7 +80,7 @@ func runRestart(o watchOpts) error {
 		return err
 	}
 
-	fmt.Printf("Restarting %s with profile '%s'...\n", cfg.ServiceName(), name)
+	fmt.Printf("Reloading profile '%s' (%s)...\n", name, svc(cfg).Label())
 	if err := svc(cfg).Restart(); err != nil {
 		return fmt.Errorf("restarting service: %w", err)
 	}
