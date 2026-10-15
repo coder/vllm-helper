@@ -39,6 +39,34 @@
             "setting": "speculative_config",
             "upstream": "dspark, num_speculative_tokens 5",
             "why": "Measured 1.4-2.8x single stream, but KV cache falls 681,894 to 420,192 tokens, concurrency 2.60x to 1.60x and load 150s to 195s, and the gains shrink under load. Kept as a documented per-deployment override for single-user boxes rather than a shared-server default."
+          },
+          {
+            "kind": "flag",
+            "setting": "max_cudagraph_capture_size",
+            "upstream": "48",
+            "ours": "64",
+            "why": "64 is what vLLM picks for itself here: with the flag absent it uses max_num_seqs * (1 + num_speculative_tokens) * 2, which is 32 * 1 * 2 at our settings (config/vllm.py). Upstream's 48 is a reduction from their own default of 96, which is 8 * 6 * 2 at max_num_seqs 8 with 5 draft tokens. Kept explicit so the value the measurements were taken at is recorded rather than inferred."
+          },
+          {
+            "kind": "flag",
+            "setting": "reasoning_config",
+            "upstream": "{reasoning_parser: deepseek_v4, empty start and end strings}",
+            "ours": "",
+            "why": "vLLM builds this itself. With --reasoning-parser set and no --reasoning-config, _set_default_reasoning_config_args creates ReasoningConfig(reasoning_parser=...), and its reasoning_start_str and reasoning_end_str already default to the empty strings upstream spells out, so passing it changes nothing."
+          },
+          {
+            "kind": "flag",
+            "setting": "default_chat_template_kwargs.thinking",
+            "upstream": "true",
+            "ours": "",
+            "why": "The deepseek_v4 renderer enables thinking when neither thinking nor enable_thinking is passed (tokenizers/deepseek_v4.py), so the flag restates the default. Leaving it off also lets a client turn thinking off per request instead of having it forced server-side."
+          },
+          {
+            "kind": "flag",
+            "setting": "default_chat_template_kwargs.reasoning_effort",
+            "upstream": "high",
+            "ours": "",
+            "why": "The same renderer sets reasoning_effort to high whenever thinking is enabled and no string is supplied, so upstream's value is already what we serve."
           }
         ]
       },
@@ -164,6 +192,34 @@
             "upstream": "auto",
             "ours": "262144",
             "why": "auto resolves to 1048576 on this checkpoint, which does not fit on two GB10s."
+          },
+          {
+            "kind": "flag",
+            "setting": "max_cudagraph_capture_size",
+            "upstream": "48",
+            "ours": "64",
+            "why": "64 is what vLLM picks for itself here: with the flag absent it uses max_num_seqs * (1 + num_speculative_tokens) * 2, which is 32 * 1 * 2 at our settings (config/vllm.py). Upstream's 48 is a reduction from their own default of 96, which is 8 * 6 * 2 at max_num_seqs 8 with 5 draft tokens. Kept explicit so the value the measurements were taken at is recorded rather than inferred."
+          },
+          {
+            "kind": "flag",
+            "setting": "reasoning_config",
+            "upstream": "{reasoning_parser: deepseek_v4, empty start and end strings}",
+            "ours": "",
+            "why": "vLLM builds this itself. With --reasoning-parser set and no --reasoning-config, _set_default_reasoning_config_args creates ReasoningConfig(reasoning_parser=...), and its reasoning_start_str and reasoning_end_str already default to the empty strings upstream spells out, so passing it changes nothing."
+          },
+          {
+            "kind": "flag",
+            "setting": "default_chat_template_kwargs.thinking",
+            "upstream": "true",
+            "ours": "",
+            "why": "The deepseek_v4 renderer enables thinking when neither thinking nor enable_thinking is passed (tokenizers/deepseek_v4.py), so the flag restates the default. Leaving it off also lets a client turn thinking off per request instead of having it forced server-side."
+          },
+          {
+            "kind": "flag",
+            "setting": "default_chat_template_kwargs.reasoning_effort",
+            "upstream": "high",
+            "ours": "",
+            "why": "The same renderer sets reasoning_effort to high whenever thinking is enabled and no string is supplied, so upstream's value is already what we serve."
           }
         ]
       },

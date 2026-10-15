@@ -127,12 +127,20 @@ dropped setting leaves no trace to check, so the test also holds the name to the
 kind implies: a mod path has a slash, an env key is upper case, a flag is neither. Prose
 in `notes` cannot do any of this.
 
-Running the tool against both entries found eight differences that were never decisions,
-only transcription. Four per entry remain open and are deliberately left undeclared so the
-report keeps raising them: `--max-cudagraph-capture-size` 48 to 64,
-`--reasoning-config` dropped, both `--default-chat-template-kwargs` dropped,
-`VLLM_USE_MEGA_AOT_ARTIFACT` 1 to -1, and `VLLM_MOE_SKIP_PADDING` dropped. Each needs a
-measurement or a reason, not a sentence invented after the fact.
+Running the tool against both entries found differences that were never decisions, only
+transcription. Four of them turned out to be no decision at all once the pinned image was
+read: `--max-cudagraph-capture-size 64` is exactly what vLLM computes when the flag is
+absent at our `max_num_seqs`, `--reasoning-config` is built from `--reasoning-parser`
+with the same empty delimiters upstream passes, and both
+`--default-chat-template-kwargs` restate what the `deepseek_v4` renderer already does.
+Those are declared with the code that proves it.
+
+Two per entry remain open and are deliberately left undeclared so the report keeps raising
+them, because both change behaviour rather than restating it:
+`VLLM_USE_MEGA_AOT_ARTIFACT` 1 to -1 (anything but `"1"` disables the mega AOT artifact)
+and `VLLM_MOE_SKIP_PADDING` dropped (the image defaults it to on, upstream turns it off
+for this model). Each needs a measurement or a reason, not a sentence invented after the
+fact.
 
 ## Local overrides
 
