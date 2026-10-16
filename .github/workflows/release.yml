@@ -53,7 +53,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          published="$(gh release view "$GITHUB_REF_NAME" --json body --jq '.body')"
+          # Separate a failed read from an empty body, so an auth or API error
+          # is not reported as the changelog problem below.
+          if ! published="$(gh release view "$GITHUB_REF_NAME" --json body --jq '.body')"; then
+            echo "::error::Could not read back release ${GITHUB_REF_NAME} to verify its body; see the gh error above."
+            exit 1
+          fi
           if [ "$(printf '%s' "$published" | tr -d '[:space:]' | wc -c)" -lt 200 ]; then
             echo "::error::${GITHUB_REF_NAME} was published with an empty or truncated body, though CHANGELOG.md has a section for it. Check that changelog.disable is not set in .goreleaser.yaml."
             exit 1
