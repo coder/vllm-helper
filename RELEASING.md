@@ -12,6 +12,12 @@ section that fits: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or
 them, and what breaks if they skip it. Mention the symptom, not the function
 name, for anything they might already be hitting.
 
+Keep it short — a couple of lines, and a third only when there is something the
+reader has to act on. One concrete number often does the work of a paragraph of
+explanation. The reasoning behind a change belongs in the commit message and the
+PR, where it is still there for whoever needs it; the changelog is read by
+someone deciding whether to upgrade.
+
 Purely internal work (refactors, tests, CI) doesn't need an entry.
 
 ## Cutting a release
