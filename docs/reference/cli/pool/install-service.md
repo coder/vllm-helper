@@ -64,4 +64,4 @@ Stickiness (auto|authorization|header:Name)
 | ---- | -------- |
 | Type | `string` |
 
-user the router runs as
+user the router runs as (default: $USER)

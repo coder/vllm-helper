@@ -59,7 +59,7 @@ seconds to allow for the model to load
 | ---- | -------- |
 | Type | `string` |
 
-user the launcher runs as
+user the launcher runs as (default: $USER)
 
 ### --watchdog
 
