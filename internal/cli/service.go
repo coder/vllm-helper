@@ -29,7 +29,10 @@ func runStop() error {
 	// Name the runner, not a unit: a container recipe has no systemd unit, and
 	// saying "stopped vllm.service" about a two-node cluster is a lie.
 	label := svc(cfg).Label()
-	if state := svc(cfg).IsActive(); state != "active" && state != "activating" {
+	// A cluster is stopped whatever its head reports: headless workers can
+	// outlive a crashed head and keep holding GPU memory.
+	_, cluster := svc(cfg).(*clusterRunner)
+	if state := svc(cfg).IsActive(); !cluster && state != "active" && state != "activating" {
 		fmt.Printf("the %s is not running (state: %s) -- nothing to stop.\n", label, state)
 		return nil
 	}

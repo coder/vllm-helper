@@ -2,8 +2,9 @@ package detect
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -46,14 +47,30 @@ func DefaultPorts(extra ...string) []string {
 }
 
 func probeOne(port, apiKey string) (Endpoint, bool) {
-	ep := Endpoint{Port: port}
+	ep, ok := ProbeURL("http://localhost:"+port, apiKey)
+	ep.Port = port
+	return ep, ok
+}
 
-	if resp, err := probeClient.Get(fmt.Sprintf("http://localhost:%s/health", port)); err == nil {
+// ProbeURL checks one server by base URL (scheme://host:port), for a server
+// that is not on this machine: a cluster's head can live on another node, and
+// asking localhost about it reports a healthy remote endpoint as down.
+func ProbeURL(base, apiKey string) (Endpoint, bool) {
+	var ep Endpoint
+	if u, err := url.Parse(base); err == nil {
+		ep.Port = u.Port()
+	}
+	base = strings.TrimSuffix(base, "/")
+
+	if resp, err := probeClient.Get(base + "/health"); err == nil {
 		resp.Body.Close()
 		ep.Healthy = resp.StatusCode == http.StatusOK
 	}
 
-	req, _ := http.NewRequest("GET", fmt.Sprintf("http://localhost:%s/v1/models", port), nil)
+	req, err := http.NewRequest("GET", base+"/v1/models", nil)
+	if err != nil {
+		return ep, ep.Healthy
+	}
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}

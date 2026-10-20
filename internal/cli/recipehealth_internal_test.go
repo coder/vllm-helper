@@ -16,31 +16,58 @@ func TestHealthDecision(t *testing.T) {
 		name      string
 		state     string
 		launching bool
+		stopped   bool
 		healthy   bool
 		misses    int
 		want      healthAction
 		wantCount int
 	}{
-		{"loading is not a failure", "activating", false, false, 1, healthSkip, 1},
-		{"healthy clears the count", "active", false, true, 1, healthClear, 0},
-		{"first miss only counts", "active", false, false, 0, healthCount, 1},
-		{"second miss relaunches", "active", false, false, 1, healthRestart, 0},
-		{"a dead unit still relaunches", "failed", false, false, 1, healthRestart, 0},
-		{"healthy while inactive is still healthy", "inactive", false, true, 1, healthClear, 0},
+		{"loading is not a failure", "activating", false, false, false, 1, healthSkip, 1},
+		{"healthy clears the count", "active", false, false, true, 1, healthClear, 0},
+		{"first miss only counts", "active", false, false, false, 0, healthCount, 1},
+		{"second miss relaunches", "active", false, false, false, 1, healthRestart, 0},
+		{"a dead unit still relaunches", "failed", false, false, false, 1, healthRestart, 0},
+		{"healthy while inactive is still healthy", "inactive", false, false, true, 1, healthClear, 0},
 		// The case that cost a launch: a deliberate launch looks exactly like
 		// an outage from the outside, and the unit is not "activating"
 		// because the launch was started by hand rather than by systemd.
-		{"a launch in progress is left alone", "active", true, false, 1, healthSkip, 1},
-		{"even a failed-looking unit is left alone mid-launch", "failed", true, false, 1, healthSkip, 1},
+		{"a launch in progress is left alone", "active", true, false, false, 1, healthSkip, 1},
+		{"even a failed-looking unit is left alone mid-launch", "failed", true, false, false, 1, healthSkip, 1},
+		// A healthy probe must be heard while the marker exists: it is the
+		// only thing that clears the marker, so skipping it left every
+		// launch unwatched for the whole stand-off.
+		{"a healthy probe mid-launch still clears", "active", true, false, true, 1, healthClear, 0},
+		// Deliberate stops: 'vllm-helper stop' leaves the oneshot unit
+		// active, and 'systemctl stop' leaves it inactive. Neither is an
+		// outage, and relaunching either undoes what the operator just did.
+		{"a stopped cluster stays stopped", "active", false, true, false, 1, healthSkip, 1},
+		{"a stopped unit stays stopped", "inactive", false, false, false, 1, healthSkip, 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, n := healthDecision(c.state, c.launching, c.healthy, c.misses, 2)
+			got, n := healthDecision(c.state, c.launching, c.stopped, c.healthy, c.misses, 2)
 			if got != c.want || n != c.wantCount {
-				t.Errorf("healthDecision(%q, launching=%v, %v, %d) = %v/%d, want %v/%d",
-					c.state, c.launching, c.healthy, c.misses, got, n, c.want, c.wantCount)
+				t.Errorf("healthDecision(%q, launching=%v, stopped=%v, %v, %d) = %v/%d, want %v/%d",
+					c.state, c.launching, c.stopped, c.healthy, c.misses, got, n, c.want, c.wantCount)
 			}
 		})
+	}
+}
+
+// The stop marker has no expiry, unlike the launch marker: a cluster someone
+// stopped stays stopped until someone launches it.
+func TestStoppedMarkerLastsUntilALaunch(t *testing.T) {
+	cfg := &config.Config{Dirs: config.Dirs{State: t.TempDir()}}
+	if stoppedOnPurpose(cfg) {
+		t.Error("no marker, but a deliberate stop was reported")
+	}
+	markStopped(cfg)
+	if !stoppedOnPurpose(cfg) {
+		t.Error("marker written, but no stop was reported")
+	}
+	clearStopped(cfg)
+	if stoppedOnPurpose(cfg) {
+		t.Error("marker cleared, but a stop was still reported")
 	}
 }
 

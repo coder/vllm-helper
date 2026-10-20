@@ -172,6 +172,21 @@ func TestProbePortsMalformedModelList(t *testing.T) {
 	}
 }
 
+// A cluster's head can be another machine, so the watchdog probes it by URL.
+// The answer has to match what probing the same server by port says.
+func TestProbeURLReachesANamedHost(t *testing.T) {
+	t.Parallel()
+
+	port := serveOn(t, "sk-right", http.StatusOK)
+	ep, ok := detect.ProbeURL("http://127.0.0.1:"+port+"/", "sk-right")
+	if !ok || !ep.Healthy || ep.Port != port || len(ep.Models) != 2 {
+		t.Errorf("ProbeURL = %#v, %v; want a healthy endpoint on %s with its models", ep, ok, port)
+	}
+	if ep, ok := detect.ProbeURL("http://127.0.0.1:"+closedPort(t), ""); ok || ep.Healthy {
+		t.Errorf("ProbeURL = %#v, %v; want nothing for a closed port", ep, ok)
+	}
+}
+
 func TestProbePortsScansEveryPort(t *testing.T) {
 	t.Parallel()
 

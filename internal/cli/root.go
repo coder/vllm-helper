@@ -175,6 +175,60 @@ func svc(cfg *config.Config) runner {
 	return systemdService(cfg)
 }
 
+// runnerIdentity names what a runner holds the GPUs and port with, so a switch
+// can tell when it is about to leave one runner for another.
+func runnerIdentity(r runner) string {
+	if c, ok := r.(*clusterRunner); ok {
+		return c.identity()
+	}
+	if s, ok := r.(service.Service); ok {
+		return "native:" + s.Name
+	}
+	return r.Label()
+}
+
+// stopOutgoing stops the runner a switch is leaving when the one taking over
+// is a different runner. The incoming runner only replaces its own
+// containers or unit, so without this a recipe kept the GPUs and the API port
+// after a switch to a native profile, and the reverse left vLLM running.
+//
+// A cluster is always told to stop, even with its head down, because
+// headless workers can outlive the head and still hold GPU memory. A native
+// unit that is not running is left alone, which also keeps platforms without
+// a service manager working.
+func stopOutgoing(outgoing, incoming runner) error {
+	if runnerIdentity(outgoing) == runnerIdentity(incoming) {
+		return nil
+	}
+	c, cluster := outgoing.(*clusterRunner)
+	if cluster && c.needNodes() != nil {
+		// A profile from before the topology was recorded: there is no node
+		// list to act on, and refusing would trap the user on it.
+		fmt.Fprintf(os.Stderr, "warning: the previous profile does not record its nodes, so any %s containers are still running; stop them with 'vllm-helper recipes stop %s --nodes <n1,n2>'\n", c.recipe.ID, c.recipe.ID)
+		return nil
+	}
+	state := ""
+	if !cluster {
+		state = outgoing.IsActive()
+	}
+	if !outgoingNeedsStop(runnerIdentity(outgoing), runnerIdentity(incoming), cluster, state) {
+		return nil
+	}
+	fmt.Printf("Stopping the %s the previous profile ran on...\n", outgoing.Label())
+	if err := outgoing.Stop(); err != nil {
+		return fmt.Errorf("stopping the outgoing %s, which would keep the GPUs and port: %w", outgoing.Label(), err)
+	}
+	return nil
+}
+
+// outgoingNeedsStop is stopOutgoing's decision, kept pure for testing.
+func outgoingNeedsStop(outgoingID, incomingID string, outgoingIsCluster bool, outgoingState string) bool {
+	if outgoingID == incomingID {
+		return false
+	}
+	return outgoingIsCluster || outgoingState == "active" || outgoingState == "activating"
+}
+
 // activeClusterRunner returns nil when the active model is not a recipe, which
 // is the signal to fall back rather than an error worth surfacing here.
 func activeClusterRunner(cfg *config.Config) *clusterRunner {

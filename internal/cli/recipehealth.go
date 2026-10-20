@@ -128,6 +128,44 @@ func launchInProgress(cfg *config.Config) bool {
 	return true
 }
 
+// stoppedMarkerName records that the cluster was stopped on purpose. The unit
+// is oneshot with RemainAfterExit, so after 'vllm-helper stop' systemd still
+// calls it active, and nothing else distinguishes "someone stopped it" from
+// "it died". Without this the watchdog relaunched every deliberate stop.
+const stoppedMarkerName = "stopped-on-purpose"
+
+// markStopped is written by every deliberate stop, including the unit's own
+// ExecStop, and lifted by the next launch. It has no expiry: a stopped
+// cluster stays stopped until someone starts it.
+func markStopped(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	if err := os.MkdirAll(cfg.Dirs.State, 0o755); err != nil {
+		return
+	}
+	path := filepath.Join(cfg.Dirs.State, stoppedMarkerName)
+	stamp := time.Now().UTC().Format(time.RFC3339)
+	if err := os.WriteFile(path, []byte(stamp), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "could not tell the watchdog this stop is deliberate:", err)
+	}
+}
+
+func clearStopped(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	_ = os.Remove(filepath.Join(cfg.Dirs.State, stoppedMarkerName))
+}
+
+func stoppedOnPurpose(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(cfg.Dirs.State, stoppedMarkerName))
+	return err == nil
+}
+
 type healthAction string
 
 const (
@@ -140,14 +178,23 @@ const (
 // healthDecision is the whole watchdog policy, kept pure so the interesting
 // cases can be tested without a systemd host or a model.
 //
-// "activating" is left alone because a load takes minutes and the endpoint is
-// legitimately silent for all of it; restarting then would loop forever.
-func healthDecision(unitState string, launching, healthy bool, misses, threshold int) (healthAction, int) {
-	if unitState == "activating" || launching {
-		return healthSkip, misses
-	}
+// A healthy endpoint is judged first, before anything that would skip the
+// check: it is what clears a launch marker, so skipping it while the marker
+// existed left every launch unwatched for the whole stand-off.
+//
+// After that the watchdog stays out of the way of anything deliberate. A
+// stopped or inactive unit is somebody's decision, not an outage -- "failed"
+// is the state that means the unit gave up. "activating" is left alone because
+// a load takes minutes and the endpoint is legitimately silent for all of it;
+// restarting then would loop forever.
+func healthDecision(unitState string, launching, stopped, healthy bool, misses, threshold int) (healthAction, int) {
 	if healthy {
 		return healthClear, 0
+	}
+	switch {
+	case stopped, launching,
+		unitState == "activating", unitState == "inactive", unitState == "deactivating":
+		return healthSkip, misses
 	}
 	misses++
 	if misses >= threshold {
@@ -159,10 +206,10 @@ func healthDecision(unitState string, launching, healthy bool, misses, threshold
 func runHealthCheck(unit string, threshold int, statePath string, interval time.Duration) error {
 	cfg, _ := loadConfig()
 	state := strings.TrimSpace(systemctlOutput("is-active", unit))
-	healthy := endpointHealthy()
+	healthy := endpointHealthy(cfg)
 	misses := readMisses(statePath)
 
-	action, next := healthDecision(state, launchInProgress(cfg), healthy, misses, threshold)
+	action, next := healthDecision(state, launchInProgress(cfg), stoppedOnPurpose(cfg), healthy, misses, threshold)
 	switch action {
 	case healthSkip:
 		return nil
@@ -183,12 +230,20 @@ func runHealthCheck(unit string, threshold int, statePath string, interval time.
 	}
 }
 
-// endpointHealthy asks the port config names, which is the same check status
-// reports, so the watchdog and the operator agree on what healthy means.
-func endpointHealthy() bool {
-	cfg, err := loadConfig()
-	if err != nil {
+// endpointHealthy asks the endpoint status reports on, so the watchdog and
+// the operator agree on what healthy means. For a recipe that is the head
+// node on the recipe's port, which need not be this machine.
+func endpointHealthy(cfg *config.Config) bool {
+	if cfg == nil {
 		return false
+	}
+	if c := activeClusterRunner(cfg); c != nil {
+		base, err := c.endpointURL()
+		if err != nil {
+			return false
+		}
+		ep, _ := detect.ProbeURL(base, cfg.APIKey())
+		return ep.Healthy
 	}
 	for _, ep := range detect.ProbePorts([]string{cfg.Port()}, cfg.APIKey()) {
 		if ep.Healthy {

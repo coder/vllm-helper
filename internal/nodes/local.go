@@ -15,6 +15,10 @@ func (n Node) IsLocal() bool {
 	return hostIsLocal(n.hostName(), localHostName(), localAddrs())
 }
 
+// Address is the host this node is reached at, for callers that dial it
+// directly (a health probe) rather than through ssh.
+func (n Node) Address() string { return n.hostName() }
+
 // hostName is where the node answers, preferring the SSH target because that
 // is what an orchestration hop would dial.
 func (n Node) hostName() string {

@@ -319,13 +319,16 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 		if err != nil {
 			return err
 		}
-		if err := c.needNodes(); err != nil {
+		if err := c.preflight(cfg); err != nil {
 			return err
 		}
 	}
+	// Captured before WriteActiveEnv changes which runner svc resolves to.
+	outgoing := svc(cfg)
 	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err
 	}
+	incoming := svc(cfg)
 	// Warn, never refuse: profiles get hand-edited and vLLM gets upgraded
 	// underneath one that used to work, but the user asked for this model
 	// and it is not this command's place to overrule that.
@@ -345,10 +348,13 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	// plugin taking its time doesn't leave "Restarting..." on screen with
 	// nothing happening yet.
 	restart := func() error {
+		if err := stopOutgoing(outgoing, incoming); err != nil {
+			return err
+		}
 		fmt.Println()
 		fmt.Println("Reloading the model (this can take several minutes, longer if it")
 		fmt.Println("isn't cached on disk yet)...")
-		return svc(cfg).Restart()
+		return incoming.Restart()
 	}
 	if err := control.NotifyAndRestart(context.Background(), cfg, p, os.Stderr, restart); err != nil {
 		return err

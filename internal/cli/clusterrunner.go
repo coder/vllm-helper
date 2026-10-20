@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -64,6 +65,48 @@ func (c *clusterRunner) needNodes() error {
 		return fmt.Errorf("the active profile does not record the nodes %s was launched on; relaunch it with 'vllm-helper recipes launch %s --nodes <n1,n2>'", c.recipe.ID, c.recipe.ID)
 	}
 	return nil
+}
+
+// preflight is everything a launch would refuse that can be checked without
+// touching a node: a recorded topology, nodes that are still in the registry
+// at the recipe's own count, and local overrides the hardware can run.
+// Activation runs it before publishing to Coder, because a refusal after that
+// point leaves Coder advertising a model nobody is serving.
+func (c *clusterRunner) preflight(cfg *config.Config) error {
+	if err := c.needNodes(); err != nil {
+		return err
+	}
+	if _, err := resolveRecipeMembers(c.recipe, c.opts); err != nil {
+		return err
+	}
+	local, err := recipeOverrides(cfg, c.recipe)
+	if err != nil {
+		return err
+	}
+	_, err = c.recipe.ServeArgsWith(local.args)
+	return err
+}
+
+// endpointURL is where the head serves the API. The head can be another
+// machine, so this is the node's address on the recipe's port rather than
+// localhost on whatever port config names.
+func (c *clusterRunner) endpointURL() (string, error) {
+	m, err := c.head()
+	if err != nil {
+		return "", err
+	}
+	host := "localhost"
+	if !m.node.IsLocal() {
+		host = m.node.Address()
+	}
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(c.recipe.Port)), nil
+}
+
+// identity names what is holding the GPUs, so a switch can tell whether the
+// runner it is leaving is the one it is about to start. Two recipes on the
+// same nodes and container name replace each other; anything else does not.
+func (c *clusterRunner) identity() string {
+	return "cluster:" + c.opts.container + "@" + strings.Join(c.opts.nodeNames, ",")
 }
 
 // head is the node serving the API: rank 0.

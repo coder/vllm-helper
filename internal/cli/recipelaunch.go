@@ -177,10 +177,6 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	if err != nil {
 		return err
 	}
-	// Stand the watchdog off for the length of the load: the endpoint is
-	// deliberately down while a model loads, and a timer that reads that as
-	// an outage will relaunch the previous profile over the top of this one.
-	markLaunching(cfg, launchStandOff)
 	tested, err := recipe.LoadTested()
 	if err != nil {
 		return err
@@ -188,6 +184,13 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	r, ok := tested.Get(id)
 	if !ok {
 		return fmt.Errorf("no tested recipe %q", id)
+	}
+	// Any real launch is someone asking for the cluster to run, so it lifts a
+	// deliberate stop before anything on the nodes can fail. Lifting it only on
+	// success would let a relaunch that failed early -- a worker still booting
+	// -- leave the unit's ExecStop marker in place and the watchdog off for good.
+	if !o.dryRun {
+		clearStopped(cfg)
 	}
 	if r.Image == "" {
 		return fmt.Errorf("%s pins no image, so there is nothing to launch", r.ID)
@@ -288,6 +291,13 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 
 	// Workers must be listening before the head starts its rendezvous, so
 	// launch in descending rank order and finish with rank 0.
+	//
+	// Stand the watchdog off for the length of the load: the endpoint is
+	// deliberately down while a model loads, and a timer that reads that as
+	// an outage will relaunch the previous profile over the top of this one.
+	// Written only now, so a launch refused above, or a dry run, does not
+	// silence it.
+	markLaunching(cfg, launchStandOff)
 	for i := len(members) - 1; i >= 0; i-- {
 		m := members[i]
 		if _, err := nodeScript(m, o.sshKey, "docker rm -f "+recipe.ShellQuote(o.container)+" >/dev/null 2>&1 || true", nil); err != nil {
@@ -496,6 +506,13 @@ func runRecipeStop(id string, o recipeLaunchOptions) error {
 	reg, err := nodes.Load()
 	if err != nil {
 		return err
+	}
+	// Tell the watchdog first: a check landing mid-teardown would otherwise
+	// see the endpoint gone and start the cluster again.
+	if !o.dryRun {
+		if cfg, err := config.Load(); err == nil {
+			markStopped(cfg)
+		}
 	}
 	cmdline := "docker rm -f " + recipe.ShellQuote(o.container)
 	for i, name := range o.nodeNames {

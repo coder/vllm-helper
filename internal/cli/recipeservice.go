@@ -164,7 +164,13 @@ func installRecipeService(o recipeServiceOptions) error {
 		}
 		return nil
 	}
-	fmt.Printf("Not started. Launch a recipe first so the profile records its nodes, then: sudo systemctl enable --now %s\n", o.Name)
+	// The timer is a unit of its own, so a hint naming only the service would
+	// leave the advertised watchdog installed but never running.
+	units := o.Name
+	if healthTimer != "" {
+		units += " " + healthTimer
+	}
+	fmt.Printf("Not started. Launch a recipe first so the profile records its nodes, then: sudo systemctl enable --now %s\n", units)
 	return nil
 }
 

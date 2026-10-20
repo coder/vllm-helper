@@ -143,3 +143,32 @@ func TestInstallRecipeServiceSurvivesAFailedSupersede(t *testing.T) {
 		t.Error("the unit was not installed")
 	}
 }
+
+// The default install starts nothing and prints how to start it later. The
+// timer is its own unit, so a hint naming only the service left the watchdog
+// installed but never running.
+func TestInstallRecipeServiceHintStartsTheWatchdogToo(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("install is implemented for systemd hosts")
+	}
+	for _, c := range []struct {
+		watchdog bool
+		want     string
+	}{
+		{true, "sudo systemctl enable --now vllm-cluster.service vllm-cluster-health.timer\n"},
+		{false, "sudo systemctl enable --now vllm-cluster.service\n"},
+	} {
+		out, err := captureStdout(t, func() error {
+			return installRecipeService(recipeServiceOptions{
+				Name: "vllm-cluster.service", User: "serve", Timeout: 60,
+				Watchdog: c.watchdog, Interval: 2, Service: &fakeRecipeService{},
+			})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(out, c.want) {
+			t.Errorf("watchdog=%v: hint does not end with %q:\n%s", c.watchdog, c.want, out)
+		}
+	}
+}
