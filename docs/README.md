@@ -27,4 +27,5 @@ The binary is self-contained: one file to put on a machine, with the docs you ar
 - Follow the [Quickstart](./quickstart.md) to set the machine up and serve a first model.
 - See what a profile holds in [Profiles](./profiles.md).
 - Serve a model measured across several machines with [Recipes](./recipes.md).
+- Pool replicas or shard one model across machines with [More than one machine](./multi-node.md).
 - Browse the [CLI reference](./reference/cli.md) for every command.

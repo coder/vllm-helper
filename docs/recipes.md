@@ -1,6 +1,6 @@
 ---
 title: Recipes
-description: Tested launch recipes, where they come from, and how they stay in step with upstream.
+description: Launch configurations that were run and measured on named hardware, and how local overrides layer on top.
 ---
 
 ## Goal

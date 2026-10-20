@@ -40,7 +40,15 @@ the fact.
   `tools/recipediff` expands the upstream recipe and reports any difference
   that has not been declared, comparing content rather than commit ids so a
   pin that merely trails upstream is not reported as drift.
-- A node registry and a router, so a recipe can name the machines it needs.
+- More than one machine. `node add` records a machine once, by the URL it
+  serves on and the SSH target that drives it; `pool`, `shard` and
+  `recipes launch` refer to it by name. `pool serve` puts a router in front of
+  replicas serving the same model and keeps a conversation on the node that
+  already has its prefix cached; `pool install-service` runs it as a unit.
+  `shard start` splits one model across machines with Ray or vLLM's
+  multiprocessing executor, for trying a split before there is a recipe for
+  it, and `shard install-ray` prepares the nodes. `spark doctor` and
+  `spark install-prereqs` cover the build packages a DGX Spark needs.
 
 ### Changed
 

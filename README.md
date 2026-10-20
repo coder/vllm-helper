@@ -149,7 +149,7 @@ Each entry records where its settings came from and every place we deliberately 
 
 ## More than one machine
 
-Three commands cover the ways a model can span machines. They share one registry: `node` records a machine once, and `pool`, `shard` and `recipes launch` all refer to it by name.
+Three commands cover the ways a model can span machines. They share one registry: `node` records a machine once, and `pool`, `shard` and `recipes launch` all refer to it by name. The full guide is [docs/multi-node.md](docs/multi-node.md).
 
 ```bash
 vllm-helper node add spark2 --host http://spark2:8001 --ssh coder@spark2
@@ -172,12 +172,12 @@ Stickiness keeps a conversation on the node that already has its prefix cached, 
 **A shard is one model split across machines**, for a model too large for any single node:
 
 ```bash
-vllm-helper shard start --profile big --nodes spark1,spark2 --tp 2
+vllm-helper shard start --profile big --nodes spark1,spark2 --tp 2 --pp 1
 vllm-helper shard status --nodes spark1,spark2
 vllm-helper shard stop --nodes spark1,spark2
 ```
 
-`shard start` runs in the foreground against a native vLLM install and does not write any state, so it is the command for trying a split before there is a recipe for it. `--tp` splits each layer across nodes and `--pp` splits by layer; which one wins is a property of the workload, not a default worth trusting. A sharded configuration that works is worth turning into a recipe, and `recipes launch` is what runs it afterwards with state, supervision and Coder sync attached.
+`shard start` runs in the foreground against a native vLLM install and does not write any state, so it is the command for trying a split before there is a recipe for it. `--tp` splits each layer across GPUs and `--pp` splits by layer, and their product must match the GPUs in the shard (`--pp` defaults to 2). Which one wins is a property of the workload, not a default worth trusting. A sharded configuration that works is worth turning into a recipe, and `recipes launch` is what runs it afterwards with state, supervision and Coder sync attached.
 
 ## macOS
 

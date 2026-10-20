@@ -47,6 +47,11 @@
       "path": "./recipes.md"
     },
     {
+      "title": "More than one machine",
+      "description": "Register machines once, then pool them as replicas or shard one model across them.",
+      "path": "./multi-node.md"
+    },
+    {
       "title": "Running on macOS",
       "description": "vLLM's experimental CPU backend on Apple Silicon, and what it changes.",
       "path": "./macos.md"
