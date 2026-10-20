@@ -16,8 +16,8 @@ vllm-helper status [flags]
 
 ### --json
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print status as JSON

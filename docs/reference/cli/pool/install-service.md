@@ -16,52 +16,52 @@ vllm-helper pool install-service --nodes n1,n2 [flags]
 
 ### --bind
 
-|         |                     |
-| ------- | ------------------- |
-| Type    | <code>string</code> |
-| Default | <code>:8011</code>  |
+|         |          |
+| ------- | -------- |
+| Type    | `string` |
+| Default | `:8011`  |
 
 Bind address for the router
 
 ### --name
 
-|         |                                       |
-| ------- | ------------------------------------- |
-| Type    | <code>string</code>                   |
-| Default | <code>vllm-pool-router.service</code> |
+|         |                            |
+| ------- | -------------------------- |
+| Type    | `string`                   |
+| Default | `vllm-pool-router.service` |
 
 systemd unit name
 
 ### --nodes
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 Comma-separated node names
 
 ### --now
 
-|         |                   |
-| ------- | ----------------- |
-| Type    | <code>bool</code> |
-| Default | <code>true</code> |
+|         |        |
+| ------- | ------ |
+| Type    | `bool` |
+| Default | `true` |
 
 enable and restart the service immediately
 
 ### --sticky
 
-|         |                     |
-| ------- | ------------------- |
-| Type    | <code>string</code> |
-| Default | <code>auto</code>   |
+|         |          |
+| ------- | -------- |
+| Type    | `string` |
+| Default | `auto`   |
 
 Stickiness (auto|authorization|header:Name)
 
 ### --user
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 user the router runs as

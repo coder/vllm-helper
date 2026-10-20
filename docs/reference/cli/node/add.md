@@ -16,16 +16,16 @@ vllm-helper node add <name> [flags]
 
 ### --host
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 base URL (scheme://host:port)
 
 ### --ssh
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 SSH target for orchestration (user@host)

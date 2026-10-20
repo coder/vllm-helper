@@ -16,40 +16,40 @@ vllm-helper shard install-ray --nodes n1,n2 [flags]
 
 ### --dry-run
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print commands instead of running them
 
 ### --head
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 head node name (defaults to first --nodes entry)
 
 ### --nodes
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 comma-separated node names
 
 ### --python
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 python executable to install Ray with (defaults next to VLLM_BIN)
 
 ### --ssh-key
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 SSH private key for non-head nodes

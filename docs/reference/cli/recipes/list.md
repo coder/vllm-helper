@@ -16,8 +16,8 @@ vllm-helper recipes list [flags]
 
 ### --json
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print recipes as JSON

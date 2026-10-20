@@ -21,30 +21,30 @@ optional Coder Agents sync). Only one model is loaded at a time.
 
 ## Subcommands
 
-| Name                                             | Purpose                                                                      |
-| ------------------------------------------------ | ---------------------------------------------------------------------------- |
-| [<code>adopt</code>](cli/adopt.md)               | Detect an already-running vLLM server and save it as a managed profile       |
-| [<code>coder-sync</code>](cli/coder-sync.md)     | Manually sync a profile's Coder model entry                                  |
-| [<code>doctor</code>](cli/doctor.md)             | Diagnose hardware, running servers, integrations, and config drift           |
-| [<code>edit</code>](cli/edit.md)                 | Open a profile in $EDITOR and validate the result                            |
-| [<code>inspect</code>](cli/inspect.md)           | Show a model's license, weight size against this machine, and detected flags |
-| [<code>install-gguf</code>](cli/install-gguf.md) | Install the plugin that lets vLLM load GGUF models                           |
-| [<code>list</code>](cli/list.md)                 | List saved model profiles                                                    |
-| [<code>logs</code>](cli/logs.md)                 | Show the server log, following by default on a terminal                      |
-| [<code>new</code>](cli/new.md)                   | Pull a new HuggingFace model, save it as a profile, and switch to it         |
-| [<code>node</code>](cli/node.md)                 | Manage known nodes                                                           |
-| [<code>pool</code>](cli/pool.md)                 | Replica pools (router)                                                       |
-| [<code>recipes</code>](cli/recipes.md)           | Tested launch configurations for known-good models                           |
-| [<code>remove</code>](cli/remove.md)             | Delete a profile, and its Coder model entry when sync is configured          |
-| [<code>restart</code>](cli/restart.md)           | Re-apply the active profile and restart the server                           |
-| [<code>search</code>](cli/search.md)             | Search HuggingFace and pick a model to pull and switch to                    |
-| [<code>serve</code>](cli/serve.md)               | Run a web panel for this machine                                             |
-| [<code>set</code>](cli/set.md)                   | Change profile settings from the command line                                |
-| [<code>setup</code>](cli/setup.md)               | First-time setup: detect hardware and existing vLLM, write config            |
-| [<code>shard</code>](cli/shard.md)               | Sharded (distributed) serving                                                |
-| [<code>spark</code>](cli/spark.md)               | DGX Spark helpers                                                            |
-| [<code>status</code>](cli/status.md)             | Service state, active model, and whether the endpoint responds               |
-| [<code>stop</code>](cli/stop.md)                 | Stop the server, keeping profiles and config                                 |
-| [<code>switch</code>](cli/switch.md)             | Switch to a saved profile, restarting the server                             |
-| [<code>upgrade</code>](cli/upgrade.md)           | Update vllm-helper itself from a published release                           |
-| [<code>version</code>](cli/version.md)           | Print the version                                                            |
+| Name                                  | Purpose                                                                      |
+| ------------------------------------- | ---------------------------------------------------------------------------- |
+| [`adopt`](cli/adopt.md)               | Detect an already-running vLLM server and save it as a managed profile       |
+| [`coder-sync`](cli/coder-sync.md)     | Manually sync a profile's Coder model entry                                  |
+| [`doctor`](cli/doctor.md)             | Diagnose hardware, running servers, integrations, and config drift           |
+| [`edit`](cli/edit.md)                 | Open a profile in $EDITOR and validate the result                            |
+| [`inspect`](cli/inspect.md)           | Show a model's license, weight size against this machine, and detected flags |
+| [`install-gguf`](cli/install-gguf.md) | Install the plugin that lets vLLM load GGUF models                           |
+| [`list`](cli/list.md)                 | List saved model profiles                                                    |
+| [`logs`](cli/logs.md)                 | Show the server log, following by default on a terminal                      |
+| [`new`](cli/new.md)                   | Pull a new HuggingFace model, save it as a profile, and switch to it         |
+| [`node`](cli/node.md)                 | Manage known nodes                                                           |
+| [`pool`](cli/pool.md)                 | Replica pools (router)                                                       |
+| [`recipes`](cli/recipes.md)           | Tested launch configurations for known-good models                           |
+| [`remove`](cli/remove.md)             | Delete a profile, and its Coder model entry when sync is configured          |
+| [`restart`](cli/restart.md)           | Re-apply the active profile and restart the server                           |
+| [`search`](cli/search.md)             | Search HuggingFace and pick a model to pull and switch to                    |
+| [`serve`](cli/serve.md)               | Run a web panel for this machine                                             |
+| [`set`](cli/set.md)                   | Change profile settings from the command line                                |
+| [`setup`](cli/setup.md)               | First-time setup: detect hardware and existing vLLM, write config            |
+| [`shard`](cli/shard.md)               | Sharded (distributed) serving                                                |
+| [`spark`](cli/spark.md)               | DGX Spark helpers                                                            |
+| [`status`](cli/status.md)             | Service state, active model, and whether the endpoint responds               |
+| [`stop`](cli/stop.md)                 | Stop the server, keeping profiles and config                                 |
+| [`switch`](cli/switch.md)             | Switch to a saved profile, restarting the server                             |
+| [`upgrade`](cli/upgrade.md)           | Update vllm-helper itself from a published release                           |
+| [`version`](cli/version.md)           | Print the version                                                            |

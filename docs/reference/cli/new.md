@@ -16,32 +16,32 @@ vllm-helper new <org/model-repo> [flags]
 
 ### --no-follow
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 restart and return immediately instead of watching the boot
 
 ### --quant
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 which quantization to serve, for repos that ship several (see 'vllm-helper inspect')
 
 ### --timeout
 
-|      |                       |
-| ---- | --------------------- |
-| Type | <code>duration</code> |
+|      |            |
+| ---- | ---------- |
+| Type | `duration` |
 
 give up waiting after this long (default: wait forever)
 
 ### --wait
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 block until the endpoint is healthy, without streaming logs

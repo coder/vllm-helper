@@ -262,6 +262,55 @@ func TestTableOfContentsAnchorsExist(t *testing.T) {
 	}
 }
 
+// The frontmatter is for GitHub and coder/coder's engine; the panel takes the
+// title and description from the manifest. If the YAML reaches Markdown, its
+// closing "---" turns it into a heading at the top of every page and the TOC.
+// Raw HTML is off, so markup the generator emits as tags would be dropped.
+func TestDocsBodiesCarryNoFrontmatterOrDroppedHTML(t *testing.T) {
+	site, err := loadDocs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	yamlHeading := regexp.MustCompile(`<h[1-6][^>]*>(title|description):`)
+	for _, page := range site.order {
+		html := string(page.body)
+		if yamlHeading.MatchString(html) {
+			t.Errorf("%s renders its frontmatter as a heading", page.route)
+		}
+		for _, e := range page.toc {
+			if strings.HasPrefix(e.Text, "title:") {
+				t.Errorf("%s lists its frontmatter in the table of contents", page.route)
+			}
+		}
+		if strings.Contains(html, "<td><!-- raw HTML omitted -->") {
+			t.Errorf("%s has table cells whose HTML was dropped", page.route)
+		}
+	}
+}
+
+func TestStripFrontmatter(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+		wantErr  bool
+	}{
+		{in: "---\ntitle: A\n---\n\nbody\n", want: "\nbody\n"},
+		{in: "---\r\ntitle: A\r\n---\r\nbody", want: "body"},
+		{in: "# no frontmatter\n", want: "# no frontmatter\n"},
+		{in: "---\ntitle: A\n", wantErr: true},
+	} {
+		got, err := stripFrontmatter([]byte(tc.in))
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("stripFrontmatter(%q) succeeded, want an error", tc.in)
+			}
+			continue
+		}
+		if err != nil || string(got) != tc.want {
+			t.Errorf("stripFrontmatter(%q) = %q, %v; want %q", tc.in, got, err, tc.want)
+		}
+	}
+}
+
 // The header nav on the other pages has to reach the docs, or they exist
 // where nobody can get to them.
 func TestDocsAreReachableFromEveryPage(t *testing.T) {

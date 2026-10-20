@@ -16,9 +16,9 @@ vllm-helper pool status [flags]
 
 ### --url
 
-|         |                                                |
-| ------- | ---------------------------------------------- |
-| Type    | <code>string</code>                            |
-| Default | <code>http://127.0.0.1:8011/pool/status</code> |
+|         |                                     |
+| ------- | ----------------------------------- |
+| Type    | `string`                            |
+| Default | `http://127.0.0.1:8011/pool/status` |
 
 pool status URL

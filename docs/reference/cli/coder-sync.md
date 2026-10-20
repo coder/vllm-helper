@@ -16,8 +16,8 @@ vllm-helper coder-sync <activate|register|remove|register-all|prune> [profile] [
 
 ### --yes
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 delete pruned entries without asking

@@ -95,7 +95,7 @@ func GenerateCLIReference() (map[string]string, error) {
 	}
 	rows := [][]string{{"Name", "Purpose"}}
 	for _, sub := range subs {
-		link := "[<code>" + sub.Name() + "</code>](" +
+		link := "[" + codeSpan(sub.Name()) + "](" +
 			path.Join(append([]string{"cli"}, sub.Name())...) + ".md)"
 		rows = append(rows, []string{link, sub.Short})
 	}
@@ -149,9 +149,9 @@ func commandPage(c *cobra.Command, parents []string) (string, error) {
 		if f.Shorthand != "" {
 			title = "-" + f.Shorthand + ", " + title
 		}
-		rows := [][]string{{"", ""}, {"Type", "<code>" + f.Value.Type() + "</code>"}}
+		rows := [][]string{{"", ""}, {"Type", codeSpan(f.Value.Type())}}
 		if d := defaultOf(f); d != "" {
-			rows = append(rows, []string{"Default", "<code>" + d + "</code>"})
+			rows = append(rows, []string{"Default", codeSpan(d)})
 		}
 		b.WriteString("\n### " + title + "\n\n")
 		b.WriteString(table(rows) + "\n")
@@ -186,6 +186,17 @@ func frontmatter(title, description string) (string, error) {
 		"description: \"" + d + "\"\n" +
 		"---\n\n" +
 		"<!-- DO NOT EDIT | GENERATED CONTENT -->\n\n", nil
+}
+
+// codeSpan renders s as inline code that is safe inside a table cell. The
+// panel renders Markdown with raw HTML off, so <code> tags would be dropped;
+// a backtick in s needs a longer fence, and a pipe would end the cell.
+func codeSpan(s string) string {
+	s = strings.ReplaceAll(s, "|", `\|`)
+	if strings.Contains(s, "`") {
+		return "`` " + s + " ``"
+	}
+	return "`" + s + "`"
 }
 
 // defaultOf renders a flag's default for the options table, empty when it is

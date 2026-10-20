@@ -171,6 +171,10 @@ func (b *docsBuilder) page(r *docs.Route) (*docsPage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docs page %s: %w", r.Path, err)
 	}
+	source, err = stripFrontmatter(source)
+	if err != nil {
+		return nil, fmt.Errorf("docs page %s: %w", r.Path, err)
+	}
 	body, toc, err := renderMarkdown(path.Dir(rel), source)
 	if err != nil {
 		return nil, fmt.Errorf("docs page %s: %w", r.Path, err)
@@ -241,6 +245,28 @@ type docsData struct {
 	TOC         []tocEntry
 	Prev        *navEntry
 	Next        *navEntry
+}
+
+// stripFrontmatter drops a page's leading YAML block. The manifest is where the
+// panel reads a page's title and description; the frontmatter repeats them for
+// GitHub and for coder/coder's doc engine. Left in, Markdown reads the closing
+// "---" as a setext underline and renders the YAML as a heading.
+func stripFrontmatter(source []byte) ([]byte, error) {
+	rest, ok := bytes.CutPrefix(source, []byte("---\n"))
+	if !ok {
+		rest, ok = bytes.CutPrefix(source, []byte("---\r\n"))
+	}
+	if !ok {
+		return source, nil
+	}
+	for len(rest) > 0 {
+		line, after, _ := bytes.Cut(rest, []byte("\n"))
+		if string(bytes.TrimRight(line, "\r")) == "---" {
+			return after, nil
+		}
+		rest = after
+	}
+	return nil, fmt.Errorf("frontmatter is never closed with ---")
 }
 
 // renderMarkdown converts one page's source into body HTML plus its table of

@@ -20,61 +20,61 @@ vllm-helper recipes install-service [flags]
 
 ### --name
 
-|         |                                   |
-| ------- | --------------------------------- |
-| Type    | <code>string</code>               |
-| Default | <code>vllm-cluster.service</code> |
+|         |                        |
+| ------- | ---------------------- |
+| Type    | `string`               |
+| Default | `vllm-cluster.service` |
 
 systemd unit name
 
 ### --now
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 enable and start the service immediately
 
 ### --supersede-native
 
-|         |                   |
-| ------- | ----------------- |
-| Type    | <code>bool</code> |
-| Default | <code>true</code> |
+|         |        |
+| ------- | ------ |
+| Type    | `bool` |
+| Default | `true` |
 
 stop and disable the single-node unit this replaces
 
 ### --timeout
 
-|         |                   |
-| ------- | ----------------- |
-| Type    | <code>int</code>  |
-| Default | <code>1800</code> |
+|         |        |
+| ------- | ------ |
+| Type    | `int`  |
+| Default | `1800` |
 
 seconds to allow for the model to load
 
 ### --user
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 user the launcher runs as
 
 ### --watchdog
 
-|         |                   |
-| ------- | ----------------- |
-| Type    | <code>bool</code> |
-| Default | <code>true</code> |
+|         |        |
+| ------- | ------ |
+| Type    | `bool` |
+| Default | `true` |
 
 also install a timer that relaunches the cluster when the endpoint stops answering
 
 ### --watchdog-interval
 
-|         |                  |
-| ------- | ---------------- |
-| Type    | <code>int</code> |
-| Default | <code>2</code>   |
+|         |       |
+| ------- | ----- |
+| Type    | `int` |
+| Default | `2`   |
 
 minutes between health checks

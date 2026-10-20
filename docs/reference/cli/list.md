@@ -16,8 +16,8 @@ vllm-helper list [flags]
 
 ### --json
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print profiles as JSON

@@ -16,49 +16,49 @@ vllm-helper shard status --nodes n1,n2 [flags]
 
 ### --backend
 
-|         |                     |
-| ------- | ------------------- |
-| Type    | <code>string</code> |
-| Default | <code>all</code>    |
+|         |          |
+| ------- | -------- |
+| Type    | `string` |
+| Default | `all`    |
 
 backend to inspect: all, ray, or mp
 
 ### --dry-run
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print commands instead of running them
 
 ### --head
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 head node name (defaults to first --nodes entry)
 
 ### --nodes
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 comma-separated node names
 
 ### --port
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 API port to probe
 
 ### --ssh-key
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 SSH private key for non-head nodes

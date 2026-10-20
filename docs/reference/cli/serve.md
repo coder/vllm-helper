@@ -23,9 +23,9 @@ vllm-helper serve [flags]
 
 ### --listen
 
-|         |                             |
-| ------- | --------------------------- |
-| Type    | <code>string</code>         |
-| Default | <code>127.0.0.1:8080</code> |
+|         |                  |
+| ------- | ---------------- |
+| Type    | `string`         |
+| Default | `127.0.0.1:8080` |
 
 address to listen on (use 0.0.0.0:8080 to reach it from another machine)

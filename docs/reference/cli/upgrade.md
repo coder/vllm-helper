@@ -22,16 +22,16 @@ vllm-helper upgrade [flags]
 
 ### --channel
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 release channel: stable or dev (default: remembered, else stable)
 
 ### --check
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 report what's available without installing it

@@ -16,26 +16,26 @@ vllm-helper pool serve --nodes n1,n2 [--bind :8011] [--sticky auto|authorization
 
 ### --bind
 
-|         |                     |
-| ------- | ------------------- |
-| Type    | <code>string</code> |
-| Default | <code>:8011</code>  |
+|         |          |
+| ------- | -------- |
+| Type    | `string` |
+| Default | `:8011`  |
 
 Bind address for the router
 
 ### --nodes
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 Comma-separated node names (from 'node ls')
 
 ### --sticky
 
-|         |                     |
-| ------- | ------------------- |
-| Type    | <code>string</code> |
-| Default | <code>auto</code>   |
+|         |          |
+| ------- | -------- |
+| Type    | `string` |
+| Default | `auto`   |
 
 Stickiness (auto|authorization|header:Name)

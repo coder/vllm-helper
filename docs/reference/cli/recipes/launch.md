@@ -21,59 +21,59 @@ vllm-helper recipes launch <id> [flags]
 
 ### --container-name
 
-|         |                        |
-| ------- | ---------------------- |
-| Type    | <code>string</code>    |
-| Default | <code>vllm-node</code> |
+|         |             |
+| ------- | ----------- |
+| Type    | `string`    |
+| Default | `vllm-node` |
 
 container name on each node
 
 ### --dry-run
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print what would run and change nothing
 
 ### --iface
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 cluster interface to use instead of the discovered one
 
 ### --master-port
 
-|         |                    |
-| ------- | ------------------ |
-| Type    | <code>int</code>   |
-| Default | <code>29501</code> |
+|         |         |
+| ------- | ------- |
+| Type    | `int`   |
+| Default | `29501` |
 
 rendezvous port for the ranks
 
 ### --no-activate
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 launch only; leave the active profile and Coder alone
 
 ### --nodes
 
-|         |                          |
-| ------- | ------------------------ |
-| Type    | <code>stringSlice</code> |
-| Default | <code>[]</code>          |
+|         |               |
+| ------- | ------------- |
+| Type    | `stringSlice` |
+| Default | `[]`          |
 
 registry node names in rank order; rank 0 serves the API
 
 ### --ssh-key
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 private key for reaching non-head nodes

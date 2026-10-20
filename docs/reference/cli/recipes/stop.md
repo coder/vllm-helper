@@ -16,34 +16,34 @@ vllm-helper recipes stop <id> [flags]
 
 ### --container-name
 
-|         |                        |
-| ------- | ---------------------- |
-| Type    | <code>string</code>    |
-| Default | <code>vllm-node</code> |
+|         |             |
+| ------- | ----------- |
+| Type    | `string`    |
+| Default | `vllm-node` |
 
 container name on each node
 
 ### --dry-run
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print what would run and change nothing
 
 ### --nodes
 
-|         |                          |
-| ------- | ------------------------ |
-| Type    | <code>stringSlice</code> |
-| Default | <code>[]</code>          |
+|         |               |
+| ------- | ------------- |
+| Type    | `stringSlice` |
+| Default | `[]`          |
 
 registry node names
 
 ### --ssh-key
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 private key for reaching non-head nodes

@@ -16,58 +16,58 @@ vllm-helper shard stop --nodes n1,n2 [flags]
 
 ### --backend
 
-|         |                     |
-| ------- | ------------------- |
-| Type    | <code>string</code> |
-| Default | <code>all</code>    |
+|         |          |
+| ------- | -------- |
+| Type    | `string` |
+| Default | `all`    |
 
 backend to stop: all, ray, or mp
 
 ### --dry-run
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print commands instead of running them
 
 ### --head
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 head node name (defaults to first --nodes entry)
 
 ### --nodes
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 comma-separated node names
 
 ### --service-name
 
-|         |                           |
-| ------- | ------------------------- |
-| Type    | <code>string</code>       |
-| Default | <code>vllm.service</code> |
+|         |                |
+| ------- | -------------- |
+| Type    | `string`       |
+| Default | `vllm.service` |
 
 service to restart with --start-services
 
 ### --ssh-key
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 SSH private key for non-head nodes
 
 ### --start-services
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 start the normal vLLM service after stopping sharded runtimes

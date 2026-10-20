@@ -16,8 +16,8 @@ vllm-helper search <search terms> [flags]
 
 ### --json
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print results as JSON and exit (no prompts)

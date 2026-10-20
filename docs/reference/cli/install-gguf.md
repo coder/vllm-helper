@@ -16,8 +16,8 @@ vllm-helper install-gguf [flags]
 
 ### -y, --yes
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 install without asking

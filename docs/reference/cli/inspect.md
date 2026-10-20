@@ -16,8 +16,8 @@ vllm-helper inspect <org/model-repo> [flags]
 
 ### --json
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print the details as JSON

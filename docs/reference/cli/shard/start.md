@@ -16,142 +16,142 @@ vllm-helper shard start --profile <profile> --nodes n1,n2 [flags]
 
 ### --backend
 
-|         |                     |
-| ------- | ------------------- |
-| Type    | <code>string</code> |
-| Default | <code>ray</code>    |
+|         |          |
+| ------- | -------- |
+| Type    | `string` |
+| Default | `ray`    |
 
 distributed executor backend: ray or mp
 
 ### --distributed-timeout-seconds
 
-|      |                  |
-| ---- | ---------------- |
-| Type | <code>int</code> |
+|      |       |
+| ---- | ----- |
+| Type | `int` |
 
 vLLM distributed init timeout (0 uses vLLM default)
 
 ### --dry-run
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print commands instead of running them
 
 ### --head
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 head node name (defaults to first --nodes entry)
 
 ### --head-ip
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 IP workers use to reach the distributed head
 
 ### --iface
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 network interface for distributed traffic
 
 ### --install-ray
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 install Ray into the vLLM virtualenv before starting
 
 ### --master-port
 
-|         |                    |
-| ------- | ------------------ |
-| Type    | <code>int</code>   |
-| Default | <code>29501</code> |
+|         |         |
+| ------- | ------- |
+| Type    | `int`   |
+| Default | `29501` |
 
 vLLM multiprocessing master port
 
 ### --nodes
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 comma-separated node names
 
 ### --port
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 openAI API port (defaults to config PORT)
 
 ### --pp
 
-|         |                  |
-| ------- | ---------------- |
-| Type    | <code>int</code> |
-| Default | <code>2</code>   |
+|         |       |
+| ------- | ----- |
+| Type    | `int` |
+| Default | `2`   |
 
 pipeline parallel size
 
 ### --profile
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 profile to serve
 
 ### --ray-port
 
-|         |                   |
-| ------- | ----------------- |
-| Type    | <code>int</code>  |
-| Default | <code>6379</code> |
+|         |        |
+| ------- | ------ |
+| Type    | `int`  |
+| Default | `6379` |
 
 ray head port
 
 ### --service-name
 
-|         |                           |
-| ------- | ------------------------- |
-| Type    | <code>string</code>       |
-| Default | <code>vllm.service</code> |
+|         |                |
+| ------- | -------------- |
+| Type    | `string`       |
+| Default | `vllm.service` |
 
 vLLM service to stop when --stop-services is set
 
 ### --ssh-key
 
-|      |                     |
-| ---- | ------------------- |
-| Type | <code>string</code> |
+|      |          |
+| ---- | -------- |
+| Type | `string` |
 
 SSH private key for non-head nodes
 
 ### --stop-services
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 stop existing vLLM services on all nodes before starting
 
 ### --tp
 
-|         |                  |
-| ------- | ---------------- |
-| Type    | <code>int</code> |
-| Default | <code>1</code>   |
+|         |       |
+| ------- | ----- |
+| Type    | `int` |
+| Default | `1`   |
 
 tensor parallel size

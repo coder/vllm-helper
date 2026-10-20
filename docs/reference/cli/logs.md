@@ -16,25 +16,25 @@ vllm-helper logs [flags]
 
 ### --follow
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 keep following even when output is piped
 
 ### -n, --lines
 
-|         |                  |
-| ------- | ---------------- |
-| Type    | <code>int</code> |
-| Default | <code>50</code>  |
+|         |       |
+| ------- | ----- |
+| Type    | `int` |
+| Default | `50`  |
 
 how many past lines to show
 
 ### --no-follow
 
-|      |                   |
-| ---- | ----------------- |
-| Type | <code>bool</code> |
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
 
 print the lines and exit instead of following
