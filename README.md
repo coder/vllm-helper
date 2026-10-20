@@ -82,7 +82,9 @@ Switching and stopping need permission to control the service. On Linux the unit
 youruser ALL=(root) NOPASSWD: /usr/bin/systemctl restart vllm.service, /usr/bin/systemctl stop vllm.service, /usr/bin/systemctl start vllm.service
 ```
 
-Without it the panel still reports everything, and says why the buttons are disabled rather than failing when you press them. On a machine serving a recipe, name `vllm-cluster.service` in those three rules instead — `recipes install-service` stands the native unit down, because it cannot serve a container.
+Without it the panel still reports everything, and says why the buttons are disabled rather than failing when you press them.
+
+On a machine serving a recipe, the panel's buttons still drive the native unit named by `SERVICE_NAME` (`vllm.service` by default), which `recipes install-service` stands down because it cannot serve a container. Switch, restart and stop a recipe from the CLI (`vllm-helper switch`, `restart`, `stop`), which picks the right runner from the active profile, and treat the panel as read-only there until it does the same.
 
 Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the key from `~/.config/vllm-helper/secrets.env`. Switching reloads the model, which takes a few minutes when the weights are cached and longer on first download. `switch` waits until the endpoint responds; if the service fails or crash-loops, it exits with the last log lines.
 
