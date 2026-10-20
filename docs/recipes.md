@@ -1,4 +1,7 @@
-# Recipes as the golden path
+---
+title: Recipes
+description: Tested launch recipes, where they come from, and how they stay in step with upstream.
+---
 
 ## Goal
 
