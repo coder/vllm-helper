@@ -455,15 +455,20 @@ func activate(cfg *config.Config, p *profile.Profile) {
 // disableOthers turns off every other profile's entry: vLLM serves one model
 // at a time, so any other entry names something this machine cannot answer
 // for. An entry that has already gone is forgotten rather than reported.
+//
+// Entries are owned by ID, not by profile name: adoption maps a second
+// profile for the same model onto the existing row, and disabling that row on
+// behalf of the other name turned off the entry this switch just enabled.
 func disableOthers(cfg *config.Config, client *Client, state *config.EnvFile, keep string) *config.EnvFile {
 	profiles, _ := profile.List(cfg.Dirs)
+	keepID := state.Get(keep)
 	dropped := false
 	for _, other := range profiles {
 		if other.Name == keep {
 			continue
 		}
 		id := state.Get(other.Name)
-		if id == "" {
+		if id == "" || id == keepID {
 			continue
 		}
 		switch err := client.Disable(id); {
@@ -509,7 +514,8 @@ func register(cfg *config.Config, p *profile.Profile) {
 	saveIDs(cfg, state)
 }
 
-// remove deletes a profile's Coder entry (used by `remove`).
+// remove deletes a profile's Coder entry (used by `remove`). An entry another
+// profile also maps to is still in use, so only this name's claim on it goes.
 func remove(cfg *config.Config, name string) {
 	client := newClient(cfg)
 	if client == nil {
@@ -521,10 +527,24 @@ func remove(cfg *config.Config, name string) {
 	if id == "" {
 		return
 	}
-	fmt.Printf("Coder sync: deleting model-config for '%s'...\n", name)
-	if err := client.Delete(id); err != nil {
-		fmt.Fprintln(os.Stderr, "Coder sync: delete failed (may already be gone), continuing:", err)
+	if other := sharedWith(state, id, name); other != "" {
+		fmt.Printf("Coder sync: keeping the model-config '%s' shares with '%s'.\n", name, other)
+	} else {
+		fmt.Printf("Coder sync: deleting model-config for '%s'...\n", name)
+		if err := client.Delete(id); err != nil {
+			fmt.Fprintln(os.Stderr, "Coder sync: delete failed (may already be gone), continuing:", err)
+		}
 	}
 	state.Delete(name)
 	saveIDs(cfg, state)
+}
+
+// sharedWith names another profile mapped to the same entry, or "".
+func sharedWith(state *config.EnvFile, id, except string) string {
+	for _, k := range state.Keys() {
+		if k != except && state.Get(k) == id {
+			return k
+		}
+	}
+	return ""
 }
