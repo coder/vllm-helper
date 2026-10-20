@@ -219,6 +219,10 @@ Run `vllm-helper doctor` first. It checks the build toolchain vLLM needs, invent
 
 A first `switch` or `new` downloads the weights, which can keep the boot log on screen for a long time. Ctrl+C there only stops watching; the server keeps loading in the background, and `vllm-helper status` will tell you when it's up. Use `--no-follow` to skip the wait entirely.
 
+## Documentation
+
+The docs live in `docs/` and are served by the binary itself: `vllm-helper serve` and open the **Docs** tab. The same pages are readable here, starting at [docs/README.md](docs/README.md). The CLI reference under `docs/reference/cli/` is generated from the command tree — regenerate with `go run ./scripts/gendocs` after changing a command, flag, or help text.
+
 ## Development
 
 `go test ./...` needs no fixtures or network — it spawns real processes and local servers. CI additionally runs `go test -race ./...` on Linux and macOS, since the service, process-scanning, and hardware code is build-tagged per platform.

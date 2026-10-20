@@ -11,6 +11,10 @@ the fact.
 
 ### Added
 
+- Documentation, served by the binary itself: `vllm-helper serve` now has a
+  **Docs** tab with a quickstart, the profile and memory knobs, the Coder
+  integration, and a CLI reference generated from the command tree. The same
+  Markdown lives in `docs/` and stays readable on GitHub.
 - Recipes: launch configurations that have been run and measured, rather than
   inferred. An entry pins the model, the image by digest, the exact argv and
   the numbers it produced on named hardware, and `recipes list` / `recipes show`
