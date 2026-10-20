@@ -27,7 +27,10 @@ the fact.
   It stands the native unit down, which cannot serve a container, and holds
   off while a launch is in flight: a model takes minutes to load, and a
   watchdog that reads that silence as an outage restarts the previous profile
-  over the top of the new one.
+  over the top of the new one. A deliberate `stop` or `systemctl stop` is left
+  stopped. The web panel's buttons do not drive recipes yet; use the CLI.
+- Switching between a recipe and a native profile stops the one being left,
+  so neither keeps the GPUs and port the other needs.
 - Declared deviations. Where an entry differs from the upstream recipe it came
   from, it says so as data — the setting, upstream's value, ours, and why.
   `tools/recipediff` expands the upstream recipe and reports any difference

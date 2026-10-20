@@ -206,22 +206,21 @@ is `max_num_seqs x (k + 1)`. Confirm acceptance from the server's own `SpecDecod
 metrics` log lines rather than from client-side tokens per second, because under
 speculation one streamed chunk carries several tokens.
 
-## Recipe #1: DeepSeek V4 Flash
+## Shipped recipes
 
-`deepseek-v4-flash-2spark`, 2 nodes sharded TP=2, image pinned by digest. Verified at
-262144 context: 675,260 KV tokens, 2.58x concurrency, ~150 s load.
+Both run on the same pinned image, sharded TP=2 across two DGX Sparks, at 262144 context.
+The numbers are each entry's `verified` block in `internal/recipe/tested.json`.
 
-Open deltas against `eugr/spark-vllm-docker@1761c49a`, to settle in P2:
+| id                                | source                            | KV tokens | concurrency | load  |
+| --------------------------------- | --------------------------------- | --------- | ----------- | ----- |
+| `deepseek-v4-flash-2spark`        | `eugr/spark-vllm-docker@1761c49a` | 664,817   | 2.53x       | 161 s |
+| `deepseek-v4-flash-vision-2spark` | `eugr/spark-vllm-docker@798528a2` | 670,498   | 2.56x       | 165 s |
 
-| field                            | eugr                                     | ours        | status                            |
-| -------------------------------- | ---------------------------------------- | ----------- | --------------------------------- |
-| `--speculative-config`           | `dspark`, 5 tokens, probabilistic        | absent      | test; likely a throughput win     |
-| `mods`                           | `instanttensor-hybrid-draft-loader`      | not applied | dspark draft loader depends on it |
-| `--reasoning-config`             | explicit parser, empty start/end         | absent      | test                              |
-| `--default-chat-template-kwargs` | `thinking=true`, `reasoning_effort=high` | absent      | test                              |
-| `VLLM_USE_MEGA_AOT_ARTIFACT`     | `1`                                      | `-1`        | ours, deliberate                  |
-| `VLLM_MOE_SKIP_PADDING`          | `0`                                      | unset       | test                              |
-| `max_cudagraph_capture_size`     | 48                                       | 64          | test                              |
+Every difference from upstream is declared in `source.deviations` except two per entry,
+which stay open on purpose (see [Declared deviations](#declared-deviations)):
+`VLLM_USE_MEGA_AOT_ARTIFACT` (`1` upstream, `-1` here) and `VLLM_MOE_SKIP_PADDING` (`0`
+upstream, unset here). `recipediff` reports exactly those four findings until each is
+measured or explained.
 
 Deliberate divergences to keep: port 8001 (matches `PORT`, fronted by the router on 8011) and an explicit `--max-model-len` rather than `auto`, so the served window and
 `verified.context` stay pinned together.
