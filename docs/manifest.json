@@ -42,6 +42,11 @@
       "path": "./coder.md"
     },
     {
+      "title": "Recipes",
+      "description": "Launch configurations that were run and measured on named hardware, and how local overrides layer on top.",
+      "path": "./recipes.md"
+    },
+    {
       "title": "Running on macOS",
       "description": "vLLM's experimental CPU backend on Apple Silicon, and what it changes.",
       "path": "./macos.md"
@@ -102,6 +107,82 @@
           "path": "./reference/cli/new.md"
         },
         {
+          "title": "`vllm-helper node`",
+          "description": "Manage known nodes",
+          "path": "./reference/cli/node.md",
+          "children": [
+            {
+              "title": "`vllm-helper node add`",
+              "description": "Add a node",
+              "path": "./reference/cli/node/add.md"
+            },
+            {
+              "title": "`vllm-helper node ls`",
+              "description": "List nodes",
+              "path": "./reference/cli/node/ls.md"
+            },
+            {
+              "title": "`vllm-helper node rm`",
+              "description": "Remove a node",
+              "path": "./reference/cli/node/rm.md"
+            }
+          ]
+        },
+        {
+          "title": "`vllm-helper pool`",
+          "description": "Replica pools (router)",
+          "path": "./reference/cli/pool.md",
+          "children": [
+            {
+              "title": "`vllm-helper pool install-service`",
+              "description": "Install a systemd service for the pool router",
+              "path": "./reference/cli/pool/install-service.md"
+            },
+            {
+              "title": "`vllm-helper pool serve`",
+              "description": "Run a sticky reverse proxy over the given nodes",
+              "path": "./reference/cli/pool/serve.md"
+            },
+            {
+              "title": "`vllm-helper pool status`",
+              "description": "Show pool router backend health",
+              "path": "./reference/cli/pool/status.md"
+            }
+          ]
+        },
+        {
+          "title": "`vllm-helper recipes`",
+          "description": "Tested launch configurations for known-good models",
+          "path": "./reference/cli/recipes.md",
+          "children": [
+            {
+              "title": "`vllm-helper recipes install-service`",
+              "description": "Install a systemd service that keeps the active recipe serving",
+              "path": "./reference/cli/recipes/install-service.md"
+            },
+            {
+              "title": "`vllm-helper recipes launch`",
+              "description": "Launch a tested recipe, and point the active profile and Coder at it",
+              "path": "./reference/cli/recipes/launch.md"
+            },
+            {
+              "title": "`vllm-helper recipes list`",
+              "description": "List tested recipes",
+              "path": "./reference/cli/recipes/list.md"
+            },
+            {
+              "title": "`vllm-helper recipes show`",
+              "description": "Show everything a tested recipe pins, including how it was verified",
+              "path": "./reference/cli/recipes/show.md"
+            },
+            {
+              "title": "`vllm-helper recipes stop`",
+              "description": "Stop the containers a tested recipe started",
+              "path": "./reference/cli/recipes/stop.md"
+            }
+          ]
+        },
+        {
           "title": "`vllm-helper remove`",
           "description": "Delete a profile, and its Coder model entry when sync is configured",
           "path": "./reference/cli/remove.md"
@@ -130,6 +211,50 @@
           "title": "`vllm-helper setup`",
           "description": "First-time setup: detect hardware and existing vLLM, write config",
           "path": "./reference/cli/setup.md"
+        },
+        {
+          "title": "`vllm-helper shard`",
+          "description": "Sharded (distributed) serving",
+          "path": "./reference/cli/shard.md",
+          "children": [
+            {
+              "title": "`vllm-helper shard install-ray`",
+              "description": "Install Ray into the vLLM virtualenv on cluster nodes",
+              "path": "./reference/cli/shard/install-ray.md"
+            },
+            {
+              "title": "`vllm-helper shard start`",
+              "description": "Start a sharded vLLM server in the foreground",
+              "path": "./reference/cli/shard/start.md"
+            },
+            {
+              "title": "`vllm-helper shard status`",
+              "description": "Show sharded endpoint and runtime status",
+              "path": "./reference/cli/shard/status.md"
+            },
+            {
+              "title": "`vllm-helper shard stop`",
+              "description": "Stop sharded runtimes on cluster nodes",
+              "path": "./reference/cli/shard/stop.md"
+            }
+          ]
+        },
+        {
+          "title": "`vllm-helper spark`",
+          "description": "DGX Spark helpers",
+          "path": "./reference/cli/spark.md",
+          "children": [
+            {
+              "title": "`vllm-helper spark doctor`",
+              "description": "Check DGX Spark vLLM runtime prerequisites",
+              "path": "./reference/cli/spark/doctor.md"
+            },
+            {
+              "title": "`vllm-helper spark install-prereqs`",
+              "description": "Install DGX Spark JIT build prerequisites",
+              "path": "./reference/cli/spark/install-prereqs.md"
+            }
+          ]
         },
         {
           "title": "`vllm-helper status`",

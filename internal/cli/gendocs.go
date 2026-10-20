@@ -14,7 +14,38 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/coder/vllm-helper/docs"
 )
+
+// CLIReferencePath is the manifest route whose children GenerateCLIRoutes
+// owns.
+const CLIReferencePath = "./reference/cli.md"
+
+// GenerateCLIRoutes returns the manifest children for the CLI reference, in
+// the same tree and order as the pages GenerateCLIReference writes. They are
+// generated rather than kept by hand so that adding a command cannot leave a
+// page the sidebar does not list.
+func GenerateCLIRoutes() []docs.Route {
+	var walk func(c *cobra.Command, parents []string) []docs.Route
+	walk = func(c *cobra.Command, parents []string) []docs.Route {
+		var out []docs.Route
+		for _, sub := range c.Commands() {
+			if sub.Hidden {
+				continue
+			}
+			here := append(append([]string{}, parents...), sub.Name())
+			out = append(out, docs.Route{
+				Title:       "`vllm-helper " + strings.Join(here, " ") + "`",
+				Description: sub.Short,
+				Path:        "./" + path.Join(append([]string{"reference", "cli"}, here...)...) + ".md",
+				Children:    walk(sub, here),
+			})
+		}
+		return out
+	}
+	return walk(newRootCmd(), nil)
+}
 
 // generatedBy names the command that owns the reference, so a stale page says
 // how to fix itself.

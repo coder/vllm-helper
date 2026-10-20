@@ -32,12 +32,17 @@ optional Coder Agents sync). Only one model is loaded at a time.
 | [<code>list</code>](cli/list.md)                 | List saved model profiles                                                    |
 | [<code>logs</code>](cli/logs.md)                 | Show the server log, following by default on a terminal                      |
 | [<code>new</code>](cli/new.md)                   | Pull a new HuggingFace model, save it as a profile, and switch to it         |
+| [<code>node</code>](cli/node.md)                 | Manage known nodes                                                           |
+| [<code>pool</code>](cli/pool.md)                 | Replica pools (router)                                                       |
+| [<code>recipes</code>](cli/recipes.md)           | Tested launch configurations for known-good models                           |
 | [<code>remove</code>](cli/remove.md)             | Delete a profile, and its Coder model entry when sync is configured          |
 | [<code>restart</code>](cli/restart.md)           | Re-apply the active profile and restart the server                           |
 | [<code>search</code>](cli/search.md)             | Search HuggingFace and pick a model to pull and switch to                    |
 | [<code>serve</code>](cli/serve.md)               | Run a web panel for this machine                                             |
 | [<code>set</code>](cli/set.md)                   | Change profile settings from the command line                                |
 | [<code>setup</code>](cli/setup.md)               | First-time setup: detect hardware and existing vLLM, write config            |
+| [<code>shard</code>](cli/shard.md)               | Sharded (distributed) serving                                                |
+| [<code>spark</code>](cli/spark.md)               | DGX Spark helpers                                                            |
 | [<code>status</code>](cli/status.md)             | Service state, active model, and whether the endpoint responds               |
 | [<code>stop</code>](cli/stop.md)                 | Stop the server, keeping profiles and config                                 |
 | [<code>switch</code>](cli/switch.md)             | Switch to a saved profile, restarting the server                             |

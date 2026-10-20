@@ -4,8 +4,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/coder/vllm-helper/docs"
 )
 
 // The committed reference must be exactly what the current command tree
@@ -51,5 +54,22 @@ func TestCLIReferenceIsUpToDate(t *testing.T) {
 		if _, ok := generated[rel]; !ok {
 			t.Errorf("docs/%s is committed but no longer generated -- delete it", rel)
 		}
+	}
+
+	// The sidebar lists the reference from manifest.json, so its CLI subtree
+	// is generated too and has to match: a page the manifest does not route is
+	// a page nobody can reach from the panel.
+	m, err := docs.ReadManifest(os.DirFS(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []docs.Route
+	for _, r := range m.Routes {
+		if r.Path == CLIReferencePath {
+			got = r.Children
+		}
+	}
+	if !reflect.DeepEqual(got, GenerateCLIRoutes()) {
+		t.Errorf("manifest.json's %s children are stale -- run 'go run ./scripts/gendocs'", CLIReferencePath)
 	}
 }
