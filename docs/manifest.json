@@ -1,0 +1,162 @@
+{
+  "versions": ["main"],
+  "routes": [
+    {
+      "title": "Introduction",
+      "description": "What vllm-helper is, and when to reach for it.",
+      "path": "./README.md"
+    },
+    {
+      "title": "Quickstart",
+      "description": "Set up vllm-helper, pull a model, and serve it.",
+      "path": "./quickstart.md"
+    },
+    {
+      "title": "Install and upgrade",
+      "description": "Install the binary, configure the machine, and keep it current.",
+      "path": "./install.md"
+    },
+    {
+      "title": "Profiles",
+      "description": "Saved model settings, and the knobs inside them.",
+      "path": "./profiles.md"
+    },
+    {
+      "title": "Models and quantizations",
+      "description": "Finding a model that fits this machine, and choosing a quant.",
+      "path": "./models.md"
+    },
+    {
+      "title": "Memory budget",
+      "description": "How vllm-helper decides what this machine can hold, and how to override it.",
+      "path": "./memory.md"
+    },
+    {
+      "title": "Web panel",
+      "description": "The control panel that 'vllm-helper serve' puts on the machine.",
+      "path": "./panel.md"
+    },
+    {
+      "title": "Coder integration",
+      "description": "Keep a Coder deployment's model picker truthful.",
+      "path": "./coder.md"
+    },
+    {
+      "title": "Running on macOS",
+      "description": "vLLM's experimental CPU backend on Apple Silicon, and what it changes.",
+      "path": "./macos.md"
+    },
+    {
+      "title": "Troubleshooting",
+      "description": "When the endpoint is down, or the service is crash-looping.",
+      "path": "./troubleshooting.md"
+    },
+    {
+      "title": "CLI reference",
+      "description": "Every vllm-helper command, flag by flag. Generated from the CLI itself.",
+      "path": "./reference/cli.md",
+      "children": [
+        {
+          "title": "`vllm-helper adopt`",
+          "description": "Detect an already-running vLLM server and save it as a managed profile",
+          "path": "./reference/cli/adopt.md"
+        },
+        {
+          "title": "`vllm-helper coder-sync`",
+          "description": "Manually sync a profile's Coder model entry",
+          "path": "./reference/cli/coder-sync.md"
+        },
+        {
+          "title": "`vllm-helper doctor`",
+          "description": "Diagnose hardware, running servers, integrations, and config drift",
+          "path": "./reference/cli/doctor.md"
+        },
+        {
+          "title": "`vllm-helper edit`",
+          "description": "Open a profile in $EDITOR and validate the result",
+          "path": "./reference/cli/edit.md"
+        },
+        {
+          "title": "`vllm-helper inspect`",
+          "description": "Show a model's license, weight size against this machine, and detected flags",
+          "path": "./reference/cli/inspect.md"
+        },
+        {
+          "title": "`vllm-helper install-gguf`",
+          "description": "Install the plugin that lets vLLM load GGUF models",
+          "path": "./reference/cli/install-gguf.md"
+        },
+        {
+          "title": "`vllm-helper list`",
+          "description": "List saved model profiles",
+          "path": "./reference/cli/list.md"
+        },
+        {
+          "title": "`vllm-helper logs`",
+          "description": "Show the server log, following by default on a terminal",
+          "path": "./reference/cli/logs.md"
+        },
+        {
+          "title": "`vllm-helper new`",
+          "description": "Pull a new HuggingFace model, save it as a profile, and switch to it",
+          "path": "./reference/cli/new.md"
+        },
+        {
+          "title": "`vllm-helper remove`",
+          "description": "Delete a profile, and its Coder model entry when sync is configured",
+          "path": "./reference/cli/remove.md"
+        },
+        {
+          "title": "`vllm-helper restart`",
+          "description": "Re-apply the active profile and restart the server",
+          "path": "./reference/cli/restart.md"
+        },
+        {
+          "title": "`vllm-helper search`",
+          "description": "Search HuggingFace and pick a model to pull and switch to",
+          "path": "./reference/cli/search.md"
+        },
+        {
+          "title": "`vllm-helper serve`",
+          "description": "Run a web panel for this machine",
+          "path": "./reference/cli/serve.md"
+        },
+        {
+          "title": "`vllm-helper set`",
+          "description": "Change profile settings from the command line",
+          "path": "./reference/cli/set.md"
+        },
+        {
+          "title": "`vllm-helper setup`",
+          "description": "First-time setup: detect hardware and existing vLLM, write config",
+          "path": "./reference/cli/setup.md"
+        },
+        {
+          "title": "`vllm-helper status`",
+          "description": "Service state, active model, and whether the endpoint responds",
+          "path": "./reference/cli/status.md"
+        },
+        {
+          "title": "`vllm-helper stop`",
+          "description": "Stop the server, keeping profiles and config",
+          "path": "./reference/cli/stop.md"
+        },
+        {
+          "title": "`vllm-helper switch`",
+          "description": "Switch to a saved profile, restarting the server",
+          "path": "./reference/cli/switch.md"
+        },
+        {
+          "title": "`vllm-helper upgrade`",
+          "description": "Update vllm-helper itself from a published release",
+          "path": "./reference/cli/upgrade.md"
+        },
+        {
+          "title": "`vllm-helper version`",
+          "description": "Print the version",
+          "path": "./reference/cli/version.md"
+        }
+      ]
+    }
+  ]
+}
