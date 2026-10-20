@@ -85,6 +85,33 @@ func TestRecipeOverridesIgnoreRestatements(t *testing.T) {
 	}
 }
 
+// An EXTRA_ARGS value that matches the recipe still overrides a knob, because
+// it comes later in the same argv. Treating it as a restatement on its own
+// would launch with the knob's value instead, and writing back without it
+// would change the next launch.
+func TestRecipeOverridesResolveKnobsAndExtraArgsTogether(t *testing.T) {
+	r := testRecipe(t)
+	recipeLen, ok := recipe.FlagValue(r.Args, "--max-model-len")
+	if !ok {
+		t.Skip("test recipe sets no --max-model-len")
+	}
+	cfg := writeProfile(t, "MODEL="+r.Model+"\nMAX_MODEL_LEN=4096\nEXTRA_ARGS=\"--max-model-len "+recipeLen+"\"\nRECIPE="+r.ID+"\n")
+	local, err := recipeOverrides(cfg, r)
+	if err != nil {
+		t.Fatalf("recipeOverrides: %v", err)
+	}
+	args, err := r.ServeArgsWith(local.args)
+	if err != nil {
+		t.Fatalf("ServeArgsWith: %v", err)
+	}
+	if v, _ := recipe.FlagValue(args, "--max-model-len"); v != recipeLen {
+		t.Errorf("--max-model-len = %q, want %s: EXTRA_ARGS comes after the knob", v, recipeLen)
+	}
+	if v, _ := recipe.FlagValue(local.extra, "--max-model-len"); v != recipeLen {
+		t.Errorf("EXTRA_ARGS written back as %v; dropping the token would let MAX_MODEL_LEN win next time", local.extra)
+	}
+}
+
 // An edited knob has to reach argv. Coder reads MAX_MODEL_LEN from this same
 // profile, so an ignored edit advertises one context and serves another.
 func TestRecipeOverridesCarryEditsIntoArgv(t *testing.T) {
@@ -94,7 +121,10 @@ func TestRecipeOverridesCarryEditsIntoArgv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recipeOverrides: %v", err)
 	}
-	args := r.ServeArgsWith(local.args)
+	args, err := r.ServeArgsWith(local.args)
+	if err != nil {
+		t.Fatalf("ServeArgsWith: %v", err)
+	}
 	if v, _ := recipe.FlagValue(args, "--max-model-len"); v != "131072" {
 		t.Errorf("--max-model-len = %q, want the profile value", v)
 	}

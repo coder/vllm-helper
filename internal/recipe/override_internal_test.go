@@ -21,7 +21,10 @@ func TestServeArgsUntouchedWithoutOverrides(t *testing.T) {
 // copy of the flag is what lets the profile and the server disagree.
 func TestServeArgsWithOverridesReplaceInPlace(t *testing.T) {
 	r := deepseek(t)
-	got := r.ServeArgsWith([]string{"--max-model-len", "131072", "--enforce-eager"})
+	got, err := r.ServeArgsWith([]string{"--max-model-len", "131072", "--enforce-eager"})
+	if err != nil {
+		t.Fatalf("ServeArgsWith: %v", err)
+	}
 	if n := countFlag(got, "--max-model-len"); n != 1 {
 		t.Fatalf("--max-model-len appears %d times: %v", n, got)
 	}
@@ -36,9 +39,42 @@ func TestServeArgsWithOverridesReplaceInPlace(t *testing.T) {
 	}
 	// Even a backend the recipe pins may be overridden; only the known-fatal
 	// combinations in forbiddenArgs fail closed.
-	back := r.ServeArgsWith([]string{"--attention-backend", "FLASH_ATTN"})
+	back, err := r.ServeArgsWith([]string{"--attention-backend", "FLASH_ATTN"})
+	if err != nil {
+		t.Fatalf("ServeArgsWith: %v", err)
+	}
 	if v, _ := FlagValue(back, "--attention-backend"); v != "FLASH_ATTN" {
 		t.Errorf("--attention-backend = %q, want the override", v)
+	}
+}
+
+// The fatal combinations have to be refused on the merged argv, not only on
+// the shipped args: an override is exactly how one would arrive.
+func TestServeArgsWithRefusesAnOverrideTheHardwareCannotRun(t *testing.T) {
+	r := deepseek(t)
+	if _, err := r.ServeArgsWith([]string{"--moe-backend", "deep_gemm_mega_moe"}); err == nil {
+		t.Fatal("an SM100-only kernel reached a GB10 launch")
+	}
+	if _, err := r.ServeArgsWith([]string{"--moe-backend=deep_gemm_mega_moe"}); err == nil {
+		t.Fatal("the inline spelling of an SM100-only kernel reached a GB10 launch")
+	}
+}
+
+// Last-wins has to be settled before restatements are dropped. Dropping the
+// final "8" because the base also says 8 would let the earlier 16 win.
+func TestStripRestatementsKeepsTheEffectiveValue(t *testing.T) {
+	base := []string{"--max-num-seqs", "8", "--enforce-eager"}
+	got := StripRestatements(base, []string{"--max-num-seqs", "16", "--max-num-seqs", "8"})
+	if len(got) != 0 {
+		t.Errorf("the effective value restates the base, so nothing overrides it; got %v", got)
+	}
+	merged := dedupeArgs(append(append([]string{}, base...), got...))
+	if v, _ := FlagValue(merged, "--max-num-seqs"); v != "8" {
+		t.Errorf("--max-num-seqs = %q, want 8", v)
+	}
+	got = StripRestatements(base, []string{"--max-num-seqs", "8", "--max-num-seqs", "16"})
+	if !reflect.DeepEqual(got, []string{"--max-num-seqs", "16"}) {
+		t.Errorf("a real final override was lost: %v", got)
 	}
 }
 

@@ -62,19 +62,52 @@ func placeholderName(v string) (string, bool) {
 }
 
 // ServeArgs is the argv after "vllm serve <model>", with nothing overridden.
-func (r TestedRecipe) ServeArgs() []string { return r.ServeArgsWith(nil) }
+// It needs no arch check: the shipped args are held to that invariant by
+// TestTestedRecipesHoldTheArchInvariant.
+func (r TestedRecipe) ServeArgs() []string {
+	args := append([]string{}, r.Args...)
+	// Host and port are the launcher's business, not the model's, which is why
+	// the recipe carries "port" as a field instead of inside args.
+	return dedupeArgs(append(args, "--host", "0.0.0.0", "--port", strconv.Itoa(r.Port)))
+}
 
 // ServeArgsWith layers local overrides on top of the recipe, last-wins per
 // flag. This is the precedence vLLM itself documents for a command line over a
 // config file: the recipe is the config layer, an override is the command line.
 // Honouring an override is what keeps the server and what Coder advertises in
 // agreement -- refusing the edit only moved the disagreement somewhere else.
-func (r TestedRecipe) ServeArgsWith(overrides []string) []string {
-	args := append([]string{}, r.Args...)
-	// Host and port are the launcher's business, not the model's, which is why
-	// the recipe carries "port" as a field instead of inside args.
-	args = append(args, "--host", "0.0.0.0", "--port", strconv.Itoa(r.Port))
-	return dedupeArgs(append(args, overrides...))
+//
+// Honouring is not the same as trusting: the merged argv is checked against
+// the flags known to abort on the recipe's hardware, so an override cannot
+// carry an SM100-only kernel onto a GB10.
+func (r TestedRecipe) ServeArgsWith(overrides []string) ([]string, error) {
+	merged := dedupeArgs(append(r.ServeArgs(), overrides...))
+	if t, ok := r.Target(); ok {
+		if err := checkForbidden(merged, t); err != nil {
+			return nil, fmt.Errorf("%s: %w", r.ID, err)
+		}
+	}
+	return merged, nil
+}
+
+// Target is the hardware a recipe was verified on, when that hardware has
+// arch rules. The verified hardware is the only thing a recipe says about
+// where it runs, and launching it elsewhere is not something it claims.
+func (r TestedRecipe) Target() (Target, bool) {
+	if strings.HasPrefix(r.Verified.Hardware, "dgx_spark_gb10") {
+		return Target{Hardware: "dgx_spark_gb10", Generation: "blackwell", Arch: "sm121"}, true
+	}
+	return Target{}, false
+}
+
+// MergeArgs layers argument lists last-wins per flag, the same precedence a
+// launch applies, so callers can ask what a set of layers resolves to.
+func MergeArgs(layers ...[]string) []string {
+	var all []string
+	for _, l := range layers {
+		all = append(all, l...)
+	}
+	return dedupeArgs(all)
 }
 
 // FlagValue reports whether a flag is present in an arg list and what value it
@@ -94,9 +127,13 @@ func FlagValue(args []string, flag string) (string, bool) {
 // claim -- and a profile that repeats the recipe verbatim has not moved away
 // from what we measured. The first launcher wrote the recipe's own flags into
 // EXTRA_ARGS, so real profiles do repeat it verbatim.
+//
+// Overrides are resolved last-wins first. Comparing each token on its own
+// would drop a final restatement and let an earlier, overridden value take
+// effect: "--max-num-seqs 16 --max-num-seqs 8" over a base of 8 means 8.
 func StripRestatements(base, overrides []string) []string {
 	var out []string
-	for _, p := range splitArgs(overrides) {
+	for _, p := range splitArgs(dedupeArgs(overrides)) {
 		if v, ok := FlagValue(base, p.flag); ok && v == p.value {
 			continue
 		}

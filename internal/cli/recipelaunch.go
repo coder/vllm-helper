@@ -196,6 +196,12 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	if err != nil {
 		return err
 	}
+	// Resolve the argv before touching any node, so an override the hardware
+	// cannot run is refused while whatever is serving is still serving.
+	serveArgs, err := r.ServeArgsWith(local.args)
+	if err != nil {
+		return err
+	}
 	members, err := resolveRecipeMembers(r, o)
 	if err != nil {
 		return err
@@ -234,7 +240,7 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 		if err != nil {
 			return fmt.Errorf("%s: %w", m.node.Name, err)
 		}
-		args := append([]string{"serve", r.Model}, r.ServeArgsWith(local.args)...)
+		args := append([]string{"serve", r.Model}, serveArgs...)
 		args = append(args, r.DistArgs(m.rank, masterAddr, o.masterPort)...)
 		specs[i] = recipe.ContainerSpec{
 			Name:    o.container,
@@ -339,14 +345,21 @@ func recipeOverrides(cfg *config.Config, r recipe.TestedRecipe) (overrideLayer, 
 	}
 	// Only a disagreement is an override: a profile that restates the recipe
 	// -- which the first launcher wrote out in full -- is still untouched.
+	//
+	// Knobs and EXTRA_ARGS land in one argv, EXTRA_ARGS last, so they are
+	// resolved together: an EXTRA_ARGS value that happens to match the recipe
+	// still overrides a knob, and stripping it on its own would hand the
+	// launch the knob's value instead. For the same reason the EXTRA_ARGS
+	// written back is compared against the recipe with the knobs applied: a
+	// token is only dropped when the next launch would not change without it.
 	base := r.ServeArgs()
+	extraOnly := recipe.StripRestatements(recipe.MergeArgs(base, knobs), extra)
 	layer := overrideLayer{
 		profile: p,
-		extra:   recipe.StripRestatements(base, extra),
-		pruned:  len(extra) > 0,
+		args:    recipe.StripRestatements(base, append(append([]string{}, knobs...), extra...)),
+		extra:   extraOnly,
+		pruned:  len(extraOnly) < len(extra),
 	}
-	layer.args = append(recipe.StripRestatements(base, knobs), layer.extra...)
-	layer.pruned = layer.pruned && len(layer.extra) < len(extra)
 	return layer, nil
 }
 
