@@ -25,20 +25,20 @@ type ContainerSpec struct {
 	Env     map[string]string
 	Args    []string
 	// APIKey is kept out of Env so it can be redacted when the command is
-	// printed, and passed as VLLM_API_KEY rather than --api-key so it stays out
-	// of the host process command line.
+	// printed, and passed as VLLM_API_KEY rather than --api-key. Docker is
+	// told only the variable's name (-e VLLM_API_KEY) and reads the value from
+	// its own environment, so the key is on no process command line, docker's
+	// included.
 	APIKey string
 }
 
 // RunArgs renders the argv for "docker run". Env is emitted in sorted order so
 // the rendered command is stable and two launches can be diffed against
-// each other.
-func (s ContainerSpec) RunArgs() ([]string, error) { return s.runArgs(false) }
+// each other. With an APIKey set, the caller must put VLLM_API_KEY in docker's
+// environment; ShellCommand does that for a command run through a shell.
+func (s ContainerSpec) RunArgs() ([]string, error) { return s.runArgs() }
 
-// DisplayArgs is RunArgs with the API key redacted, for printing.
-func (s ContainerSpec) DisplayArgs() ([]string, error) { return s.runArgs(true) }
-
-func (s ContainerSpec) runArgs(redact bool) ([]string, error) {
+func (s ContainerSpec) runArgs() ([]string, error) {
 	if s.Name == "" || s.Image == "" || s.HomeDir == "" {
 		return nil, fmt.Errorf("container spec needs a name, image and home dir")
 	}
@@ -73,31 +73,36 @@ func (s ContainerSpec) runArgs(redact bool) ([]string, error) {
 		out = append(out, "-e", k+"="+s.Env[k])
 	}
 	if s.APIKey != "" {
-		shown := s.APIKey
-		if redact {
-			shown = "<redacted>"
-		}
-		out = append(out, "-e", "VLLM_API_KEY="+shown)
+		out = append(out, "-e", "VLLM_API_KEY")
 	}
 	out = append(out, "--entrypoint", "vllm", s.Image)
 	return append(out, s.Args...), nil
 }
 
 // ShellCommand renders RunArgs as a single command line safe to pipe to a
-// remote shell.
+// remote shell. The key rides as an environment assignment in front of
+// docker, which the shell consumes; it must only be fed to a shell on stdin,
+// never passed as an argument, or it lands on a command line after all.
 func (s ContainerSpec) ShellCommand() (string, error) { return s.shellCommand(false) }
 
 // DisplayCommand is ShellCommand with the API key redacted, for printing.
 func (s ContainerSpec) DisplayCommand() (string, error) { return s.shellCommand(true) }
 
 func (s ContainerSpec) shellCommand(redact bool) (string, error) {
-	args, err := s.runArgs(redact)
+	args, err := s.runArgs()
 	if err != nil {
 		return "", err
 	}
-	quoted := make([]string, len(args))
-	for i, a := range args {
-		quoted[i] = ShellQuote(a)
+	quoted := make([]string, 0, len(args)+1)
+	if s.APIKey != "" {
+		key := ShellQuote(s.APIKey)
+		if redact {
+			key = "'<redacted>'"
+		}
+		quoted = append(quoted, "VLLM_API_KEY="+key)
+	}
+	for _, a := range args {
+		quoted = append(quoted, ShellQuote(a))
 	}
 	return strings.Join(quoted, " "), nil
 }

@@ -114,6 +114,43 @@ func TestShellCommandKeepsJSONIntact(t *testing.T) {
 	}
 }
 
+// The key must reach the container without appearing on any command line:
+// docker's argv names the variable only, and the value comes from an
+// assignment the shell consumes before docker starts.
+func TestAPIKeyStaysOffDockerArgv(t *testing.T) {
+	s := ContainerSpec{
+		Name: "n", Image: "img@sha256:abc", HomeDir: "/home/u",
+		Args: []string{"serve", "m"}, APIKey: "sk-it's-secret",
+	}
+	args, err := s.RunArgs()
+	if err != nil {
+		t.Fatalf("RunArgs: %v", err)
+	}
+	for i, a := range args {
+		if strings.Contains(a, "sk-it") {
+			t.Fatalf("key on docker argv at %d: %q", i, args)
+		}
+	}
+	if !strings.Contains(strings.Join(args, " "), "-e VLLM_API_KEY --entrypoint") {
+		t.Errorf("docker is not told to pass VLLM_API_KEY through: %q", args)
+	}
+
+	line, err := s.ShellCommand()
+	if err != nil {
+		t.Fatalf("ShellCommand: %v", err)
+	}
+	if !strings.HasPrefix(line, `VLLM_API_KEY='sk-it'"'"'s-secret' docker run `) {
+		t.Errorf("key is not assigned ahead of docker: %s", line)
+	}
+	shown, err := s.DisplayCommand()
+	if err != nil {
+		t.Fatalf("DisplayCommand: %v", err)
+	}
+	if strings.Contains(shown, "sk-it") || !strings.Contains(shown, "<redacted>") {
+		t.Errorf("display command leaks or drops the redaction: %s", shown)
+	}
+}
+
 func TestShellQuote(t *testing.T) {
 	cases := map[string]string{
 		"plain":       "plain",

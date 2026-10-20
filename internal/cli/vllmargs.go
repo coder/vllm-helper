@@ -3,8 +3,10 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/profile"
 )
 
@@ -100,11 +102,24 @@ func serveEnvFromProfile(cfg *config.Config, p *profile.Profile) []string {
 	return append(os.Environ(), config.MergedEnv(cfg.File, cfg.Secrets, p.File)...)
 }
 
+// redactServeArgs hides credentials in a command about to be printed. Both
+// spellings vLLM accepts have to be covered: EXTRA_ARGS is free text, and
+// "--api-key=sk-..." there would otherwise reach a dry run verbatim.
 func redactServeArgs(args []string) []string {
 	out := append([]string{}, args...)
-	for i := 0; i < len(out)-1; i++ {
-		if out[i] == "--api-key" {
+	for i := 0; i < len(out); i++ {
+		if !strings.HasPrefix(out[i], "--") {
+			continue
+		}
+		if flag, _, inline := strings.Cut(out[i], "="); inline {
+			if detect.LooksSecret(flag) {
+				out[i] = flag + "=<redacted>"
+			}
+			continue
+		}
+		if detect.LooksSecret(out[i]) && i+1 < len(out) {
 			out[i+1] = "<redacted>"
+			i++
 		}
 	}
 	return out

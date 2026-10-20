@@ -277,8 +277,8 @@ func TestLooksSecret(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.flag, func(t *testing.T) {
 			t.Parallel()
-			if got := looksSecret(tt.flag); got != tt.want {
-				t.Errorf("looksSecret(%q) = %v, want %v", tt.flag, got, tt.want)
+			if got := LooksSecret(tt.flag); got != tt.want {
+				t.Errorf("LooksSecret(%q) = %v, want %v", tt.flag, got, tt.want)
 			}
 		})
 	}
