@@ -46,17 +46,24 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Shutdown closes the listener at once, so ListenAndServe returns before
+	// in-flight requests have drained; main waits on drained for the rest.
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdown)
+		if err := srv.Shutdown(shutdown); err != nil {
+			log.Printf("shutting down: %v", err)
+		}
 	}()
 
 	log.Printf("serving the docs on %s (base URL %q)", *listen, *baseURL)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+	<-drained
 }
 
 // defaultListen is $PORT on every interface, as a platform like Railway
