@@ -45,8 +45,8 @@ Re-create one to get a sized cache.
 1. Run `vllm-helper edit <profile>` to open it in `$EDITOR` — or `$VISUAL`, falling back to `nano` and then `vi`.
 2. Save your changes.
 
-The result is validated before it is kept: `MODEL` must be present, `EXTRA_ARGS` must parse, and `MAX_MODEL_LEN` must be a positive number of tokens.
-A change that fails validation is rejected with the reason rather than written.
+The editor writes the profile file directly, so the result is checked after you save, not before: `MODEL` must be present, `EXTRA_ARGS` must parse, and `MAX_MODEL_LEN` must be a positive number of tokens.
+A change that fails the check is reported with the reason, but it is already saved — run `edit` again to fix it, or the next restart will fail.
 
 To change a setting without an editor:
 
