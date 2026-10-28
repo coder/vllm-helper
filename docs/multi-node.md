@@ -1,15 +1,15 @@
 ---
 title: More than one machine
-description: Register machines once, then pool them as replicas or shard one model across them.
+description: Register machines once, then run a tested recipe, pool replicas, or shard one model across them.
 ---
 
 A model can span machines in three ways, and all three start from the same registry of nodes.
 
-| You want                                          | Use                                    |
-| ------------------------------------------------- | -------------------------------------- |
-| A tested configuration, with state and Coder sync | [`recipes launch`](./recipes.md)       |
-| Several copies of one model behind one endpoint   | [`pool`](#a-pool-is-replicas)          |
-| One model too large for a single machine          | [`shard`](#a-shard-is-one-model-split) |
+| You want                                          | Use                                      |
+| ------------------------------------------------- | ---------------------------------------- |
+| A tested configuration, with state and Coder sync | [`recipes launch`](#run-a-tested-recipe) |
+| Several copies of one model behind one endpoint   | [`pool`](#a-pool-is-replicas)            |
+| One model too large for a single machine          | [`shard`](#a-shard-is-one-model-split)   |
 
 ## Register the machines
 
@@ -25,6 +25,34 @@ vllm-helper node rm spark2
 - `--ssh` is how this machine orchestrates it.
 
 The registry lives in `nodes.json` beside your config.
+
+## Run a tested recipe
+
+A [recipe](./recipes.md) is a configuration that was run and measured on named hardware, with its image pinned by digest:
+
+```sh
+vllm-helper recipes list                                  # what is tested, and on what
+vllm-helper recipes show <id>                             # image, argv, provenance, measured numbers
+vllm-helper recipes launch <id> --nodes spark1,spark2     # rank 0, the first node, serves the API
+vllm-helper recipes stop <id> --nodes spark1,spark2
+```
+
+`recipes launch` starts the containers over SSH on the nodes you name, writes a profile of the same name, and points Coder at it.
+From then on `status`, `logs`, `restart` and `stop` act on the recipe instead of the native service unit, and `switch` stops it before starting another profile.
+`--dry-run` prints the commands, with the API key redacted, and changes nothing.
+
+Editing that profile is allowed and reaches the command line, but the entry then reports itself as the recipe plus local overrides and stops claiming the verified numbers.
+An override known to abort on the recipe's hardware is refused before any node is touched.
+
+To keep a recipe serving across reboots:
+
+```sh
+vllm-helper recipes install-service
+```
+
+This installs `vllm-cluster.service`, which runs whatever recipe the active profile names, and stands the native `vllm.service` down because it cannot serve a container.
+A watchdog timer relaunches the cluster when the endpoint stops answering.
+A deliberate stop (`vllm-helper stop`, `recipes stop`, or stopping the unit) is remembered, so the watchdog leaves it stopped until the next launch.
 
 ## A pool is replicas
 
