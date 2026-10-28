@@ -1012,17 +1012,16 @@ main.docs-main {
   overflow-y: auto;
 }
 
+/* Every level of the sidebar is a .docs-nav list, the root included, so the
+   reset applies to the class itself and indentation starts one level in. */
 .docs-nav {
   font-size: 0.8125rem;
-}
-
-.docs-nav ul {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-.docs-nav ul ul {
+.docs-nav .docs-nav {
   margin-top: 0.125rem;
   padding-left: 0.75rem;
   border-left: 1px solid var(--border-default);
