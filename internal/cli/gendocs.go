@@ -3,7 +3,7 @@
 // Regenerate with `go run ./scripts/gendocs` (or `go generate ./...`); a test
 // fails when the committed pages no longer match.
 //
-//go:generate go run ../scripts/gendocs -dir ../../docs
+//go:generate go run ../../scripts/gendocs -dir ../../docs
 package cli
 
 import (
