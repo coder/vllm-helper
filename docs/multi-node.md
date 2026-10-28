@@ -14,8 +14,10 @@ A model can span machines in three ways, and all three start from the same regis
 ## Register the machines
 
 `node` records a machine once; `pool`, `shard` and `recipes launch` then refer to it by name.
+Every name passed to `--nodes` must be registered, including the machine you run the command on. A node whose host is this machine is recognized as local and run without SSH.
 
 ```sh
+vllm-helper node add spark1 --host http://spark1:8001 --ssh coder@spark1
 vllm-helper node add spark2 --host http://spark2:8001 --ssh coder@spark2
 vllm-helper node ls
 vllm-helper node rm spark2

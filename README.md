@@ -3,23 +3,23 @@
 
 <h1>vllm-helper</h1>
 
-Run one large model at a time on a GPU machine, and switch models with one command.
+Serve large models with vLLM on one GPU machine or several, and switch models with one command.
 
 [Quickstart](#quickstart) | [Docs](docs/README.md) | [CLI reference](docs/reference/cli.md) | [Changelog](CHANGELOG.md)
 
 </div>
 
-vllm-helper manages [vLLM](https://github.com/vllm-project/vllm)'s OpenAI-compatible server on a machine. Each model's working `vllm serve` settings are saved as a profile, and switching to another profile restarts the server on it. It was built for unified-memory machines like the NVIDIA DGX Spark, where memory holds exactly one big model. It works on any Linux machine with an NVIDIA GPU, and experimentally on macOS through vLLM's CPU backend.
+vllm-helper manages [vLLM](https://github.com/vllm-project/vllm)'s OpenAI-compatible server on one machine or across several. Each model's working settings are saved as a profile, and switching to another profile restarts the server on it, whether that model runs on this machine alone or spans a group of them. It was built for unified-memory machines like the NVIDIA DGX Spark, where one machine holds one big model and a bigger model needs two or more working together. It works on any Linux machine with an NVIDIA GPU, and experimentally on macOS through vLLM's CPU backend.
 
 - Save a model's serving settings as a profile, and switch between profiles with one command
-- Search HuggingFace with every result's weight size checked against this machine's memory, and vLLM flags read from its model card
+- Search HuggingFace with every result's weight size checked against the machine's memory, and vLLM flags read from its model card
 - Adopt a vLLM server that is already running, without restarting it
-- Control the machine from a web panel that also serves these docs
-- Launch tested recipes: configurations that were run and measured on named hardware, pinned by image digest, across one or more machines
-- Pool replicas behind a session-sticky router, or shard one model across machines
+- Register other machines once, then launch tested recipes across them: configurations run and measured on named hardware, pinned by image digest
+- Pool replicas of one model behind a session-sticky router, or shard a model too big for one machine across several
+- Control a machine from a web panel that also serves these docs
 - Keep a [Coder](https://coder.com) deployment's model picker in step with whatever is loaded
 
-vllm-helper is a control plane only. Inference traffic goes straight to vLLM on its own port, so a bug in vllm-helper cannot break a request in flight.
+vllm-helper is a control plane. Inference traffic goes straight to vLLM on its own port, so a bug in vllm-helper cannot break a request in flight. The one exception is a pool, whose router sits in front of the replicas by design.
 
 ## Quickstart
 
@@ -44,6 +44,17 @@ vllm-helper status               # service state, active model, endpoint health
 ```
 
 Point any OpenAI-compatible client at `http://<machine>:8001/v1` with the `VLLM_API_KEY` from `~/.config/vllm-helper/secrets.env`. A first switch downloads the weights, so it takes as long as the download does.
+
+To serve across machines, register every machine a recipe will use on the one that will serve the API, that one included, then launch. vllm-helper drives the other nodes over SSH and runs the recipe's container on each with Docker:
+
+```shell
+vllm-helper node add spark1 --host http://spark1:8001 --ssh coder@spark1   # this machine
+vllm-helper node add spark2 --host http://spark2:8001 --ssh coder@spark2
+vllm-helper recipes list                              # what is tested, and on what hardware
+vllm-helper recipes launch <id> --nodes spark1,spark2
+```
+
+[More than one machine](docs/multi-node.md) covers recipes, pools and shards.
 
 ## How it works
 
