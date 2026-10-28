@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,6 +23,10 @@ const (
 	keyURL        = "CODER_URL"
 	keyToken      = "CODER_API_TOKEN"
 	keyProviderID = "CODER_AI_PROVIDER_ID"
+	// Optional. Coder caps a reply at its own default (32,000 tokens) unless
+	// the model entry carries an override, and that cap is server-side, so a
+	// deployment that wants longer answers has to say so here.
+	keyMaxOutput = "CODER_MAX_OUTPUT_TOKENS"
 )
 
 const notConfigured = "Coder sync: not configured (" +
@@ -70,7 +75,35 @@ func (p Plugin) Check(_ context.Context, cfg *config.Config) error {
 	if client == nil {
 		return nil
 	}
-	return client.Check()
+	if err := client.Check(); err != nil {
+		return err
+	}
+	return tokenExpiring(client)
+}
+
+// tokenExpiring reports a token close enough to expiry to act on.
+//
+// Coder caps token lifetime, so "expires eventually" is true for most of a
+// token's life and warning on it would be noise. The last two days are worth
+// interrupting for, because an expired token vanishes from the token list and
+// the only symptom is that Coder quietly stops being told what is serving.
+func tokenExpiring(client *Client) error {
+	k, err := client.TokenExpiry()
+	if err != nil || k.ExpiresAt.IsZero() {
+		// The sync itself works, so an unreadable key is not worth failing a
+		// health check over.
+		return nil
+	}
+	left := time.Until(k.ExpiresAt)
+	switch {
+	case left <= 0:
+		return fmt.Errorf("%s expired on %s -- mint a new one and set it in secrets.env",
+			keyToken, k.ExpiresAt.Format(time.DateOnly))
+	case left < 48*time.Hour:
+		return fmt.Errorf("%s expires in %dh (on %s) -- mint a new one and set it in secrets.env",
+			keyToken, int(left.Hours()), k.ExpiresAt.Format(time.DateOnly))
+	}
+	return nil
 }
 
 func (p Plugin) Commands() []*cobra.Command {
@@ -126,6 +159,7 @@ func prune(cfg *config.Config, yes bool) error {
 			orphans = append(orphans, e)
 		}
 	}
+	reportDuplicates(entries)
 	if len(orphans) == 0 {
 		fmt.Printf("Coder sync: all %d entries on this provider match a local profile.\n", len(entries))
 		return nil
@@ -154,6 +188,46 @@ func prune(cfg *config.Config, yes bool) error {
 		fmt.Printf("  deleted %s\n", o.Model)
 	}
 	return nil
+}
+
+// reportDuplicates names models with more than one entry on this provider.
+//
+// Only reported, never deleted: the rows are indistinguishable from here, and
+// the one to keep may be the one an operator gave options to in the UI.
+// Syncing now adopts by model, so new duplicates are not created; these are
+// left over from when state was keyed by profile name alone.
+func reportDuplicates(entries []Entry) {
+	for _, dups := range duplicateModels(entries) {
+		fmt.Printf("%d entries name %s; the picker will show it more than once:\n", len(dups), dups[0].Model)
+		for _, d := range dups {
+			state := "disabled"
+			if d.Enabled {
+				state = "enabled"
+			}
+			fmt.Printf("  %s  [%s]\n", d.ID, state)
+		}
+		fmt.Println("  Delete the ones you do not want in Coder; this command will not choose for you.")
+	}
+}
+
+// duplicateModels groups entries that name the same model, in the order the
+// models first appear so the report is stable.
+func duplicateModels(entries []Entry) [][]Entry {
+	byModel := map[string][]Entry{}
+	var order []string
+	for _, e := range entries {
+		if _, seen := byModel[e.Model]; !seen {
+			order = append(order, e.Model)
+		}
+		byModel[e.Model] = append(byModel[e.Model], e)
+	}
+	var out [][]Entry
+	for _, model := range order {
+		if len(byModel[model]) > 1 {
+			out = append(out, byModel[model])
+		}
+	}
+	return out
 }
 
 func plural(n int, one, many string) string {
@@ -270,7 +344,7 @@ func newClient(cfg *config.Config) *Client {
 // Coder rejects a context_limit of 0, so an unparseable MAX_MODEL_LEN has to
 // be reported here: sending it produced an HTTP 400 whose message said
 // nothing about which local setting was at fault.
-func modelConfig(p *profile.Profile, enabled bool) (ModelConfig, error) {
+func modelConfig(cfg *config.Config, p *profile.Profile, enabled bool) (ModelConfig, error) {
 	limit, err := strconv.ParseInt(p.MaxModelLen(), 10, 64)
 	if err != nil || limit <= 0 {
 		return ModelConfig{}, fmt.Errorf(
@@ -283,7 +357,28 @@ func modelConfig(p *profile.Profile, enabled bool) (ModelConfig, error) {
 		ContextLimit: limit,
 		Enabled:      enabled,
 		IsDefault:    enabled,
+		Options:      outputOptions(cfg),
 	}, nil
+}
+
+// outputOptions is the per-model override Coder stores alongside the entry.
+//
+// Unset means send nothing, which leaves whatever is configured in Coder
+// alone: an empty object would overwrite an operator's setting with nothing.
+func outputOptions(cfg *config.Config) map[string]any {
+	if cfg == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(cfg.Lookup(keyMaxOutput, ""))
+	if raw == "" {
+		return nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		fmt.Fprintf(os.Stderr, "Coder sync: %s is %q, which is not a token count; ignoring it\n", keyMaxOutput, raw)
+		return nil
+	}
+	return map[string]any{"max_output_tokens": n}
 }
 
 // activate makes this profile the single enabled/default model in Coder and
@@ -305,7 +400,7 @@ func activate(cfg *config.Config, p *profile.Profile) {
 		fmt.Println(notConfigured)
 		return
 	}
-	mc, err := modelConfig(p, true)
+	mc, err := modelConfig(cfg, p, true)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Coder sync:", err)
 		return
@@ -315,6 +410,20 @@ func activate(cfg *config.Config, p *profile.Profile) {
 	// A saved ID can name an entry that no longer exists. Recreating is what
 	// was wanted; refusing would leave the picker permanently stale.
 	id := state.Get(p.Name)
+	if id == "" {
+		// Nothing saved does not mean nothing exists. State is per profile
+		// name, but the picker is per model, so a renamed profile or a second
+		// machine syncing the same model would otherwise post a duplicate row
+		// and then fight with it over enabled/is_default.
+		if adopted, err := client.FindByModel(mc.Model); err != nil {
+			fmt.Fprintln(os.Stderr, "Coder sync: could not look for an existing entry:", err)
+		} else if adopted != "" {
+			fmt.Printf("Coder sync: adopting the existing entry for %s.\n", mc.Model)
+			id = adopted
+			state.Set(p.Name, id)
+			saveIDs(cfg, state)
+		}
+	}
 	if id != "" {
 		fmt.Printf("Coder sync: updating model-config for '%s'...\n", p.Name)
 		err := client.Update(id, mc)
@@ -346,15 +455,20 @@ func activate(cfg *config.Config, p *profile.Profile) {
 // disableOthers turns off every other profile's entry: vLLM serves one model
 // at a time, so any other entry names something this machine cannot answer
 // for. An entry that has already gone is forgotten rather than reported.
+//
+// Entries are owned by ID, not by profile name: adoption maps a second
+// profile for the same model onto the existing row, and disabling that row on
+// behalf of the other name turned off the entry this switch just enabled.
 func disableOthers(cfg *config.Config, client *Client, state *config.EnvFile, keep string) *config.EnvFile {
 	profiles, _ := profile.List(cfg.Dirs)
+	keepID := state.Get(keep)
 	dropped := false
 	for _, other := range profiles {
 		if other.Name == keep {
 			continue
 		}
 		id := state.Get(other.Name)
-		if id == "" {
+		if id == "" || id == keepID {
 			continue
 		}
 		switch err := client.Disable(id); {
@@ -385,7 +499,7 @@ func register(cfg *config.Config, p *profile.Profile) {
 		fmt.Printf("Coder sync: '%s' already has a model-config, leaving as-is.\n", p.Name)
 		return
 	}
-	mc, err := modelConfig(p, false)
+	mc, err := modelConfig(cfg, p, false)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Coder sync:", err)
 		return
@@ -400,7 +514,8 @@ func register(cfg *config.Config, p *profile.Profile) {
 	saveIDs(cfg, state)
 }
 
-// remove deletes a profile's Coder entry (used by `remove`).
+// remove deletes a profile's Coder entry (used by `remove`). An entry another
+// profile also maps to is still in use, so only this name's claim on it goes.
 func remove(cfg *config.Config, name string) {
 	client := newClient(cfg)
 	if client == nil {
@@ -412,10 +527,24 @@ func remove(cfg *config.Config, name string) {
 	if id == "" {
 		return
 	}
-	fmt.Printf("Coder sync: deleting model-config for '%s'...\n", name)
-	if err := client.Delete(id); err != nil {
-		fmt.Fprintln(os.Stderr, "Coder sync: delete failed (may already be gone), continuing:", err)
+	if other := sharedWith(state, id, name); other != "" {
+		fmt.Printf("Coder sync: keeping the model-config '%s' shares with '%s'.\n", name, other)
+	} else {
+		fmt.Printf("Coder sync: deleting model-config for '%s'...\n", name)
+		if err := client.Delete(id); err != nil {
+			fmt.Fprintln(os.Stderr, "Coder sync: delete failed (may already be gone), continuing:", err)
+		}
 	}
 	state.Delete(name)
 	saveIDs(cfg, state)
+}
+
+// sharedWith names another profile mapped to the same entry, or "".
+func sharedWith(state *config.EnvFile, id, except string) string {
+	for _, k := range state.Keys() {
+		if k != except && state.Get(k) == id {
+			return k
+		}
+	}
+	return ""
 }

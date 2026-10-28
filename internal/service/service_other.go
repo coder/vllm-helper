@@ -11,6 +11,8 @@ var errUnsupported = errors.New("service management is only implemented on Linux
 
 func (s Service) IsActive() string { return "unknown" }
 
+func (s Service) Label() string { return "service" }
+
 func (s Service) NRestarts() int { return -1 }
 
 func (s Service) Health() Health { return Health{State: "unknown", NRestarts: -1} }

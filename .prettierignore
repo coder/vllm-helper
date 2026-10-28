@@ -7,5 +7,9 @@ internal/hf/testdata/
 # Fuzzing corpus, written by `go test -fuzz`.
 internal/config/testdata/
 
+# Upstream recipes recipediff compares against. Reformatting them would make
+# the fixtures disagree with the files they were copied from.
+tools/recipediff/testdata/
+
 go.mod
 go.sum

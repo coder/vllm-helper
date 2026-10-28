@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 
@@ -12,6 +13,7 @@ import (
 
 	"github.com/coder/vllm-helper/internal/config"
 	"github.com/coder/vllm-helper/internal/plugin"
+	"github.com/coder/vllm-helper/internal/profile"
 	"github.com/coder/vllm-helper/internal/service"
 )
 
@@ -60,6 +62,7 @@ func newRootCmd() *cobra.Command {
 		newListCmd(),
 		newSwitchCmd(),
 		newNewCmd(),
+		newRecipesCmd(),
 		newSearchCmd(),
 		newInspectCmd(),
 		newInstallGGUFCmd(),
@@ -80,6 +83,11 @@ func newRootCmd() *cobra.Command {
 
 		newStartCmd(),
 		newVersionCmd(),
+
+		// Multi-node scaffolding
+		newNodeCmd(),
+		newPoolCmd(),
+		newShardCmd(),
 	)
 	// Integrations contribute their own commands, so the set of them is a
 	// property of what's registered rather than a list maintained here.
@@ -138,7 +146,110 @@ func loadConfig() (*config.Config, error) {
 	return config.Load()
 }
 
-func svc(cfg *config.Config) service.Service {
+// runner is how the CLI drives whatever is actually serving the active model:
+// the init-system service, or a recipe's container cluster. Label names which
+// one, so a report about a two-node cluster does not say "systemd".
+//
+// Installed/Install are excluded as setup-only, and Start because
+// "vllm-helper start" is the exec entrypoint the service manager runs.
+type runner interface {
+	IsActive() string
+	NRestarts() int
+	Health() service.Health
+	Restart() error
+	Stop() error
+	StartTail(n int) (*exec.Cmd, error)
+	PrintLogs(n int) error
+	LastLogs(n int) string
+	LogHint() string
+	Label() string
+}
+
+// svc is the runner for the active model: the cluster when the active profile
+// is owned by a recipe, otherwise the init system. Picking on the profile is
+// the whole point -- status and logs used to report systemd regardless.
+func svc(cfg *config.Config) runner {
+	if c := activeClusterRunner(cfg); c != nil {
+		return c
+	}
+	return systemdService(cfg)
+}
+
+// runnerIdentity names what a runner holds the GPUs and port with, so a switch
+// can tell when it is about to leave one runner for another.
+func runnerIdentity(r runner) string {
+	if c, ok := r.(*clusterRunner); ok {
+		return c.identity()
+	}
+	if s, ok := r.(service.Service); ok {
+		return "native:" + s.Name
+	}
+	return r.Label()
+}
+
+// stopOutgoing stops the runner a switch is leaving when the one taking over
+// is a different runner. The incoming runner only replaces its own
+// containers or unit, so without this a recipe kept the GPUs and the API port
+// after a switch to a native profile, and the reverse left vLLM running.
+//
+// A cluster is always told to stop, even with its head down, because
+// headless workers can outlive the head and still hold GPU memory. A native
+// unit that is not running is left alone, which also keeps platforms without
+// a service manager working.
+func stopOutgoing(outgoing, incoming runner) error {
+	if runnerIdentity(outgoing) == runnerIdentity(incoming) {
+		return nil
+	}
+	c, cluster := outgoing.(*clusterRunner)
+	if cluster && c.needNodes() != nil {
+		// A profile from before the topology was recorded: there is no node
+		// list to act on, and refusing would trap the user on it.
+		fmt.Fprintf(os.Stderr, "warning: the previous profile does not record its nodes, so any %s containers are still running; stop them with 'vllm-helper recipes stop %s --nodes <n1,n2>'\n", c.recipe.ID, c.recipe.ID)
+		return nil
+	}
+	state := ""
+	if !cluster {
+		state = outgoing.IsActive()
+	}
+	if !outgoingNeedsStop(runnerIdentity(outgoing), runnerIdentity(incoming), cluster, state) {
+		return nil
+	}
+	fmt.Printf("Stopping the %s the previous profile ran on...\n", outgoing.Label())
+	if err := outgoing.Stop(); err != nil {
+		return fmt.Errorf("stopping the outgoing %s, which would keep the GPUs and port: %w", outgoing.Label(), err)
+	}
+	return nil
+}
+
+// outgoingNeedsStop is stopOutgoing's decision, kept pure for testing.
+func outgoingNeedsStop(outgoingID, incomingID string, outgoingIsCluster bool, outgoingState string) bool {
+	if outgoingID == incomingID {
+		return false
+	}
+	return outgoingIsCluster || outgoingState == "active" || outgoingState == "activating"
+}
+
+// activeClusterRunner returns nil when the active model is not a recipe, which
+// is the signal to fall back rather than an error worth surfacing here.
+func activeClusterRunner(cfg *config.Config) *clusterRunner {
+	name := cfg.ActiveProfile()
+	if name == "" {
+		return nil
+	}
+	p, err := profile.Load(cfg.Dirs, name)
+	if err != nil || !p.Generated() {
+		return nil
+	}
+	c, err := clusterRunnerFor(cfg, p)
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
+// systemdService is the init-system runner. Setup needs the concrete type
+// because installing a unit is not part of the runner contract.
+func systemdService(cfg *config.Config) service.Service {
 	return service.Service{
 		Name:  cfg.ServiceName(),
 		Scope: cfg.ServiceScope(),

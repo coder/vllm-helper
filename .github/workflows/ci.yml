@@ -46,3 +46,21 @@ jobs:
           GOOS=darwin GOARCH=arm64 go build ./...
       - name: test
         run: go test -race ./...
+
+  # recipediff is a separate module so the CLI keeps its two direct
+  # dependencies. The root ./... skips nested modules, so without this job the
+  # tool would never be built or tested. Its tests read checked-in fixtures and
+  # never touch the network.
+  recipediff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: vet
+        working-directory: tools/recipediff
+        run: go vet ./...
+      - name: test
+        working-directory: tools/recipediff
+        run: go test ./...

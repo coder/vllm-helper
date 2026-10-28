@@ -26,6 +26,50 @@ func (p *Profile) MaxModelLen() string {
 }
 func (p *Profile) ExtraArgs() string { return p.File.Get("EXTRA_ARGS") }
 
+// RecipeKey names the recipe a profile was generated from. The recipe supplies
+// the base flags; whatever this file says on top of them is a local override
+// that "recipes launch" honours, so a recipe profile stays editable.
+const RecipeKey = "RECIPE"
+
+// How the recipe was launched. Recorded because the verbs that come after a
+// launch -- status, logs, restart -- have no --nodes flag to read, and asking
+// the user to repeat the topology every time is how the two drift apart.
+const (
+	NodesKey      = "NODES"
+	SSHKeyKey     = "SSH_KEY"
+	ContainerKey  = "CONTAINER"
+	MasterPortKey = "MASTER_PORT"
+)
+
+// Nodes is the registry node names in rank order; rank 0 serves the API.
+func (p *Profile) Nodes() []string {
+	var out []string
+	for _, n := range strings.Split(p.File.Get(NodesKey), ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func (p *Profile) SSHKey() string    { return strings.TrimSpace(p.File.Get(SSHKeyKey)) }
+func (p *Profile) Container() string { return strings.TrimSpace(p.File.Get(ContainerKey)) }
+
+// MasterPort returns 0 when unset, which callers read as "use the default".
+func (p *Profile) MasterPort() int {
+	n, err := strconv.Atoi(strings.TrimSpace(p.File.Get(MasterPortKey)))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// Recipe returns the recipe this profile was generated from, or "".
+func (p *Profile) Recipe() string { return strings.TrimSpace(p.File.Get(RecipeKey)) }
+
+// Generated reports whether a recipe owns this profile.
+func (p *Profile) Generated() bool { return p.Recipe() != "" }
+
 // Status returns the human "# Status: ..." line from the profile header.
 func (p *Profile) Status() string {
 	for _, line := range p.File.LeadingComments() {
@@ -36,9 +80,14 @@ func (p *Profile) Status() string {
 	return ""
 }
 
-// DisplayName derives a Coder-facing name from the model repo:
+// DisplayName is the Coder-facing name. An explicit DISPLAY_NAME wins, because
+// deriving from the repo cannot know that "DeepSeek-V4-Flash-0731" is published
+// as "DeepSeek V4 Flash"; otherwise it is derived from the model repo:
 // "deepreinforce-ai/Ornith-1.0-35B-FP8" -> "Ornith 1.0 35B FP8".
 func (p *Profile) DisplayName() string {
+	if explicit := strings.TrimSpace(p.File.Get("DISPLAY_NAME")); explicit != "" {
+		return explicit
+	}
 	name := p.Model()
 	if i := strings.LastIndex(name, "/"); i >= 0 {
 		name = name[i+1:]

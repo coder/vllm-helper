@@ -80,6 +80,13 @@ func printProfiles(cfg *config.Config) {
 		if p.Name == active {
 			marker = " [active]"
 		}
+		// A recipe profile with edits is no longer the thing we measured, so
+		// say so wherever it is listed.
+		if r, ok := recipeForProfile(p); ok {
+			if local, err := recipeOverrides(cfg, r); err == nil && len(local.args) > 0 {
+				marker = " (+ local overrides)" + marker
+			}
+		}
 		fmt.Printf("  %-24s %s%s\n", p.Name, p.Status(), marker)
 	}
 }
@@ -297,9 +304,31 @@ func runRemove(args []string) error {
 // record the active profile, sync Coder, restart the service, and watch
 // the boot according to opts.
 func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) error {
+	// WriteActiveEnv records the active profile as its last step, so the restart
+	// below resolves the runner for the profile being switched to rather than
+	// the one being left. That ordering is what lets a recipe profile go through
+	// here at all: it used to be refused because the restart could only ever
+	// mean the init system.
+	//
+	// Check the runner can act BEFORE publishing anything. The Coder notify
+	// happens before the restart, so a failure after this point leaves Coder
+	// advertising a model that is not being served -- switching to a recipe
+	// whose profile had no recorded topology did exactly that.
+	if p.Generated() {
+		c, err := clusterRunnerFor(cfg, p)
+		if err != nil {
+			return err
+		}
+		if err := c.preflight(cfg); err != nil {
+			return err
+		}
+	}
+	// Captured before WriteActiveEnv changes which runner svc resolves to.
+	outgoing := svc(cfg)
 	if err := control.WriteActiveEnv(cfg, p); err != nil {
 		return err
 	}
+	incoming := svc(cfg)
 	// Warn, never refuse: profiles get hand-edited and vLLM gets upgraded
 	// underneath one that used to work, but the user asked for this model
 	// and it is not this command's place to overrule that.
@@ -319,10 +348,13 @@ func activateProfile(cfg *config.Config, p *profile.Profile, opts watchOpts) err
 	// plugin taking its time doesn't leave "Restarting..." on screen with
 	// nothing happening yet.
 	restart := func() error {
+		if err := stopOutgoing(outgoing, incoming); err != nil {
+			return err
+		}
 		fmt.Println()
-		fmt.Printf("Restarting %s (this reloads the model -- can take several minutes,\n", cfg.ServiceName())
-		fmt.Println("longer if the model isn't cached on disk yet)...")
-		return svc(cfg).Restart()
+		fmt.Println("Reloading the model (this can take several minutes, longer if it")
+		fmt.Println("isn't cached on disk yet)...")
+		return incoming.Restart()
 	}
 	if err := control.NotifyAndRestart(context.Background(), cfg, p, os.Stderr, restart); err != nil {
 		return err
@@ -401,7 +433,7 @@ func runStatus(jsonOut bool) error {
 	if jsonOut {
 		return printJSON(r)
 	}
-	fmt.Printf("%-9s %s\n", config.ServiceManager+":", r.Service)
+	fmt.Printf("%-9s %s\n", svc(cfg).Label()+":", r.Service)
 	fmt.Printf("profile:  %s\n", r.Profile)
 	fmt.Printf("model:    %s\n", r.Model)
 	if r.Healthy {
@@ -426,7 +458,14 @@ func runStatus(jsonOut bool) error {
 			fmt.Printf("last log: %s\n", r.LastLog)
 		}
 	} else {
-		fmt.Printf("endpoint: not responding (http %03d on port %s) -- still loading, or check the service logs\n", r.HTTPStatus, r.Port)
+		// "still loading" is wrong when nothing is running: a stopped model is
+		// waiting for someone to start it, not making progress.
+		switch r.Service {
+		case "inactive", "unknown":
+			fmt.Printf("endpoint: not responding (http %03d on port %s) -- nothing is running; start it with 'vllm-helper restart'\n", r.HTTPStatus, r.Port)
+		default:
+			fmt.Printf("endpoint: not responding (http %03d on port %s) -- still loading, or check the logs\n", r.HTTPStatus, r.Port)
+		}
 	}
 	if hint := svc(cfg).LogHint(); hint != "" {
 		fmt.Printf("logs:     %s\n", hint)

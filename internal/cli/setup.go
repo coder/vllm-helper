@@ -155,7 +155,7 @@ VLLM_API_KEY=%s
 	if err != nil {
 		return err
 	}
-	if svc(cfg).Installed() {
+	if systemdService(cfg).Installed() {
 		fmt.Println()
 		fmt.Printf("Service unit %s already installed -- setup complete.\n", cfg.ServiceName())
 		return nil
@@ -178,7 +178,7 @@ func installUnit(cfg *config.Config) error {
 	}
 	self, _ = filepath.EvalSymlinks(self)
 
-	path, err := svc(cfg).Install(self)
+	path, err := systemdService(cfg).Install(self)
 	if err != nil {
 		return err
 	}

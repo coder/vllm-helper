@@ -9,6 +9,47 @@ the fact.
 
 ## [Unreleased]
 
+### Added
+
+- Recipes: launch configurations that have been run and measured, rather than
+  inferred. An entry pins the model, the image by digest, the exact argv and
+  the numbers it produced on named hardware, and `recipes list` / `recipes show`
+  report where every setting came from. `recipes launch` starts the containers
+  over SSH on the nodes you name — a recipe may span machines — writes a profile
+  of the same name, and points Coder at what is now serving, so the picker and
+  the server cannot disagree. `recipes stop` clears them again.
+- `status`, `logs`, `restart` and `stop` follow whatever is actually serving.
+  They used to assume the init-system service and would report systemd as
+  healthy while a container did the work, or print "Stopped vllm.service" about
+  a two-node cluster.
+- `recipes install-service` installs a unit that keeps the active recipe
+  serving, plus a timer that relaunches it when the endpoint stops answering.
+  It stands the native unit down, which cannot serve a container, and holds
+  off while a launch is in flight: a model takes minutes to load, and a
+  watchdog that reads that silence as an outage restarts the previous profile
+  over the top of the new one. A deliberate `stop` or `systemctl stop` is left
+  stopped. The web panel's buttons do not drive recipes yet; use the CLI.
+- Switching between a recipe and a native profile stops the one being left,
+  so neither keeps the GPUs and port the other needs.
+- Declared deviations. Where an entry differs from the upstream recipe it came
+  from, it says so as data — the setting, upstream's value, ours, and why.
+  `tools/recipediff` expands the upstream recipe and reports any difference
+  that has not been declared, comparing content rather than commit ids so a
+  pin that merely trails upstream is not reported as drift.
+- A node registry and a router, so a recipe can name the machines it needs.
+
+### Changed
+
+- Coder entries are matched by model rather than by profile name. A renamed
+  profile, or a second machine serving the same model, now adopts the existing
+  entry instead of adding a second row the picker would offer twice.
+- `doctor` warns when the Coder token is within two days of expiring. Coder
+  caps token lifetime and an expired token simply stops the picker being
+  updated, with no other signal.
+- `CODER_MAX_OUTPUT_TOKENS` raises Coder's server-side reply cap for the models
+  this machine serves. Unset sends nothing, so whatever is configured in Coder
+  stays.
+
 ## [0.4.0] - 2026-09-07
 
 ### Added

@@ -1,0 +1,534 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/coder/vllm-helper/internal/config"
+	"github.com/coder/vllm-helper/internal/control"
+	"github.com/coder/vllm-helper/internal/nodes"
+	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/recipe"
+)
+
+// discoverScript reports the cluster interface, both RoCE devices and this
+// node's address on that interface. It runs on the node rather than being
+// configured because these are properties of the machine; hardcoding them
+// would bake one deployment into a shipped tool.
+const discoverScript = `set -u
+iface="${VH_IFACE:-}"
+if [ -z "$iface" ]; then
+  iface=$(ibdev2netdev 2>/dev/null | awk '$NF=="(Up)"{print $5; exit}')
+fi
+ibif=$(ibdev2netdev 2>/dev/null | awk '$NF=="(Up)"{printf "%s,", $1}' | sed 's/,$//')
+ip=$(ip -o -4 addr show dev "$iface" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+printf 'IFACE_NAME=%s\nIB_IF=%s\nNODE_IP=%s\nHOME_DIR=%s\n' "$iface" "$ibif" "$ip" "$HOME"
+`
+
+type recipeLaunchOptions struct {
+	nodeNames  []string
+	iface      string
+	masterPort int
+	container  string
+	sshKey     string
+	dryRun     bool
+	skipCoder  bool
+}
+
+func newRecipesLaunchCmd() *cobra.Command {
+	var o recipeLaunchOptions
+	c := &cobra.Command{
+		Use:   "launch <id>",
+		Short: "Launch a tested recipe, and point the active profile and Coder at it",
+		Long: `Launch a tested recipe, and point the active profile and Coder at it.
+
+To bring the current model back up without switching, use "vllm-helper restart":
+it drives whichever runner the active profile belongs to.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, a []string) error { return runRecipeLaunch(cmd.Context(), a[0], o) },
+	}
+	f := c.Flags()
+	f.StringSliceVar(&o.nodeNames, "nodes", nil, "registry node names in rank order; rank 0 serves the API")
+	f.StringVar(&o.iface, "iface", "", "cluster interface to use instead of the discovered one")
+	f.IntVar(&o.masterPort, "master-port", defaultRecipeMasterPort, "rendezvous port for the ranks")
+	f.StringVar(&o.container, "container-name", defaultRecipeContainer, "container name on each node")
+	f.StringVar(&o.sshKey, "ssh-key", "", "private key for reaching non-head nodes")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what would run and change nothing")
+	f.BoolVar(&o.skipCoder, "no-activate", false, "launch only; leave the active profile and Coder alone")
+	return c
+}
+
+func newRecipesStopCmd() *cobra.Command {
+	var o recipeLaunchOptions
+	c := &cobra.Command{
+		Use:   "stop <id>",
+		Short: "Stop the containers a tested recipe started",
+		Args:  cobra.ExactArgs(1),
+		RunE:  func(cmd *cobra.Command, a []string) error { return runRecipeStop(a[0], o) },
+	}
+	f := c.Flags()
+	f.StringSliceVar(&o.nodeNames, "nodes", nil, "registry node names")
+	f.StringVar(&o.container, "container-name", defaultRecipeContainer, "container name on each node")
+	f.StringVar(&o.sshKey, "ssh-key", "", "private key for reaching non-head nodes")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what would run and change nothing")
+	return c
+}
+
+// Defaults shared by the launch flags and the cluster runner, so a runner
+// built from a profile that predates those keys lands on the same values the
+// launch would have used.
+const (
+	defaultRecipeContainer  = "vllm-node"
+	defaultRecipeMasterPort = 29501
+)
+
+// recipeMember is one node plus what we discovered about it.
+type recipeMember struct {
+	node       nodes.Node
+	rank       int
+	discovered map[string]string
+}
+
+func resolveRecipeMembers(r recipe.TestedRecipe, o recipeLaunchOptions) ([]recipeMember, error) {
+	reg, err := nodes.Load()
+	if err != nil {
+		return nil, err
+	}
+	names := o.nodeNames
+	if len(names) == 0 {
+		return nil, fmt.Errorf("--nodes is required: %s needs %d node(s), and rank order matters", r.ID, r.Nodes)
+	}
+	if len(names) != r.Nodes {
+		return nil, fmt.Errorf("%s is verified on %d node(s) but %d were given; a tested recipe is only tested at its own topology", r.ID, r.Nodes, len(names))
+	}
+	out := make([]recipeMember, 0, len(names))
+	for i, name := range names {
+		n, ok := reg.Get(name)
+		if !ok {
+			return nil, fmt.Errorf("no node %q in the registry; add it with 'vllm-helper node add'", name)
+		}
+		out = append(out, recipeMember{node: n, rank: i})
+	}
+	return out, nil
+}
+
+// nodeCommand builds the command that runs a script on a member: directly
+// when the node is this machine, over ssh with the script on stdin otherwise.
+// Locality is a property of the node, not of its rank -- assuming the head was
+// wherever the CLI happened to run meant a container with the same name on
+// another node could be inspected and reported as the head's.
+func nodeCommand(m recipeMember, key, script string, env []string) (*exec.Cmd, error) {
+	var cmd *exec.Cmd
+	if m.node.IsLocal() {
+		cmd = exec.Command("bash", "-s")
+	} else {
+		target, err := sshTarget(m.node)
+		if err != nil {
+			return nil, err
+		}
+		args := []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"}
+		if key != "" {
+			args = append(args, "-i", key)
+		}
+		args = append(args, target, "bash", "-s")
+		cmd = exec.Command("ssh", args...)
+	}
+	cmd.Stdin = strings.NewReader(script + "\n")
+	cmd.Env = append(os.Environ(), env...)
+	return cmd, nil
+}
+
+// nodeScript runs a script on a member and returns stdout. Callers that need
+// to stream and kill the command build it with nodeCommand instead.
+func nodeScript(m recipeMember, key, script string, env []string) (string, error) {
+	cmd, err := nodeCommand(m, key, script, env)
+	if err != nil {
+		return "", err
+	}
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := cmd.Run(); err != nil {
+		return out.String(), fmt.Errorf("%s: %w: %s", m.node.Name, err, strings.TrimSpace(errb.String()))
+	}
+	return out.String(), nil
+}
+
+func parseKeyValues(s string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(s, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok && k != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	tested, err := recipe.LoadTested()
+	if err != nil {
+		return err
+	}
+	r, ok := tested.Get(id)
+	if !ok {
+		return fmt.Errorf("no tested recipe %q", id)
+	}
+	// Any real launch is someone asking for the cluster to run, so it lifts a
+	// deliberate stop before anything on the nodes can fail. Lifting it only on
+	// success would let a relaunch that failed early -- a worker still booting
+	// -- leave the unit's ExecStop marker in place and the watchdog off for good.
+	if !o.dryRun {
+		clearStopped(cfg)
+	}
+	if r.Image == "" {
+		return fmt.Errorf("%s pins no image, so there is nothing to launch", r.ID)
+	}
+	local, err := recipeOverrides(cfg, r)
+	if err != nil {
+		return err
+	}
+	// Resolve the argv before touching any node, so an override the hardware
+	// cannot run is refused while whatever is serving is still serving.
+	serveArgs, err := r.ServeArgsWith(local.args)
+	if err != nil {
+		return err
+	}
+	members, err := resolveRecipeMembers(r, o)
+	if err != nil {
+		return err
+	}
+	head := members[0].node.Name
+
+	var denv []string
+	if o.iface != "" {
+		denv = append(denv, "VH_IFACE="+o.iface)
+	}
+	for i := range members {
+		envScript := discoverScript
+		if o.iface != "" {
+			envScript = "VH_IFACE=" + recipe.ShellQuote(o.iface) + "\n" + discoverScript
+		}
+		out, err := nodeScript(members[i], o.sshKey, envScript, denv)
+		if err != nil {
+			return fmt.Errorf("discover on %s: %w", members[i].node.Name, err)
+		}
+		members[i].discovered = parseKeyValues(out)
+		for _, need := range r.Placeholders() {
+			if members[i].discovered[need] == "" {
+				return fmt.Errorf("%s: could not discover %s (recipe %s needs it); pass --iface if autodiscovery is wrong", members[i].node.Name, need, r.ID)
+			}
+		}
+	}
+
+	masterAddr := members[0].discovered[recipe.PlaceholderNodeIP]
+	if masterAddr == "" {
+		return fmt.Errorf("head node %s has no address on the cluster interface", head)
+	}
+
+	specs := make([]recipe.ContainerSpec, len(members))
+	for i, m := range members {
+		env, err := r.NodeEnv(m.discovered)
+		if err != nil {
+			return fmt.Errorf("%s: %w", m.node.Name, err)
+		}
+		args := append([]string{"serve", r.Model}, serveArgs...)
+		args = append(args, r.DistArgs(m.rank, masterAddr, o.masterPort)...)
+		specs[i] = recipe.ContainerSpec{
+			Name:    o.container,
+			Image:   r.Image,
+			HomeDir: m.discovered["HOME_DIR"],
+			Env:     env,
+			Args:    args,
+			APIKey:  cfg.APIKey(),
+		}
+	}
+
+	fmt.Printf("%s  %s\n", r.DisplayName, r.Summary())
+	fmt.Printf("  image      %s\n", r.Image)
+	fmt.Printf("  master     %s:%d\n", masterAddr, o.masterPort)
+	if flags := recipe.OverrideFlags(local.args); len(flags) > 0 {
+		fmt.Println("  overrides  " + strings.Join(flags, " ") + " from profile " + local.profile.Name)
+		fmt.Println("  claim      recipe plus local overrides -- the verified numbers no longer describe this launch")
+	}
+	if cfg.APIKey() == "" {
+		fmt.Println("  auth       none -- VLLM_API_KEY is unset, so anyone who can reach the port can use it")
+	} else {
+		fmt.Println("  auth       VLLM_API_KEY from secrets.env")
+	}
+	for _, m := range members {
+		role := "head, serves the API"
+		if m.rank != 0 {
+			role = "worker, headless"
+		}
+		fmt.Printf("  rank %d     %s (%s) iface=%s ib=%s ip=%s\n", m.rank, m.node.Name, role,
+			m.discovered[recipe.PlaceholderIface], m.discovered[recipe.PlaceholderIBIf], m.discovered[recipe.PlaceholderNodeIP])
+	}
+	fmt.Println()
+
+	if o.dryRun {
+		for i, m := range members {
+			cmdline, err := specs[i].DisplayCommand()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("# %s (rank %d)\n%s\n\n", m.node.Name, m.rank, cmdline)
+		}
+		fmt.Println("dry run: nothing was started and no profile or Coder state changed")
+		return nil
+	}
+
+	// Workers must be listening before the head starts its rendezvous, so
+	// launch in descending rank order and finish with rank 0.
+	//
+	// Stand the watchdog off for the length of the load: the endpoint is
+	// deliberately down while a model loads, and a timer that reads that as
+	// an outage will relaunch the previous profile over the top of this one.
+	// Written only now, so a launch refused above, or a dry run, does not
+	// silence it.
+	markLaunching(cfg, launchStandOff)
+	for i := len(members) - 1; i >= 0; i-- {
+		m := members[i]
+		if _, err := nodeScript(m, o.sshKey, "docker rm -f "+recipe.ShellQuote(o.container)+" >/dev/null 2>&1 || true", nil); err != nil {
+			return fmt.Errorf("clear old container on %s: %w", m.node.Name, err)
+		}
+		cmdline, err := specs[i].ShellCommand()
+		if err != nil {
+			return err
+		}
+		if _, err := nodeScript(m, o.sshKey, cmdline, nil); err != nil {
+			return fmt.Errorf("start rank %d on %s: %w", m.rank, m.node.Name, err)
+		}
+		fmt.Printf("started rank %d on %s\n", m.rank, m.node.Name)
+	}
+
+	if o.skipCoder {
+		fmt.Println("skipped profile activation, so the active profile and Coder still describe whatever ran before")
+		return nil
+	}
+	return activateRecipeProfile(ctx, cfg, r, local, o)
+}
+
+// recipeOverrides reads the local override layer for a recipe: the profile of
+// the same name. Editing that profile is allowed, and has to reach argv -- the
+// Coder sync already reads MAX_MODEL_LEN and DISPLAY_NAME from it, so an
+// ignored edit would advertise one server while another one runs.
+func recipeOverrides(cfg *config.Config, r recipe.TestedRecipe) (overrideLayer, error) {
+	if _, err := os.Stat(cfg.Dirs.ProfileFile(r.ID)); err != nil {
+		return overrideLayer{}, nil
+	}
+	p, err := profile.Load(cfg.Dirs, r.ID)
+	if err != nil {
+		return overrideLayer{}, err
+	}
+	if m := strings.TrimSpace(p.Model()); m != "" && m != r.Model {
+		return overrideLayer{}, fmt.Errorf("profile %s names model %s but recipe %s serves %s; launch runs the recipe's model, so keep a different model in its own profile", p.Name, m, r.ID, r.Model)
+	}
+	var knobs []string
+	for _, k := range []struct{ key, flag string }{
+		{"MAX_MODEL_LEN", "--max-model-len"},
+		{"GPU_MEMORY_UTILIZATION", "--gpu-memory-utilization"},
+		{"KV_CACHE_MEMORY_BYTES", "--kv-cache-memory-bytes"},
+	} {
+		if v := strings.TrimSpace(p.File.Get(k.key)); v != "" {
+			knobs = append(knobs, k.flag, v)
+		}
+	}
+	var extra []string
+	if raw := strings.TrimSpace(p.ExtraArgs()); raw != "" {
+		words, err := config.SplitArgs(raw)
+		if err != nil {
+			return overrideLayer{}, fmt.Errorf("profile %s EXTRA_ARGS: %w", p.Name, err)
+		}
+		extra = words
+	}
+	// Only a disagreement is an override: a profile that restates the recipe
+	// -- which the first launcher wrote out in full -- is still untouched.
+	//
+	// Knobs and EXTRA_ARGS land in one argv, EXTRA_ARGS last, so they are
+	// resolved together: an EXTRA_ARGS value that happens to match the recipe
+	// still overrides a knob, and stripping it on its own would hand the
+	// launch the knob's value instead. For the same reason the EXTRA_ARGS
+	// written back is compared against the recipe with the knobs applied: a
+	// token is only dropped when the next launch would not change without it.
+	base := r.ServeArgs()
+	extraOnly := recipe.StripRestatements(recipe.MergeArgs(base, knobs), extra)
+	layer := overrideLayer{
+		profile: p,
+		args:    recipe.StripRestatements(base, append(append([]string{}, knobs...), extra...)),
+		extra:   extraOnly,
+		pruned:  len(extraOnly) < len(extra),
+	}
+	return layer, nil
+}
+
+// overrideLayer is what the local profile contributes on top of a recipe.
+// extra is kept apart from args because it is what gets written back to
+// EXTRA_ARGS: a token that restates the recipe carries no information, and
+// leaving it there would silently pin this profile to today's recipe if the
+// recipe's value ever changed.
+type overrideLayer struct {
+	profile *profile.Profile
+	args    []string
+	extra   []string
+	pruned  bool
+}
+
+// recipeForProfile finds the recipe a generated profile was launched from.
+func recipeForProfile(p *profile.Profile) (recipe.TestedRecipe, bool) {
+	if !p.Generated() {
+		return recipe.TestedRecipe{}, false
+	}
+	t, err := recipe.LoadTested()
+	if err != nil {
+		return recipe.TestedRecipe{}, false
+	}
+	return t.Get(p.Recipe())
+}
+
+// overrideNote describes how far the local profile has moved from the recipe,
+// for the places that would otherwise present the verified numbers as if they
+// still described this machine. Best effort: no config means nothing to say.
+func overrideNote(r recipe.TestedRecipe) string {
+	cfg, err := loadConfig()
+	if err != nil {
+		return ""
+	}
+	local, err := recipeOverrides(cfg, r)
+	if err != nil || local.profile == nil || len(local.args) == 0 {
+		return ""
+	}
+	return "profile " + local.profile.Name + " overrides " + strings.Join(recipe.OverrideFlags(local.args), " ")
+}
+
+// recipeFlag reads a value out of the recipe's own flags, so a generated
+// profile starts out agreeing with the recipe instead of quietly overriding it.
+func recipeFlag(r recipe.TestedRecipe, flag, fallback string) string {
+	if v, ok := recipe.FlagValue(r.Args, flag); ok && v != "" {
+		return v
+	}
+	return fallback
+}
+
+// activateRecipeProfile records the launch as a profile and runs the same
+// activation switch does, so the active profile, active.env and Coder all
+// describe what is actually serving. The raw docker path bypassed all three.
+func activateRecipeProfile(ctx context.Context, cfg *config.Config, r recipe.TestedRecipe, local overrideLayer, o recipeLaunchOptions) error {
+	// The context Coder advertises is what the server is configured to serve,
+	// so the recipe's own --max-model-len is the answer whenever it has one.
+	// Requiring a verified context here refused to activate an entry that
+	// had not been measured yet, which left the launch serving a model the
+	// active profile did not name -- the exact incoherence this path exists
+	// to prevent.
+	limit := recipeFlag(r, "--max-model-len", "")
+	if limit == "" && r.Verified.Context > 0 {
+		limit = strconv.Itoa(r.Verified.Context)
+	}
+	if limit == "" {
+		return fmt.Errorf("%s sets no --max-model-len and records no verified context, so there is no context limit to advertise", r.ID)
+	}
+	p := local.profile
+	// An existing profile is updated in place, never replaced: its knobs and
+	// EXTRA_ARGS are the override layer this launch just honoured, so
+	// overwriting them would discard the user's edit after acting on it.
+	if p == nil {
+		created, err := profile.Create(cfg.Dirs, profile.CreateOpts{
+			Repo:           r.Model,
+			Name:           r.ID,
+			MaxModelLen:    limit,
+			MemUtilization: recipeFlag(r, "--gpu-memory-utilization", ""),
+			Status:         "tested recipe " + r.ID + ", runs in a container",
+			Source:         "recipes launch",
+		})
+		if err != nil {
+			return err
+		}
+		p = created
+	}
+	p.File.Set(profile.RecipeKey, r.ID)
+	// Record how this launch reached the nodes, so status, logs and restart can
+	// act on the same cluster without being handed the topology again.
+	p.File.Set(profile.NodesKey, strings.Join(o.nodeNames, ","))
+	p.File.Set(profile.ContainerKey, o.container)
+	p.File.Set(profile.MasterPortKey, strconv.Itoa(o.masterPort))
+	if o.sshKey != "" {
+		p.File.Set(profile.SSHKeyKey, o.sshKey)
+	}
+	// Written back with restatements removed: those tokens change nothing now,
+	// and left in place they would override a future recipe value.
+	p.File.Set("EXTRA_ARGS", strings.Join(local.extra, " "))
+	if r.DisplayName != "" {
+		p.File.Set("DISPLAY_NAME", r.DisplayName)
+	}
+	if err := p.File.Write(cfg.Dirs.ProfileFile(p.Name), 0o644); err != nil {
+		return err
+	}
+	if err := control.WriteActiveEnv(cfg, p); err != nil {
+		return err
+	}
+	// The containers are already up, so there is no service to restart here;
+	// the notify half is what syncs Coder.
+	if err := control.NotifyAndRestart(ctx, cfg, p, os.Stderr, func() error { return nil }); err != nil {
+		return err
+	}
+	fmt.Printf("active profile is now %s\n", p.Name)
+	if local.pruned {
+		fmt.Println("EXTRA_ARGS: dropped the flags that only restated the recipe.")
+	}
+	if len(local.args) > 0 {
+		fmt.Printf("Coder is advertising %s tokens, which is what this launch serves.\n", p.MaxModelLen())
+	}
+	return nil
+}
+
+func runRecipeStop(id string, o recipeLaunchOptions) error {
+	tested, err := recipe.LoadTested()
+	if err != nil {
+		return err
+	}
+	if _, ok := tested.Get(id); !ok {
+		return fmt.Errorf("no tested recipe %q", id)
+	}
+	if len(o.nodeNames) == 0 {
+		return fmt.Errorf("--nodes is required")
+	}
+	reg, err := nodes.Load()
+	if err != nil {
+		return err
+	}
+	// Tell the watchdog first: a check landing mid-teardown would otherwise
+	// see the endpoint gone and start the cluster again.
+	if !o.dryRun {
+		if cfg, err := config.Load(); err == nil {
+			markStopped(cfg)
+		}
+	}
+	cmdline := "docker rm -f " + recipe.ShellQuote(o.container)
+	for i, name := range o.nodeNames {
+		n, ok := reg.Get(name)
+		if !ok {
+			return fmt.Errorf("no node %q in the registry", name)
+		}
+		m := recipeMember{node: n, rank: i}
+		if o.dryRun {
+			fmt.Printf("# %s\n%s\n", name, cmdline)
+			continue
+		}
+		if _, err := nodeScript(m, o.sshKey, cmdline+" >/dev/null 2>&1 || true", nil); err != nil {
+			return fmt.Errorf("stop on %s: %w", name, err)
+		}
+		fmt.Printf("stopped %s on %s\n", o.container, name)
+	}
+	return nil
+}
