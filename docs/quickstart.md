@@ -47,6 +47,12 @@ Any OpenAI-compatible client can use the endpoint at `http://<machine>:8001/v1`,
 
 Switching restarts the server, which takes a few minutes when the weights are cached and longer on first download.
 
+## Script it
+
+- `status`, `list`, `search`, `inspect`, `doctor` and `recipes list` take `--json`.
+- `switch`, `new` and `restart` take `--wait` to block until the endpoint is healthy, `--no-follow` to return immediately, and `--timeout`.
+- When stdout is piped, commands don't tail logs or start pickers. When stdin isn't a terminal, prompts take their defaults and sudo runs with `-n`.
+
 ## Next steps
 
 - See what a profile holds in [Profiles](./profiles.md).

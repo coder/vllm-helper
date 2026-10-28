@@ -30,7 +30,18 @@ vllm-helper coder-sync prune                # entries no local profile accounts 
 - `prune` reports entries this provider offers that no local profile can serve, and deletes them with `--yes`.
   An entry naming a model this machine cannot serve is one the picker offers and the server then refuses, so they are worth clearing.
 
-`vllm-helper doctor` verifies the configured URL and token against the API.
+Entries are matched by model, so a renamed profile, or a second machine serving the same model, adopts the existing entry instead of adding a second row for it.
+If a model already has more than one entry, `prune` names it but never picks which to keep.
+Entries belonging to other providers are never touched.
+
+`vllm-helper doctor` verifies the configured URL and token against the API, and warns when the token is within two days of expiring.
+Coder caps token lifetime, and an expired token only shows up as the picker no longer being updated.
+
+## Longer replies
+
+Coder caps a reply at its own server-side default of 32,000 tokens.
+Set `CODER_MAX_OUTPUT_TOKENS` in `config.env` to raise it for the models this machine serves.
+Left unset, vllm-helper sends nothing, so whatever is configured in Coder stays.
 
 ## One note on stopping
 

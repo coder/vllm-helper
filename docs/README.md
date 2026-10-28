@@ -3,10 +3,10 @@ title: Introduction
 description: What vllm-helper is, and when to reach for it.
 ---
 
-vllm-helper runs one large model at a time on a single GPU machine, and switches models with one command.
-It wraps [vLLM](https://github.com/vllm-project/vllm)'s OpenAI-compatible server with saved model profiles, HuggingFace search, and an optional [Coder](https://coder.com) Agents sync.
+vllm-helper serves large models with vLLM on one GPU machine or several, and switches models with one command.
+It wraps [vLLM](https://github.com/vllm-project/vllm)'s OpenAI-compatible server with saved model profiles, HuggingFace search, tested multi-machine recipes, and an optional [Coder](https://coder.com) Agents sync.
 
-It was built for unified-memory machines like the NVIDIA DGX Spark, where memory fits exactly one big model.
+It was built for unified-memory machines like the NVIDIA DGX Spark, where one machine holds one big model and a bigger model needs two or more working together.
 It works on any Linux machine with an NVIDIA GPU, and experimentally on macOS through vLLM's CPU backend.
 
 ## How it fits together
@@ -19,6 +19,7 @@ It works on any Linux machine with an NVIDIA GPU, and experimentally on macOS th
 
 Inference traffic goes straight to vLLM on its own port.
 vllm-helper is a control plane, so nothing here sits in the path of a request — a bug in it cannot break inference.
+The one exception is a [pool](./multi-node.md), whose router sits in front of the replicas by design.
 
 The binary is self-contained: one file to put on a machine, with the docs you are reading compiled in.
 

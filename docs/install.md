@@ -41,6 +41,7 @@ If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.en
 | `CODER_URL`               | config.env  | Coder deployment to sync with. See [Coder integration](./coder.md).                                                                      |
 | `CODER_AI_PROVIDER_ID`    | config.env  | The `openai-compat` provider to hang model entries off.                                                                                  |
 | `CODER_ORGANIZATION`      | config.env  | Organization the entries hang off. Default `default`.                                                                                    |
+| `CODER_MAX_OUTPUT_TOKENS` | config.env  | Reply cap sent with each model entry. Unset leaves Coder's own default (32,000).                                                         |
 | `VLLM_API_KEY`            | secrets.env | API key clients must send to the endpoint. Generated at setup.                                                                           |
 | `CODER_API_TOKEN`         | secrets.env | Coder session token for sync.                                                                                                            |
 | `HF_TOKEN`                | either      | HuggingFace token, needed only for gated or private models. A value in `secrets.env` wins.                                               |

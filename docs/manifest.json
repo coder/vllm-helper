@@ -48,7 +48,7 @@
     },
     {
       "title": "More than one machine",
-      "description": "Register machines once, then pool them as replicas or shard one model across them.",
+      "description": "Register machines once, then run a tested recipe, pool replicas, or shard one model across them.",
       "path": "./multi-node.md"
     },
     {
