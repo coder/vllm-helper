@@ -15,6 +15,10 @@ the fact.
   **Docs** tab with a quickstart, the profile and memory knobs, the Coder
   integration, and a CLI reference generated from the command tree. The same
   Markdown lives in `docs/` and stays readable on GitHub.
+- A public docs website: `cmd/vllm-helper-docs` serves the same pages without
+  the panel, with each page's Markdown source, `/llms.txt`, `/llms-full.txt`
+  and a sitemap, and `Dockerfile.docs` deploys it on Railway. It is a separate
+  binary, so `vllm-helper` itself gains no unauthenticated routes.
 - Recipes: launch configurations that have been run and measured, rather than
   inferred. An entry pins the model, the image by digest, the exact argv and
   the numbers it produced on named hardware, and `recipes list` / `recipes show`

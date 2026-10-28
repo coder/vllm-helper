@@ -14,9 +14,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <title>{{.Title}} &middot; vllm-helper</title>
+    {{with .Description}}<meta name="description" content="{{.}}" />{{end}}
+    {{with .Canonical}}<link rel="canonical" href="{{.}}" />{{end}}
+    {{with .Markdown}}<link rel="alternate" type="text/markdown" href="{{.}}" />{{end}}
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
+    {{if .Public}}
+    <header class="bar">
+      <a class="wordmark" href="/docs">vllm&#8209;helper</a>
+      <nav class="tabs">
+        <a class="tab" href="/docs" aria-current="page">Docs</a>
+        <a class="tab" href="https://github.com/coder/vllm-helper">GitHub</a>
+      </nav>
+    </header>
+    {{else}}
     <header class="bar">
       <span class="wordmark">vllm&#8209;helper</span>
       <span class="bar-host">{{.Host}}</span>
@@ -27,6 +39,7 @@
       </nav>
       <span class="bar-build">{{.Build}}</span>
     </header>
+    {{end}}
 
     <div class="docs">
       <aside class="docs-side">
@@ -47,6 +60,7 @@
           {{with .Next}}<a class="docs-next" href="{{.Route}}">{{.Title}} &rarr;</a
           >{{else}}<span></span>{{end}}
         </nav>
+        {{with .Markdown}}<p class="docs-source"><a href="{{.}}">View this page as Markdown</a></p>{{end}}
       </main>
 
       {{if .TOC}}

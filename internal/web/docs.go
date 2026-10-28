@@ -2,6 +2,9 @@
 // under /docs, behind the same guard as everything else. The docs describe
 // how to control this machine, so they are served by the same token; and they
 // are rendered server-side because they are read, not operated.
+//
+// The same pages are also served without the panel by NewDocsSite, for the
+// public docs website (docssite.go).
 package web
 
 import (
@@ -72,6 +75,9 @@ type sidebarEntry struct {
 // docsPage is one rendered page of the docs.
 type docsPage struct {
 	route       string
+	file        string // path under docs/, e.g. "reference/cli/adopt.md"
+	source      []byte // the file as written, frontmatter included
+	markdown    []byte // the file without its frontmatter
 	title       string
 	description string
 	body        template.HTML
@@ -83,8 +89,10 @@ type docsPage struct {
 // docsSite is every page, the order prev/next follow, and the sidebar tree.
 type docsSite struct {
 	byRoute map[string]*docsPage
+	byFile  map[string]*docsPage
 	order   []*docsPage
 	root    []*navEntry
+	routes  []docs.Route
 }
 
 var (
@@ -107,7 +115,11 @@ func buildDocs() (*docsSite, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := &docsBuilder{site: &docsSite{byRoute: make(map[string]*docsPage)}}
+	b := &docsBuilder{site: &docsSite{
+		byRoute: make(map[string]*docsPage),
+		byFile:  make(map[string]*docsPage),
+		routes:  m.Routes,
+	}}
 	root, err := b.walk(m.Routes)
 	if err != nil {
 		return nil, err
@@ -171,22 +183,26 @@ func (b *docsBuilder) page(r *docs.Route) (*docsPage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docs page %s: %w", r.Path, err)
 	}
-	source, err = stripFrontmatter(source)
+	markdown, err := stripFrontmatter(source)
 	if err != nil {
 		return nil, fmt.Errorf("docs page %s: %w", r.Path, err)
 	}
-	body, toc, err := renderMarkdown(path.Dir(rel), source)
+	body, toc, err := renderMarkdown(path.Dir(rel), markdown)
 	if err != nil {
 		return nil, fmt.Errorf("docs page %s: %w", r.Path, err)
 	}
 	page := &docsPage{
 		route:       docs.RouteFor(r.Path),
+		file:        rel,
+		source:      source,
+		markdown:    markdown,
 		title:       r.Title,
 		description: r.Description,
 		body:        body,
 		toc:         toc,
 	}
 	b.site.byRoute[page.route] = page
+	b.site.byFile[page.file] = page
 	b.site.order = append(b.site.order, page)
 	return page, nil
 }
@@ -211,31 +227,47 @@ func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "documentation failed to load: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// "/docs" and "/docs/" are the introduction; a trailing slash anywhere
-	// else is tolerated the way a file server would.
-	route := strings.TrimSuffix(r.URL.Path, "/")
-	page, ok := site.byRoute[route]
+	page, ok := site.lookup(r.URL.Path)
 	if !ok {
 		http.Error(w, "no such documentation page: "+r.URL.Path, http.StatusNotFound)
 		return
 	}
+	writeDocsPage(w, page, docsData{Build: s.build, Host: hostname()})
+}
+
+// lookup finds the page a request path names. "/docs" and "/docs/" are the
+// introduction; a trailing slash anywhere else is tolerated the way a file
+// server would.
+func (site *docsSite) lookup(urlPath string) (*docsPage, bool) {
+	page, ok := site.byRoute[strings.TrimSuffix(urlPath, "/")]
+	return page, ok
+}
+
+// writeDocsPage renders one page. data carries the chrome around it -- the
+// panel's build and host, or the public site's links -- and the page fields
+// are filled in here.
+func writeDocsPage(w http.ResponseWriter, page *docsPage, data docsData) {
+	data.Title = page.title
+	data.Description = page.description
+	data.Body = page.body
+	data.Nav = page.nav
+	data.TOC = page.toc
+	data.Prev = page.prev
+	data.Next = page.next
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// Past this point the response has started; a template error can only
 	// truncate a page that tests have already proven well-formed.
-	_ = docsTmpl.ExecuteTemplate(w, "docs", docsData{
-		Build:       s.build,
-		Host:        hostname(),
-		Title:       page.title,
-		Description: page.description,
-		Body:        page.body,
-		Nav:         page.nav,
-		TOC:         page.toc,
-		Prev:        page.prev,
-		Next:        page.next,
-	})
+	_ = docsTmpl.ExecuteTemplate(w, "docs", data)
 }
 
 type docsData struct {
+	// Public renders the docs website's chrome instead of the panel's.
+	Public bool
+	// Canonical and Markdown are the page's absolute URL and the URL of its
+	// Markdown source; the public site sets them, the panel does not.
+	Canonical string
+	Markdown  string
+
 	Build       string
 	Host        string
 	Title       string

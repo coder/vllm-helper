@@ -1,0 +1,25 @@
+# The public docs website (cmd/vllm-helper-docs), deployed on Railway.
+#
+# Railway service settings, set on the service rather than in a config file:
+#   Dockerfile path  Dockerfile.docs
+#   Healthcheck      /healthz
+#   Watch paths      docs/**, internal/web/**, cmd/vllm-helper-docs/**,
+#                    Dockerfile.docs, go.mod, go.sum
+#   Variables        BASE_URL, once the site has a custom domain; until then
+#                    links use RAILWAY_PUBLIC_DOMAIN
+#
+# Local preview:
+#   docker build -f Dockerfile.docs -t vllm-helper-docs .
+#   docker run --rm -p 8080:8080 -e PORT=8080 vllm-helper-docs
+
+FROM golang:1.26 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" \
+    -o /out/vllm-helper-docs ./cmd/vllm-helper-docs
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/vllm-helper-docs /vllm-helper-docs
+ENTRYPOINT ["/vllm-helper-docs"]

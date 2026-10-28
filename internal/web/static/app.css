@@ -1280,6 +1280,22 @@ main.docs-main {
   text-decoration: underline;
 }
 
+.docs-source {
+  margin: 1rem 0 0;
+  font-size: 0.75rem;
+}
+
+.docs-source a {
+  color: var(--content-secondary);
+}
+
+/* The public docs site makes the wordmark a link home; it should still read
+   as the wordmark. */
+a.wordmark {
+  color: inherit;
+  text-decoration: none;
+}
+
 /* On a narrow screen the nav flows above the content, and the heading
    list — a convenience, not a map — gets out of the way. */
 @media (max-width: 60rem) {
