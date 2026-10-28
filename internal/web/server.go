@@ -273,6 +273,13 @@ func (s *Server) Handler(static fs.FS) http.Handler {
 		http.ServeFileFS(w, r, static, "models.html")
 	}))
 
+	// The docs the binary ships with, rendered from the manifest at first
+	// use. Same guard as everything else: they describe how to control this
+	// machine, so they are served by the same token.
+	docsHandler := s.guard(s.handleDocs)
+	mux.HandleFunc("GET /docs", docsHandler)
+	mux.HandleFunc("GET /docs/", docsHandler)
+
 	files := http.FileServerFS(static)
 	mux.Handle("GET /", s.guard(func(w http.ResponseWriter, r *http.Request) {
 		files.ServeHTTP(w, r)

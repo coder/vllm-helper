@@ -1,4 +1,7 @@
-# Recipes as the golden path
+---
+title: Recipes
+description: Launch configurations that were run and measured on named hardware, and how local overrides layer on top.
+---
 
 ## Goal
 

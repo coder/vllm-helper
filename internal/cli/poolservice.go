@@ -37,7 +37,7 @@ func newPoolInstallServiceCmd() *cobra.Command {
 				Bind:    bind,
 				Sticky:  sticky,
 				Name:    name,
-				User:    user,
+				User:    userOrInvoker(user),
 				Start:   now,
 				Service: defaultPoolServiceRunner{},
 			})
@@ -47,7 +47,7 @@ func newPoolInstallServiceCmd() *cobra.Command {
 	c.Flags().StringVar(&bind, "bind", ":8011", "Bind address for the router")
 	c.Flags().StringVar(&sticky, "sticky", "auto", "Stickiness (auto|authorization|header:Name)")
 	c.Flags().StringVar(&name, "name", defaultPoolServiceName, "systemd unit name")
-	c.Flags().StringVar(&user, "user", os.Getenv("USER"), "user the router runs as")
+	c.Flags().StringVar(&user, "user", "", "user the router runs as (default: $USER)")
 	c.Flags().BoolVar(&now, "now", true, "enable and restart the service immediately")
 	return c
 }
@@ -161,6 +161,15 @@ func (defaultPoolServiceRunner) Self() (string, error) {
 		self = resolved
 	}
 	return self, nil
+}
+
+// userOrInvoker resolves --user at run time rather than as the flag default,
+// so help and the generated reference don't print whoever built them.
+func userOrInvoker(flag string) string {
+	if strings.TrimSpace(flag) != "" {
+		return flag
+	}
+	return os.Getenv("USER")
 }
 
 func (defaultPoolServiceRunner) Home(user string) (string, error) {
