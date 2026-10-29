@@ -54,7 +54,7 @@ comma-separated node names
 | Type    | `string`       |
 | Default | `vllm.service` |
 
-service to restart with --start-services
+service to start with --start-services
 
 ### --ssh-key
 

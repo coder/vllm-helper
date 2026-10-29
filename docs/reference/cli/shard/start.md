@@ -94,7 +94,7 @@ comma-separated node names
 | ---- | -------- |
 | Type | `string` |
 
-openAI API port (defaults to config PORT)
+OpenAI API port (defaults to config PORT)
 
 ### --pp
 

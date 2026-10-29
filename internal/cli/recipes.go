@@ -13,8 +13,10 @@ import (
 
 func newRecipesCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:     "recipes",
-		Short:   "Tested launch configurations for known-good models",
+		Use:   "recipes",
+		Short: "Tested launch configurations for known-good models",
+		Long: "Tested launch configurations: each pins a model, image and flags. 'recipes launch'\n" +
+			"starts one as containers on the nodes you name, over SSH for any that are not this machine.",
 		GroupID: groupModels,
 	}
 	c.AddCommand(newRecipesListCmd(), newRecipesShowCmd(), newRecipesLaunchCmd(), newRecipesStopCmd(),

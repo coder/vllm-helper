@@ -10,7 +10,7 @@ import (
 // a command that advertises itself in --help and then does nothing is worse
 // than one that is absent, so it is gone until a pool is something to create.
 func newPoolCmd() *cobra.Command {
-	c := &cobra.Command{Use: "pool", Short: "Replica pools (router)", GroupID: groupMachine}
+	c := &cobra.Command{Use: "pool", Short: "Run a router in front of replicas serving the same model", GroupID: groupMultiNode}
 	c.AddCommand(newPoolHTTPStatusCmd(), newPoolServeCmd(), newPoolInstallServiceCmd())
 	return c
 }

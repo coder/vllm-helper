@@ -25,7 +25,9 @@ func newServeCmd() *cobra.Command {
 			"and what else could be loaded instead.\n\n" +
 			"It listens on localhost unless told otherwise. The panel can restart the\n" +
 			"server and change which model runs, so every request needs the token\n" +
-			"printed below -- open the URL it gives you.",
+			"printed below -- open the URL it gives you.\n\n" +
+			"The panel drives the native service (systemd or launchd) only: recipe\n" +
+			"container clusters are not controlled from it yet.",
 		Example: "  vllm-helper serve\n" +
 			"  vllm-helper serve --listen 0.0.0.0:8080",
 		Args: cobra.NoArgs,
