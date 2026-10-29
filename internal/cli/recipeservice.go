@@ -44,7 +44,7 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 			}
 			return installRecipeService(recipeServiceOptions{
 				Name:      name,
-				User:      user,
+				User:      userOrInvoker(user),
 				Timeout:   timeout,
 				Start:     now,
 				Supersede: supersede,
@@ -56,7 +56,7 @@ func newRecipesInstallServiceCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&name, "name", defaultRecipeServiceName, "systemd unit name")
-	c.Flags().StringVar(&user, "user", os.Getenv("USER"), "user the launcher runs as")
+	c.Flags().StringVar(&user, "user", "", "user the launcher runs as (default: $USER)")
 	c.Flags().IntVar(&timeout, "timeout", defaultRecipeServiceTimeout, "seconds to allow for the model to load")
 	c.Flags().BoolVar(&now, "now", false, "enable and start the service immediately")
 	c.Flags().BoolVar(&supersede, "supersede-native", true, "stop and disable the single-node unit this replaces")

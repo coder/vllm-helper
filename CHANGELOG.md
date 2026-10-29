@@ -11,6 +11,14 @@ the fact.
 
 ### Added
 
+- Documentation, served by the binary itself: `vllm-helper serve` now has a
+  **Docs** tab with a quickstart, the profile and memory knobs, the Coder
+  integration, and a CLI reference generated from the command tree. The same
+  Markdown lives in `docs/` and stays readable on GitHub.
+- A public docs website: `cmd/vllm-helper-docs` serves the same pages without
+  the panel, with each page's Markdown source, `/llms.txt`, `/llms-full.txt`
+  and a sitemap, and `Dockerfile.docs` deploys it on Railway. It is a separate
+  binary, so `vllm-helper` itself gains no unauthenticated routes.
 - Recipes: launch configurations that have been run and measured, rather than
   inferred. An entry pins the model, the image by digest, the exact argv and
   the numbers it produced on named hardware, and `recipes list` / `recipes show`
@@ -36,7 +44,15 @@ the fact.
   `tools/recipediff` expands the upstream recipe and reports any difference
   that has not been declared, comparing content rather than commit ids so a
   pin that merely trails upstream is not reported as drift.
-- A node registry and a router, so a recipe can name the machines it needs.
+- More than one machine. `node add` records a machine once, by the URL it
+  serves on and the SSH target that drives it; `pool`, `shard` and
+  `recipes launch` refer to it by name. `pool serve` puts a router in front of
+  replicas serving the same model and keeps a conversation on the node that
+  already has its prefix cached; `pool install-service` runs it as a unit.
+  `shard start` splits one model across machines with Ray or vLLM's
+  multiprocessing executor, for trying a split before there is a recipe for
+  it, and `shard install-ray` prepares the nodes. `spark doctor` and
+  `spark install-prereqs` cover the build packages a DGX Spark needs.
 
 ### Changed
 
