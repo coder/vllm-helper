@@ -522,7 +522,9 @@ el.pull.addEventListener("click", async () => {
 
 fillChrome().then((s) => {
   if (s) {
-    serviceControl = { ok: !!s.privileged, reason: s.priv_reason || "" };
+    serviceControl = s.cluster
+      ? { ok: false, reason: s.control_reason || "" }
+      : { ok: !!s.privileged, reason: s.priv_reason || "" };
   }
 });
 fillBudget();

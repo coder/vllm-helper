@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/coder/vllm-helper/internal/config"
@@ -67,11 +68,7 @@ func Load() (*Registry, error) {
 func (r *Registry) Save() error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	var list []Node
-	for _, n := range r.m {
-		list = append(list, n)
-	}
-	b, err := json.MarshalIndent(list, "", "  ")
+	b, err := json.MarshalIndent(r.sorted(), "", "  ")
 	if err != nil {
 		return err
 	}
@@ -97,12 +94,21 @@ func (r *Registry) Get(name string) (Node, bool) {
 	return n, ok
 }
 
+// List returns the nodes sorted by name.
 func (r *Registry) List() []Node {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	return r.sorted()
+}
+
+// sorted orders the nodes by name. The registry is a map, and reading one in
+// iteration order made 'node ls' and nodes.json reshuffle between runs.
+// Callers hold the lock.
+func (r *Registry) sorted() []Node {
 	out := make([]Node, 0, len(r.m))
 	for _, n := range r.m {
 		out = append(out, n)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }

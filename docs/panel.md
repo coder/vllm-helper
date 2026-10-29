@@ -36,9 +36,9 @@ youruser ALL=(root) NOPASSWD: /usr/bin/systemctl restart vllm.service, /usr/bin/
 
 Without it the panel still reports everything, and says why the buttons are disabled rather than failing when you press them.
 
-> [!WARNING]
-> On a machine serving a [recipe](./recipes.md), the buttons still drive the native unit named by `SERVICE_NAME`, which `recipes install-service` stands down.
-> Switch, restart and stop a recipe from the CLI, which picks the right runner from the active profile.
+> [!NOTE]
+> While a [recipe](./recipes.md) serves, the Machine page reports the cluster's health and the head container's log instead of the native unit's.
+> Switch, Restart, Stop and pulling a model are disabled there with the reason; drive a recipe from the CLI, which picks the right runner from the active profile.
 
 ## The Add model page
 

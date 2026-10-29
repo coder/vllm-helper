@@ -62,8 +62,15 @@ type statusResponse struct {
 
 	Privileged bool   `json:"privileged"`
 	PrivReason string `json:"priv_reason,omitempty"`
-	Build      string `json:"build"`
-	Host       string `json:"host"`
+
+	// Cluster is set while a recipe cluster serves the active profile. The
+	// panel reports it but cannot drive it, so switch, restart and stop are
+	// refused and ControlReason says what to use instead.
+	Cluster       bool   `json:"cluster"`
+	ControlReason string `json:"control_reason,omitempty"`
+
+	Build string `json:"build"`
+	Host  string `json:"host"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -79,9 +86,14 @@ func (s *Server) status() statusResponse {
 		privileged, privReason = checkPrivilege(s.cfg)
 		s.setPrivilege(privileged, privReason)
 	}
-	h := s.svc.Health()
+	cluster := s.activeCluster()
+	health, lastLogs, unit := s.svc.Health, s.svc.LastLogs, s.cfg.ServiceName()
+	if cluster != nil {
+		health, lastLogs, unit = cluster.Health, cluster.LastLogs, "cluster"
+	}
+	h := health()
 	r := statusResponse{
-		Service:    s.cfg.ServiceName(),
+		Service:    unit,
 		State:      h.State,
 		Crashed:    h.Crashed,
 		Restarts:   h.NRestarts,
@@ -93,6 +105,9 @@ func (s *Server) status() statusResponse {
 		PrivReason: privReason,
 		Build:      s.build,
 		Host:       hostname(),
+	}
+	if cluster != nil {
+		r.Cluster, r.ControlReason = true, clusterControlReason
 	}
 	if active, err := control.ParseActiveEnv(s.cfg); err == nil {
 		if m := active.Get("MODEL"); m != "" {
@@ -112,7 +127,7 @@ func (s *Server) status() statusResponse {
 		r.Phase = "serving"
 	case h.Crashed:
 		r.Phase = "failing"
-		r.LastLog = control.LastMeaningfulLine(s.svc.LastLogs(40))
+		r.LastLog = control.LastMeaningfulLine(lastLogs(40))
 	case h.State == "active" || h.State == "activating":
 		// The port stays closed for the whole load -- vLLM binds only
 		// after the weights are in memory -- so an unresponsive endpoint
@@ -203,6 +218,10 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			n = parsed
 		}
 	}
+	if c := s.activeCluster(); c != nil {
+		writeJSON(w, http.StatusOK, map[string]string{"logs": c.LastLogs(n), "hint": c.LogHint()})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"logs": s.svc.LastLogs(n),
 		"hint": s.svc.LogHint(),
@@ -277,6 +296,21 @@ func (s *Server) explain(err error) error {
 }
 
 func (s *Server) requirePrivilege(w http.ResponseWriter) bool {
+	return s.requireNative(w) && s.requireSudo(w)
+}
+
+// requireNative refuses a service action while a recipe cluster serves: the
+// panel's verbs drive the native unit, so a restart would start vLLM beside
+// the cluster and a stop would report success while the cluster kept serving.
+func (s *Server) requireNative(w http.ResponseWriter) bool {
+	if s.activeCluster() == nil {
+		return true
+	}
+	writeJSON(w, http.StatusConflict, actionResponse{Error: clusterControlReason})
+	return false
+}
+
+func (s *Server) requireSudo(w http.ResponseWriter) bool {
 	if ok, _ := s.privilege(); ok {
 		return true
 	}

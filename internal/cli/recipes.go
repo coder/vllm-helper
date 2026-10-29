@@ -3,8 +3,10 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -60,23 +62,28 @@ func runRecipesList(jsonOut bool) error {
 		fmt.Println("No tested recipes shipped in this build.")
 		return nil
 	}
-	width := 0
-	for _, r := range t.Recipes {
-		if len(r.ID) > width {
-			width = len(r.ID)
-		}
-	}
 	fmt.Println("TESTED -- run on this hardware, pinned by image digest")
-	for _, r := range t.Recipes {
-		fmt.Printf("  %-*s  %-22s  %s", width, r.ID, r.DisplayName, r.Summary())
-		if overrideNote(r) != "" {
-			fmt.Print("  (+ local overrides)")
-		}
-		fmt.Println()
+	if err := writeRecipeRows(os.Stdout, t.Recipes, overrideNote); err != nil {
+		return err
 	}
 	fmt.Println()
 	fmt.Println("Run 'vllm-helper recipes show <id>' for the pinned image, flags and evidence.")
 	return nil
+}
+
+// writeRecipeRows sizes every column to its longest entry. The display name
+// had a fixed width of 22, so "DeepSeek V4 Flash Vision" pushed its own row's
+// layout column out of line with the rest.
+func writeRecipeRows(out io.Writer, recipes []recipe.TestedRecipe, note func(recipe.TestedRecipe) string) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	for _, r := range recipes {
+		line := "  " + r.ID + "\t" + r.DisplayName + "\t" + r.Summary()
+		if note(r) != "" {
+			line += "  (+ local overrides)"
+		}
+		fmt.Fprintln(tw, line)
+	}
+	return tw.Flush()
 }
 
 func runRecipesShow(id string, jsonOut bool) error {

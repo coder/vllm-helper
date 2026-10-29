@@ -100,7 +100,7 @@ type waitFlags struct {
 }
 
 func (w *waitFlags) register(c *cobra.Command) {
-	c.Flags().BoolVar(&w.noFollow, "no-follow", false, "restart and return immediately instead of watching the boot")
+	c.Flags().BoolVar(&w.noFollow, "no-follow", false, "return as soon as the server is started instead of watching the boot")
 	c.Flags().BoolVar(&w.wait, "wait", false, "block until the endpoint is healthy, without streaming logs")
 	c.Flags().DurationVar(&w.timeout, "timeout", 0, "give up waiting after this long (default: wait forever)")
 }

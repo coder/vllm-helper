@@ -163,6 +163,10 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if c := s.activeCluster(); c != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": clusterControlReason})
+		return
+	}
 	if privileged, reason := s.privilege(); !privileged {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": reason})
 		return
