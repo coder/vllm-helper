@@ -26,6 +26,10 @@ import (
 )
 
 func main() {
+	// Status goes to stdout and failures to stderr: hosts such as Railway file
+	// everything on stderr as an error, which made a healthy start look like one.
+	info := log.New(os.Stdout, "", log.LstdFlags)
+
 	listen := flag.String("listen", defaultListen(), "address to serve on")
 	baseURL := flag.String("base-url", defaultBaseURL(),
 		"public origin for canonical links, the sitemap and llms.txt; empty uses each request's host")
@@ -59,7 +63,7 @@ func main() {
 		}
 	}()
 
-	log.Printf("serving the docs on %s (base URL %q)", *listen, *baseURL)
+	info.Printf("serving the docs on %s (base URL %q)", *listen, *baseURL)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
