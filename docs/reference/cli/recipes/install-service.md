@@ -8,7 +8,7 @@ description: "Install a systemd service that keeps the active recipe serving"
 
 Installs a unit that runs 'vllm-helper restart' at boot and 'vllm-helper stop' on
 shutdown. The unit names no recipe: which one runs comes from the active profile,
-so switching recipes does not mean editing the unit.
+so switching recipes does not mean editing the unit. Linux hosts only.
 
 ## Usage
 
