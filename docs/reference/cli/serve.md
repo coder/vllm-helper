@@ -13,6 +13,9 @@ It listens on localhost unless told otherwise. The panel can restart the
 server and change which model runs, so every request needs the token
 printed below -- open the URL it gives you.
 
+The panel drives the native service (systemd or launchd) only: recipe
+container clusters are not controlled from it yet.
+
 ## Usage
 
 ```console

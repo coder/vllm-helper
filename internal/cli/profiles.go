@@ -415,7 +415,7 @@ func newStatusCmd() *cobra.Command {
 	var jsonOut bool
 	c := &cobra.Command{
 		Use:     "status",
-		Short:   "Service state, active model, and whether the endpoint responds",
+		Short:   "Server state, active model, and whether the endpoint responds",
 		GroupID: groupServer,
 		Args:    cobra.NoArgs,
 		RunE:    func(*cobra.Command, []string) error { return runStatus(jsonOut) },

@@ -10,7 +10,12 @@ import (
 )
 
 func newNodeCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "node", Short: "Manage known nodes", GroupID: groupMachine}
+	cmd := &cobra.Command{
+		Use:     "node",
+		Short:   "Register machines by HTTP URL and SSH target",
+		Long:    "Register machines by HTTP URL (--host) and SSH target (--ssh).\nRecipes, pools and sharding name them with --nodes.",
+		GroupID: groupMultiNode,
+	}
 	cmd.AddCommand(newNodeAddCmd(), newNodeListCmd(), newNodeRemoveCmd())
 	return cmd
 }
