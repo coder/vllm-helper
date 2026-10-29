@@ -89,12 +89,15 @@ func TestEndpointURLFollowsTheHead(t *testing.T) {
 	port := strconv.Itoa(r.Port)
 	useRegistry(t,
 		nodes.Node{Name: "here", Host: "http://127.0.0.1:8001"},
-		nodes.Node{Name: "there", Host: "http://10.99.0.7:8001", SSH: "serve@10.99.0.7"})
+		nodes.Node{Name: "there", Host: "http://10.99.0.7:8001", SSH: "serve@10.99.0.7"},
+		// An ~/.ssh/config alias resolves for ssh only; the endpoint is HTTP.
+		nodes.Node{Name: "aliased", Host: "http://10.99.0.8:8001", SSH: "gpu-worker"})
 	for _, c := range []struct {
 		head, want string
 	}{
 		{"here", "http://localhost:" + port},
 		{"there", "http://10.99.0.7:" + port},
+		{"aliased", "http://10.99.0.8:" + port},
 	} {
 		run := &clusterRunner{recipe: r, opts: recipeLaunchOptions{nodeNames: []string{c.head, "here"}}}
 		got, err := run.endpointURL()
