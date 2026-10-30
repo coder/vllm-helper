@@ -27,15 +27,16 @@ func newSetupCmd() *cobra.Command {
 		RunE:    func(*cobra.Command, []string) error { return runSetup(providerName) },
 	}
 	c.Flags().StringVar(&providerName, "provider", provider.VLLM,
-		"inference server new profiles use: "+strings.Join(provider.Names(), " or ")+" (only written to a new config)")
+		"inference server new profiles use: "+strings.Join(provider.Names(), ", ")+" (only written to a new config)")
 	return c
 }
 
 // installHints say how to get each provider's server, for when setup can't
 // find it on PATH.
 var installHints = map[string]string{
-	provider.VLLM: "uv venv ~/venvs/vllm && uv pip install vllm",
-	provider.MLX:  "uv venv ~/venvs/mlx && uv pip install mlx-lm",
+	provider.VLLM:     "uv venv ~/venvs/vllm && uv pip install vllm",
+	provider.MLX:      "uv venv ~/venvs/mlx && uv pip install mlx-lm",
+	provider.LlamaCPP: "brew install llama.cpp",
 }
 
 // runSetup is first-time setup for binary installs: detect hardware and any
@@ -115,7 +116,7 @@ TIKTOKEN_ENCODINGS_BASE=%s
 #CODER_AI_PROVIDER_ID=
 # Only needed if the deployment has more than one organization.
 #CODER_ORGANIZATION=default
-`, strings.Join(provider.Names(), " or "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
+`, strings.Join(provider.Names(), ", "), prov.Name(), prov.BinName(), prov.BinKey(), bin,
 			config.ServiceManager, config.DefaultServiceScope, config.DefaultServiceName,
 			hw.BudgetGB, hw.BudgetReason, hw.BudgetGB, filepath.Join(dirs.Data, "tiktoken-encodings"),
 			detect.DefaultContextTarget, detect.DefaultContextTarget)
@@ -125,12 +126,16 @@ TIKTOKEN_ENCODINGS_BASE=%s
 		fmt.Println("Wrote", dirs.ConfigFile())
 		if bin == "" {
 			fmt.Println()
-			fmt.Printf("WARNING: no '%s' executable found on PATH. Install it (e.g. in a\n", prov.BinName())
-			fmt.Printf("venv: '%s'), then set %s\n", installHints[prov.Name()], prov.BinKey())
+			fmt.Printf("WARNING: no '%s' executable found on PATH. Install it (e.g.\n", prov.BinName())
+			fmt.Printf("'%s'), then set %s\n", installHints[prov.Name()], prov.BinKey())
 			fmt.Println("in config.env to its full path.")
-			if mlx, _ := provider.Lookup(provider.MLX); prov.Name() == provider.VLLM && lookBin(mlx) != "" {
-				fmt.Printf("%s is installed, though: to serve with it, set PROVIDER=%s and\n", mlx.BinName(), mlx.Name())
-				fmt.Printf("%s=%s in config.env.\n", mlx.BinKey(), lookBin(mlx))
+			for _, name := range provider.Names() {
+				other, _ := provider.Lookup(name)
+				if name == prov.Name() || lookBin(other) == "" {
+					continue
+				}
+				fmt.Printf("%s is installed, though: to serve with it, set PROVIDER=%s and\n", other.BinName(), other.Name())
+				fmt.Printf("%s=%s in config.env.\n", other.BinKey(), lookBin(other))
 			}
 			fmt.Println()
 		} else {

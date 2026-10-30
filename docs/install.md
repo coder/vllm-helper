@@ -5,7 +5,7 @@ description: Install the binary, configure the machine, and keep it current.
 
 llm-helper ships as a single binary for Linux amd64 and arm64 and for macOS arm64.
 It manages an existing inference server install; it does not install one itself.
-On Linux that means an NVIDIA GPU and a vLLM usually living in a venv; on macOS it means a source build of vLLM's CPU backend, see [Running on macOS](./macos.md), or mlx-lm, see [Providers](./providers.md).
+On Linux that means an NVIDIA GPU and a vLLM usually living in a venv; on macOS it means a source build of vLLM's CPU backend, see [Running on macOS](./macos.md), or mlx-lm or llama.cpp, see [Providers](./providers.md).
 
 ## Install
 
@@ -20,7 +20,7 @@ On Linux that means an NVIDIA GPU and a vLLM usually living in a venv; on macOS 
 
    The archive also carries the same binary as `vllm-helper`, its old name, for installs from before the rename. Some messages still print that name, so the link keeps them working.
 
-3. Run `llm-helper setup`, or `llm-helper setup --provider mlx` to serve with mlx-lm.
+3. Run `llm-helper setup`, or `llm-helper setup --provider mlx` or `--provider llamacpp` to serve with mlx-lm or llama.cpp.
 
 If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.env` to its full path.
 
@@ -34,9 +34,10 @@ If `vllm` isn't on your PATH, set `VLLM_BIN` in `~/.config/vllm-helper/config.en
 | Key                       | Where       | Meaning                                                                                                                                  |
 | ------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `PORT`                    | config.env  | Port the OpenAI-compatible endpoint listens on. Default `8001`.                                                                          |
-| `PROVIDER`                | config.env  | The inference server new profiles are made for: `vllm` (default) or `mlx`. See [Providers](./providers.md).                              |
+| `PROVIDER`                | config.env  | The inference server new profiles are made for: `vllm` (default), `mlx` or `llamacpp`. See [Providers](./providers.md).                  |
 | `VLLM_BIN`                | config.env  | Full path to the `vllm` executable. Required for vLLM profiles.                                                                          |
 | `MLX_LM_BIN`              | config.env  | Full path to the `mlx_lm.server` executable. Required for MLX profiles.                                                                  |
+| `LLAMA_SERVER_BIN`        | config.env  | Full path to the `llama-server` executable. Required for llama.cpp profiles.                                                             |
 | `SERVICE_NAME`            | config.env  | Service unit name: `vllm.service` on Linux, `com.coder.vllm` on macOS.                                                                   |
 | `SERVICE_SCOPE`           | config.env  | `system` on Linux (needs sudo to control) or `user`. macOS defaults to `user`.                                                           |
 | `MODEL_BUDGET_GB`         | config.env  | Overrides the measured model budget. See [Memory budget](./memory.md).                                                                   |

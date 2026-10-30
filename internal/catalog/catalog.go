@@ -241,7 +241,7 @@ func PrepareFor(ctx context.Context, dirs config.Dirs, prov provider.Provider, r
 	if prov.Capabilities().VLLMArgs {
 		return PrepareProfile(ctx, dirs, repo, choice, caps, contextTarget)
 	}
-	return Plan{
+	p := Plan{
 		Opts: profile.CreateOpts{
 			Repo:     repo,
 			Provider: prov.Name(),
@@ -251,6 +251,16 @@ func PrepareFor(ctx context.Context, dirs config.Dirs, prov provider.Provider, r
 		Notes: []string{"Served by " + prov.Name() + ". The flags on a model card are vLLM's, so none were copied; " +
 			"add any this server needs to EXTRA_ARGS."},
 	}
+	// Named the way PrepareProfile names a quant, so `new` and the panel
+	// find the profile again under the name they derive.
+	if choice != nil && prov.Capabilities().GGUFQuant {
+		if sel, ok := choice.Variant.Selector(); ok {
+			p.Opts.Repo = repo + sel
+			p.Opts.Name = profile.NameFromRepo(repo) + "-" + strings.ToLower(choice.Variant.Label)
+			p.Notes = append(p.Notes, "Serving the "+choice.Variant.Label+" quant.")
+		}
+	}
+	return p
 }
 
 // PrepareProfile works out how to serve a model this machine has never run:
@@ -455,4 +465,33 @@ func FindVariant(all []hf.Variant, label string) (hf.Variant, bool) {
 type Choice struct {
 	Variant   hf.Variant
 	BaseModel string
+}
+
+// ChooseGGUFQuant resolves want against the GGUF files repo holds, for a
+// provider other than vLLM that loads one itself. The limits of vLLM's GGUF
+// plugin (split files, subfolders, unsupported architectures) are not that
+// server's, so they are not checked here; the server reports what it cannot
+// load when it starts.
+func ChooseGGUFQuant(ctx context.Context, repo, want string) (*Choice, error) {
+	w, err := hf.WeightsSize(ctx, repo)
+	if err != nil {
+		return nil, fmt.Errorf("looking up %s: %w", repo, err)
+	}
+	v, ok := FindVariant(w.All, want)
+	if !ok {
+		var have []string
+		for _, x := range w.All {
+			if x.GGUF {
+				have = append(have, x.Label)
+			}
+		}
+		if len(have) == 0 {
+			return nil, fmt.Errorf("%s holds no GGUF files, so there is no quant to choose -- look for a GGUF repo of it", repo)
+		}
+		return nil, fmt.Errorf("%s has no quant called %q -- it has: %s", repo, want, strings.Join(have, ", "))
+	}
+	if _, ok := v.Selector(); !ok {
+		return nil, fmt.Errorf("%s is not a GGUF quant, so it cannot be chosen by name", v.Label)
+	}
+	return &Choice{Variant: v}, nil
 }

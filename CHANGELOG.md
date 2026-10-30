@@ -19,6 +19,10 @@ the fact.
   `MLX_LM_BIN`. vLLM-only steps (model-card flags, parser checks, KV sizing,
   GGUF quants, shards) are skipped or refused for an MLX profile. See
   `docs/providers.md`.
+- llama.cpp provider: `llama-server` serves GGUF models on Metal, CUDA or the
+  CPU. `setup --provider llamacpp` writes `LLAMA_SERVER_BIN`, and
+  `new <repo> --quant Q4_K_M` picks one GGUF file out of a repo. Unlike MLX it
+  checks `VLLM_API_KEY`, so it listens on every interface as vLLM does.
 
 ### Changed
 

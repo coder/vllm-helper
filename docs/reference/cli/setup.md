@@ -21,4 +21,4 @@ llm-helper setup [flags]
 | Type    | `string` |
 | Default | `vllm`   |
 
-inference server new profiles use: mlx or vllm (only written to a new config)
+inference server new profiles use: llamacpp, mlx, vllm (only written to a new config)

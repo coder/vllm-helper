@@ -183,12 +183,17 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var choice *catalog.Choice
-	if want := strings.TrimSpace(r.URL.Query().Get("quant")); want != "" {
-		if !prov.Capabilities().VLLMArgs {
+	if want := strings.TrimSpace(r.URL.Query().Get("quant")); want != "" && !prov.Capabilities().VLLMArgs {
+		if !prov.Capabilities().GGUFQuant {
 			writeJSON(w, http.StatusBadRequest, map[string]string{
-				"error": "a quant picks a GGUF file for vLLM to load, but new profiles here are served by " + prov.Name()})
+				"error": "a quant picks one GGUF file out of a repo, but new profiles here are served by " + prov.Name() + ", which does not load GGUF"})
 			return
 		}
+		if choice, err = catalog.ChooseGGUFQuant(r.Context(), repo, want); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	} else if want != "" {
 		m, err := hf.Lookup(r.Context(), repo)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{

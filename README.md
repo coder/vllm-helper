@@ -3,13 +3,13 @@
 
 <h1>llm-helper</h1>
 
-Serve large models with vLLM or mlx-lm on one GPU machine or several, and switch models with one command.
+Serve large models with vLLM, mlx-lm or llama.cpp on one GPU machine or several, and switch models with one command.
 
 [Quickstart](#quickstart) | [Docs][docs] | [CLI reference][docs-cli-reference] | [Changelog](CHANGELOG.md)
 
 </div>
 
-llm-helper manages an OpenAI-compatible inference server on one machine or across several: [vLLM](https://github.com/vllm-project/vllm) by default, or [mlx-lm](https://github.com/ml-explore/mlx-lm) on Apple Silicon. Each model's working settings are saved as a profile, and switching to another profile restarts the server on it, whether that model runs on this machine alone or spans a group of them. It was built for unified-memory machines like the NVIDIA DGX Spark, where one machine holds one big model and a bigger model needs two or more working together. It works on any Linux machine with an NVIDIA GPU, and on Macs through vLLM's CPU backend or mlx-lm.
+llm-helper manages an OpenAI-compatible inference server on one machine or across several: [vLLM](https://github.com/vllm-project/vllm) by default, [mlx-lm](https://github.com/ml-explore/mlx-lm) on Apple Silicon, or [llama.cpp](https://github.com/ggml-org/llama.cpp) for GGUF models. Each model's working settings are saved as a profile, and switching to another profile restarts the server on it, whether that model runs on this machine alone or spans a group of them. It was built for unified-memory machines like the NVIDIA DGX Spark, where one machine holds one big model and a bigger model needs two or more working together. It works on any Linux machine with an NVIDIA GPU, and on Macs through vLLM's CPU backend, mlx-lm or llama.cpp.
 
 llm-helper was called vllm-helper until it served more than vLLM. The old command name, config directory and service names all keep working; see [Providers][docs-providers] for what changes per server.
 
@@ -27,13 +27,13 @@ llm-helper is a control plane. Inference traffic goes straight to the inference 
 
 > See [Install and upgrade][docs-install] for what setup writes and how to stay current, and [Running on macOS][docs-macos] for Apple Silicon.
 
-llm-helper manages an existing vLLM or mlx-lm install; it does not install either. Download the [latest release](https://github.com/coder/vllm-helper/releases) for Linux amd64/arm64 or macOS arm64, then install it and run setup:
+llm-helper manages an existing vLLM, mlx-lm or llama.cpp install; it does not install any of them. Download the [latest release](https://github.com/coder/vllm-helper/releases) for Linux amd64/arm64 or macOS arm64, then install it and run setup:
 
 ```shell
 tar xzf llm-helper_*.tar.gz
 sudo install llm-helper /usr/local/bin/
 sudo ln -sf llm-helper /usr/local/bin/vllm-helper   # the old name, which some messages still print
-llm-helper setup                                    # or: llm-helper setup --provider mlx
+llm-helper setup                                    # or: --provider mlx, --provider llamacpp
 ```
 
 Setup detects the hardware and the vLLM install, generates an API key, writes config, and installs a service unit (systemd on Linux, launchd on macOS). It never overwrites existing config or restarts a running server. If `vllm` isn't on your `PATH`, set `VLLM_BIN` in `~/.config/vllm-helper/config.env`.
@@ -93,7 +93,7 @@ The docs are compiled into the binary: run `llm-helper serve` and open the **Doc
 
 - [**Quickstart**][docs-quickstart]: From nothing to serving a model
 - [**Profiles**][docs-profiles]: What a profile holds, and how to edit one
-- [**Providers**][docs-providers]: vLLM, mlx-lm, and what each one changes
+- [**Providers**][docs-providers]: vLLM, mlx-lm, llama.cpp, and what each one changes
 - [**Models and quantizations**][docs-models]: Finding a model that fits, and choosing a quant
 - [**Memory budget**][docs-memory]: How llm-helper decides what this machine can hold
 - [**Web panel**][docs-panel]: The browser control plane, and the permissions it needs

@@ -199,10 +199,15 @@ func resolveQuant(ctx context.Context, cfg *config.Config, repo, want string) (*
 	if want == "" {
 		return nil, nil
 	}
-	if prov, err := provider.Lookup(cfg.Provider()); err != nil {
+	prov, err := provider.Lookup(cfg.Provider())
+	if err != nil {
 		return nil, err
-	} else if !prov.Capabilities().VLLMArgs {
-		return nil, fmt.Errorf("--quant picks a GGUF file for vLLM to load, but new profiles here are served by %s; drop --quant and name a repo of that quant instead", prov.Name())
+	}
+	if !prov.Capabilities().GGUFQuant {
+		return nil, fmt.Errorf("--quant picks one GGUF file out of a repo, but new profiles here are served by %s, which does not load GGUF; drop --quant and name a repo of that quant instead", prov.Name())
+	}
+	if !prov.Capabilities().VLLMArgs {
+		return catalog.ChooseGGUFQuant(ctx, repo, want)
 	}
 	m, err := hf.Lookup(ctx, repo)
 	if err != nil {

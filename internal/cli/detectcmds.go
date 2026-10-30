@@ -301,13 +301,15 @@ func renderDoctor(r doctorReport, yes bool) {
 		case c.Provider != provider.VLLM:
 			p, _ := provider.Lookup(c.Provider)
 			fmt.Printf("  provider:   %s (new profiles)\n", c.Provider)
+			// "server", not "<provider> bin": the line above names the provider,
+			// and a longer name would push the value out of the column.
 			switch {
 			case c.ProviderBin == "":
-				fmt.Printf("  %-11s NOT SET -- set %s in config.env\n", c.Provider+" bin:", p.BinKey())
+				fmt.Printf("  server:     NOT SET -- set %s in config.env\n", p.BinKey())
 			case !c.ProviderBinOK:
-				fmt.Printf("  %-11s %s (MISSING or not executable)\n", c.Provider+" bin:", c.ProviderBin)
+				fmt.Printf("  server:     %s (MISSING or not executable)\n", c.ProviderBin)
 			default:
-				fmt.Printf("  %-11s %s\n", c.Provider+" bin:", c.ProviderBin)
+				fmt.Printf("  server:     %s\n", c.ProviderBin)
 			}
 			if !p.Capabilities().APIKey {
 				fmt.Printf("              %s checks no API key: keep it on 127.0.0.1 unless the network is trusted\n", p.BinName())

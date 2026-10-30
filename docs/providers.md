@@ -7,10 +7,11 @@ A provider is the inference server a profile runs on.
 llm-helper does the same work for every provider: profiles, switching, the service unit, the health check, and Coder sync.
 What changes is the command the service runs, and which of llm-helper's checks apply.
 
-| Provider | Server                         | Runs on                             | `PROVIDER` |
-| -------- | ------------------------------ | ----------------------------------- | ---------- |
-| vLLM     | `vllm serve`                   | Linux with an NVIDIA GPU, and macOS | `vllm`     |
-| MLX      | `mlx_lm.server`, from `mlx-lm` | Apple Silicon                       | `mlx`      |
+| Provider  | Server                         | Runs on                             | `PROVIDER` |
+| --------- | ------------------------------ | ----------------------------------- | ---------- |
+| vLLM      | `vllm serve`                   | Linux with an NVIDIA GPU, and macOS | `vllm`     |
+| MLX       | `mlx_lm.server`, from `mlx-lm` | Apple Silicon                       | `mlx`      |
+| llama.cpp | `llama-server`                 | Linux and macOS, GPU or CPU         | `llamacpp` |
 
 vLLM is the default, and it is what every install from before providers existed runs.
 
@@ -20,7 +21,7 @@ Each profile records its own provider in a `PROVIDER=` line.
 A profile without one is a vLLM profile.
 
 `PROVIDER` in `config.env` only picks the provider for the profiles that `new`, `search` and the panel create from then on.
-Changing it leaves your existing profiles on the server they were made for, so a machine can hold vLLM and MLX profiles side by side and switch between them.
+Changing it leaves your existing profiles on the server they were made for, so a machine can hold profiles for several providers side by side and switch between them.
 
 ## MLX
 
@@ -68,12 +69,57 @@ Things to know about `mlx_lm.server`:
 llm-helper set <profile> -- EXTRA_ARGS='--host 0.0.0.0 --max-tokens 32768'
 ```
 
+## llama.cpp
+
+[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` serves GGUF models on Metal, CUDA or the CPU.
+It sizes its context and GPU layers to fit the machine, so a llama.cpp profile needs only the model.
+Use a repo of GGUF files, such as one from [bartowski](https://huggingface.co/bartowski) or [unsloth](https://huggingface.co/unsloth).
+
+1. Install llama.cpp. Homebrew has it on macOS and Linux, and the [releases](https://github.com/ggml-org/llama.cpp/releases) have prebuilt binaries:
+
+   ```sh
+   brew install llama.cpp
+   ```
+
+2. On a new machine, run setup for llama.cpp. On a machine that is already set up, add the two lines to `~/.config/vllm-helper/config.env` instead:
+
+   ```sh
+   llm-helper setup --provider llamacpp
+   ```
+
+   ```sh
+   PROVIDER=llamacpp
+   LLAMA_SERVER_BIN=/opt/homebrew/bin/llama-server
+   ```
+
+3. Pull a model, and pick a quant if the repo holds several:
+
+   ```sh
+   llm-helper new bartowski/Qwen_Qwen3-32B-GGUF --quant Q4_K_M
+   ```
+
+A llama.cpp profile holds only `PROVIDER`, `MODEL` and `EXTRA_ARGS`, with the quant in `MODEL` as `<repo>:<quant>`.
+The service runs `llama-server -hf <MODEL> --alias <MODEL> --host 0.0.0.0 --port <PORT> --api-key <VLLM_API_KEY>` followed by `EXTRA_ARGS`.
+A `MODEL` that is an absolute path or ends in `.gguf` is loaded from disk with `-m` instead.
+Without `--quant`, llama.cpp picks `Q4_K_M`, or the first GGUF in the repo when there is no `Q4_K_M`.
+
+Things to know about `llama-server`:
+
+- **It checks the API key.** Clients send `VLLM_API_KEY`, as they do for vLLM, so it listens on every interface like vLLM does. Add `--host 127.0.0.1` to `EXTRA_ARGS` to keep it on this machine.
+- **It downloads the model when it starts.** The first start of a profile takes as long as the download, and the GGUF goes to the same Hugging Face cache vLLM uses.
+- **Its health check waits for the model.** `status` and `switch --wait` report the endpoint up only once the model is loaded and it can serve.
+- **Context comes from the model,** then shrinks to fit memory. Set it with `-c <tokens>` in `EXTRA_ARGS`.
+
+```sh
+llm-helper set <profile> -- EXTRA_ARGS='-c 65536'
+```
+
 ## What only vLLM does
 
 These apply to vLLM profiles alone:
 
 - Reading flags from the model card, and checking parsers against the installed vLLM.
 - KV cache sizing and the `GPU_MEMORY_UTILIZATION` fit.
-- GGUF quants: `new --quant` refuses when new profiles go to another provider.
+- Checking a GGUF quant against what vLLM's GGUF plugin can load. llama.cpp profiles take `new --quant` without those checks, and MLX profiles refuse it.
 - `adopt`, which looks for running vLLM servers, and recipes, which run vLLM containers.
 - `shard`, which refuses a profile for another provider.

@@ -171,6 +171,56 @@ func TestPrepareForAnotherProviderNamesOnlyTheModel(t *testing.T) {
 	}
 }
 
+// llama.cpp loads one GGUF file out of a repo, including a split one that
+// vLLM's plugin cannot, and the profile is named and addressed the way a vLLM
+// quant profile is, so `new` finds it again under the name it derives.
+func TestChooseGGUFQuantForLlamaCPP(t *testing.T) {
+	const repo = "bartowski/Qwen_Qwen3-32B-GGUF"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var files []map[string]any
+		switch r.URL.Path {
+		case "/api/models/" + repo + "/tree/main":
+			for name, size := range map[string]int64{
+				"Qwen_Qwen3-32B-Q4_K_M.gguf":              19e9,
+				"Qwen_Qwen3-32B-Q8_0.gguf":                34e9,
+				"Qwen_Qwen3-32B-BF16-00001-of-00002.gguf": 33e9,
+				"Qwen_Qwen3-32B-BF16-00002-of-00002.gguf": 33e9,
+				"README.md": 1e3,
+			} {
+				files = append(files, map[string]any{"type": "file", "path": name, "size": size})
+			}
+		case "/api/models/Qwen/Qwen3-32B/tree/main":
+			files = append(files, map[string]any{"type": "file", "path": "model.safetensors", "size": 65e9})
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(files)
+	}))
+	defer srv.Close()
+	defer hf.SetBaseURLForTest(srv.URL)()
+	ctx := context.Background()
+	llama, _ := provider.Lookup(provider.LlamaCPP)
+
+	choice, err := ChooseGGUFQuant(ctx, repo, "bf16")
+	if err != nil {
+		t.Fatalf("a split GGUF was refused: %v", err)
+	}
+	p := PrepareFor(ctx, config.Dirs{Data: t.TempDir()}, llama, repo, choice, vllm.Caps{}, 0)
+	if p.Opts.Repo != repo+":BF16" || p.Opts.Name != "qwen_qwen3-32b-gguf-bf16" || p.Opts.Provider != provider.LlamaCPP {
+		t.Errorf("Opts = %+v, want MODEL %s:BF16 in profile qwen_qwen3-32b-gguf-bf16", p.Opts, repo)
+	}
+
+	_, err = ChooseGGUFQuant(ctx, repo, "Q6_K")
+	if err == nil || !strings.Contains(err.Error(), "Q8_0") || !strings.Contains(err.Error(), "Q4_K_M") {
+		t.Errorf("unknown quant: err = %v, want it to list the quants the repo has", err)
+	}
+	_, err = ChooseGGUFQuant(ctx, "Qwen/Qwen3-32B", "Q8_0")
+	if err == nil || !strings.Contains(err.Error(), "no GGUF") {
+		t.Errorf("safetensors repo: err = %v, want it refused for holding no GGUF", err)
+	}
+}
+
 // gpt-oss ships no vllm serve snippet, so nothing was detected and the profile
 // was written with an empty EXTRA_ARGS. Serving it that way answers plain chat
 // normally but returns an empty message for anything with tools, which reads as

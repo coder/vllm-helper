@@ -19,8 +19,9 @@ const Key = "PROVIDER"
 
 // Names of the providers that exist.
 const (
-	VLLM = "vllm"
-	MLX  = "mlx"
+	VLLM     = "vllm"
+	MLX      = "mlx"
+	LlamaCPP = "llamacpp"
 )
 
 // Spec is the part of a profile, merged over config.env, that a provider turns
@@ -46,6 +47,10 @@ type Capabilities struct {
 	// then do model-card flags, parser validation against the installed vLLM,
 	// KV cache sizing and the memory-utilization fit apply.
 	VLLMArgs bool
+	// GGUFQuant reports whether the server loads one GGUF file out of a repo
+	// that holds several, named by appending its quant to the model:
+	// "org/model-GGUF:Q8_0". Only then does choosing a quant mean anything.
+	GGUFQuant bool
 }
 
 // Provider is one inference server.
@@ -63,8 +68,9 @@ type Provider interface {
 }
 
 var registry = map[string]Provider{
-	VLLM: vllm{},
-	MLX:  mlx{},
+	VLLM:     vllm{},
+	MLX:      mlx{},
+	LlamaCPP: llamaCPP{},
 }
 
 // Lookup returns the provider a PROVIDER value names. Empty means vLLM, which

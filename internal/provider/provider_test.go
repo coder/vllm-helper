@@ -31,7 +31,7 @@ func TestLookupRejectsUnknownNamingTheChoices(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unknown provider must be an error, not a silent fallback to vLLM")
 	}
-	for _, want := range []string{"PROVIDER", "ollama", "mlx", "vllm"} {
+	for _, want := range []string{"PROVIDER", "ollama", "llamacpp", "mlx", "vllm"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
@@ -77,8 +77,47 @@ func TestMLXCommandCarriesNoVLLMFlags(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("argv\n got %q\nwant %q", got, want)
 	}
-	if caps := p.Capabilities(); caps.APIKey || caps.VLLMArgs {
+	if caps := p.Capabilities(); caps.APIKey || caps.VLLMArgs || caps.GGUFQuant {
 		t.Errorf("mlx capabilities = %+v, want none", caps)
+	}
+}
+
+// llama-server gets the key it is meant to enforce and none of vLLM's sizing
+// flags, which it does not have. --alias keeps /v1/models reporting MODEL,
+// which is the name Coder sync and status look for.
+func TestLlamaCPPCommand(t *testing.T) {
+	t.Parallel()
+	p, _ := provider.Lookup(provider.LlamaCPP)
+	bin := "/opt/homebrew/bin/llama-server"
+	for _, tc := range []struct {
+		name, model, apiKey, source string
+		wantKey                     bool
+	}{
+		{"hf repo with quant", "bartowski/Qwen_Qwen3-32B-GGUF:Q8_0", "sk-x", "-hf", true},
+		{"hf repo", "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "sk-x", "-hf", true},
+		{"local file", "/models/qwen3-32b-q8_0.gguf", "sk-x", "-m", true},
+		{"relative file", "qwen3-32b-q8_0.GGUF", "sk-x", "-m", true},
+		{"no key", "Qwen/Qwen2.5-0.5B-Instruct-GGUF", "", "-hf", false},
+	} {
+		got, err := p.Command(provider.Spec{
+			Bin: bin, Model: tc.model, Port: "8001", APIKey: tc.apiKey,
+			MaxModelLen: "32768", MemUtilization: "0.85", KVCacheBytes: "1000",
+			ExtraArgs: `-c 65536 --chat-template-file "/a b.jinja"`,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		want := []string{bin, tc.source, tc.model, "--alias", tc.model, "--host", "0.0.0.0", "--port", "8001"}
+		if tc.wantKey {
+			want = append(want, "--api-key", tc.apiKey)
+		}
+		want = append(want, "-c", "65536", "--chat-template-file", "/a b.jinja")
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: argv\n got %q\nwant %q", tc.name, got, want)
+		}
+	}
+	if caps := p.Capabilities(); !caps.APIKey || caps.VLLMArgs || !caps.GGUFQuant {
+		t.Errorf("llamacpp capabilities = %+v, want APIKey and GGUFQuant only", caps)
 	}
 }
 

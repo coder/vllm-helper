@@ -15,7 +15,7 @@ func (vllm) BinKey() string  { return "VLLM_BIN" }
 func (vllm) BinName() string { return "vllm" }
 
 func (vllm) Capabilities() Capabilities {
-	return Capabilities{APIKey: true, VLLMArgs: true}
+	return Capabilities{APIKey: true, VLLMArgs: true, GGUFQuant: true}
 }
 
 // Command expects MemUtilization already fitted to this machine: what fits

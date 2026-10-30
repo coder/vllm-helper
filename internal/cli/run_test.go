@@ -547,8 +547,8 @@ func TestRunStartRefusesAnUnknownProvider(t *testing.T) {
 	}
 }
 
-// --quant picks a GGUF file, which only vLLM loads. Under another provider it
-// is refused before anything is fetched or written.
+// --quant picks one GGUF file out of a repo, which mlx does not load. Under
+// mlx it is refused before anything is fetched or written.
 func TestRunNewRefusesAQuantForAnotherProvider(t *testing.T) {
 	configDir, _ := newTree(t)
 	f, err := os.OpenFile(filepath.Join(configDir, "config.env"), os.O_APPEND|os.O_WRONLY, 0)
