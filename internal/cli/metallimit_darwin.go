@@ -54,13 +54,18 @@ func setWiredLimit(cfg *config.Config, ram, live int64, arg string, yes bool) er
 		if ws == 0 && live == 0 {
 			return fmt.Errorf("could not read the Metal working set from %s (is vllm-metal installed?); pass a size in MiB instead of 'auto'", orUnknown(cfg.VLLMBin()))
 		}
-		s, raise := suggestWiredLimit(ram, ws, live)
-		if !raise {
+		// An unreadable METAL_WIRED_LIMIT_MB counts as unset, so it is replaced.
+		configured, _ := configuredWiredLimit(cfg)
+		mib = autoWiredLimit(ram, ws, live, configured, wiredLimitDaemonInstalled())
+		if mib == 0 {
+			s, _ := suggestWiredLimit(ram, ws, live)
 			fmt.Printf("No raise needed: the GPU may already use %s of the %s installed, which leaves macOS %d GiB or less.\n",
 				formatMiB(s), formatMiB(ram>>20), wiredLimitHeadroomMiB(ram>>20)/1024)
 			return nil
 		}
-		mib = s
+		if mib == live {
+			fmt.Printf("No raise needed. Keeping the current %s and reapplying it at every boot.\n", formatMiB(live))
+		}
 	} else {
 		n, err := parseWiredLimitArg(arg)
 		if err != nil {

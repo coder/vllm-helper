@@ -17,6 +17,9 @@ func useMetalProbe(bin string) {
 	}
 	detect.UseMetalProbe(
 		func() bool { return vllm.MetalInstalled(bin) },
-		func() int64 { return vllm.ProbeMetal(bin).WorkingSetBytes },
+		func() detect.MetalMemory {
+			m := vllm.ProbeMetal(bin)
+			return detect.MetalMemory{WorkingSetBytes: m.WorkingSetBytes, FixedKVCache: m.FixedKVCache}
+		},
 	)
 }

@@ -46,12 +46,16 @@ type Hardware struct {
 	// MetalWorkingSetBytes is the most unified memory macOS lets the GPU
 	// wire, as MLX reports it. vllm-metal reads --gpu-memory-utilization as
 	// a share of this, not of installed RAM. 0 when it could not be read.
-	MetalWorkingSetBytes int64   `json:"metal_working_set_bytes"`
-	MetalWorkingSetGB    int     `json:"metal_working_set_gb"`
-	BaselineGB           float64 `json:"baseline_gb"`   // what the OS is holding; 0 when it could not be measured
-	BudgetBytes          int64   `json:"budget_bytes"`  // recommended max model weights
-	BudgetGB             int     `json:"budget_gb"`     // the same, for display
-	BudgetReason         string  `json:"budget_reason"` // one-liner explaining the budget for the user
+	MetalWorkingSetBytes int64 `json:"metal_working_set_bytes"`
+	MetalWorkingSetGB    int   `json:"metal_working_set_gb"`
+	// MetalFixedKVCache is whether this vllm-metal honors
+	// --kv-cache-memory-bytes. Without it, the cache takes what
+	// --gpu-memory-utilization leaves, and a planned size would not hold.
+	MetalFixedKVCache bool    `json:"metal_fixed_kv_cache"`
+	BaselineGB        float64 `json:"baseline_gb"`   // what the OS is holding; 0 when it could not be measured
+	BudgetBytes       int64   `json:"budget_bytes"`  // recommended max model weights
+	BudgetGB          int     `json:"budget_gb"`     // the same, for display
+	BudgetReason      string  `json:"budget_reason"` // one-liner explaining the budget for the user
 }
 
 // Pool reports the memory weights are actually loaded into, and which pool
@@ -139,7 +143,9 @@ func Probe() Hardware {
 	if !hw.CUDA {
 		if m := currentMetal(); m.runtime() {
 			hw.Metal = true
-			if ws := m.workingSetBytes(); ws > 0 {
+			mem := m.memoryInfo()
+			hw.MetalFixedKVCache = mem.FixedKVCache
+			if ws := mem.WorkingSetBytes; ws > 0 {
 				hw.MetalWorkingSetBytes = ws
 				hw.MetalWorkingSetGB = decimalGB(ws)
 			}

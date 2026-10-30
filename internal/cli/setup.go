@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -40,6 +41,11 @@ func runSetup() error {
 	if statErr != nil {
 		vllmBin = findVLLM()
 		useMetalProbe(vllmBin)
+	} else if bin, filled, err := fillMissingVLLMBin(dirs.ConfigFile(), findVLLM); err != nil {
+		return err
+	} else if filled {
+		fmt.Printf("Detected vllm at %s and recorded it as VLLM_BIN in %s\n\n", bin, dirs.ConfigFile())
+		useMetalProbe(bin)
 	}
 
 	hw := detect.Probe()
@@ -173,6 +179,30 @@ VLLM_API_KEY=%s
 		return nil
 	}
 	return installUnit(cfg)
+}
+
+// fillMissingVLLMBin records a vllm installed since config.env was written
+// without one. The first setup leaves VLLM_BIN empty when it finds nothing and
+// tells the user to install vLLM and run setup again, so the rerun has to fill
+// it in. A VLLM_BIN already set is never replaced. It returns the executable
+// it recorded and whether it wrote config.env.
+func fillMissingVLLMBin(path string, find func() string) (string, bool, error) {
+	f, err := config.ParseEnvFile(path)
+	if err != nil {
+		return "", false, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if strings.TrimSpace(f.Get("VLLM_BIN")) != "" {
+		return "", false, nil
+	}
+	bin := find()
+	if bin == "" {
+		return "", false, nil
+	}
+	f.Set("VLLM_BIN", bin)
+	if err := f.Write(path, 0o644); err != nil {
+		return "", false, fmt.Errorf("recording VLLM_BIN=%s in %s: %w", bin, path, err)
+	}
+	return bin, true, nil
 }
 
 // installUnit installs the host's service unit pointing at this binary's

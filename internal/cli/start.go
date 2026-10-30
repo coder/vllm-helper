@@ -54,6 +54,10 @@ func runStart() error {
 	}
 
 	spec := serveSpecFromActive(active)
+	// The root command registered config.env's VLLM_BIN, but a profile can
+	// override it, and the binary exec'd here decides whether the CPU
+	// backend's free-RAM clamp applies.
+	useMetalProbe(spec.Bin)
 	args, err := spec.args()
 	if err != nil {
 		return err

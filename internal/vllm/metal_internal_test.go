@@ -18,6 +18,10 @@ func TestParseMetal(t *testing.T) {
 		out:  "some log line\nVLLM_HELPER_METAL {\"installed\": true, \"working_set_bytes\": 239143780352}\n",
 		want: Metal{Installed: true, WorkingSetBytes: 239143780352},
 	}, {
+		name: "vllm-metal that honors --kv-cache-memory-bytes",
+		out:  "VLLM_HELPER_METAL {\"installed\": true, \"working_set_bytes\": 239143780352, \"fixed_kv_cache\": true}\n",
+		want: Metal{Installed: true, WorkingSetBytes: 239143780352, FixedKVCache: true},
+	}, {
 		name: "plain vLLM",
 		out:  "VLLM_HELPER_METAL {\"installed\": false, \"working_set_bytes\": 0}\n",
 		want: Metal{},

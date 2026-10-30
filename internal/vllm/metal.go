@@ -17,17 +17,30 @@ type Metal struct {
 	// unified memory macOS lets the GPU wire, and the figure vllm-metal
 	// multiplies --gpu-memory-utilization by. 0 when it could not be read.
 	WorkingSetBytes int64 `json:"working_set_bytes"`
+	// FixedKVCache is whether this vllm-metal honors --kv-cache-memory-bytes.
+	// 0.32.0 accepts the flag but sizes the cache from
+	// --gpu-memory-utilization regardless; builds after it honor it.
+	FixedKVCache bool `json:"fixed_kv_cache"`
 }
 
 // metalProbe is run inside vLLM's interpreter. It imports MLX but not vLLM or
-// torch, so it stays well under a second.
+// torch, so it stays well under a second. Whether the KV planner honors
+// --kv-cache-memory-bytes is read from its source rather than its version:
+// development builds after 0.32.0 carry a lower version number than 0.32.0
+// and honor it, and reading the file imports nothing.
 const metalProbe = `
-import importlib.util, json
-out = {"installed": importlib.util.find_spec("vllm_metal") is not None, "working_set_bytes": 0}
+import importlib.util, json, os
+out = {"installed": importlib.util.find_spec("vllm_metal") is not None, "working_set_bytes": 0, "fixed_kv_cache": False}
 if out["installed"]:
     try:
         import mlx.core as mx
         out["working_set_bytes"] = int(mx.device_info().get("max_recommended_working_set_size", 0))
+    except Exception:
+        pass
+    try:
+        root = importlib.util.find_spec("vllm_metal").submodule_search_locations[0]
+        with open(os.path.join(root, "v1", "cache_policy.py")) as f:
+            out["fixed_kv_cache"] = "kv_cache_memory_bytes" in f.read()
     except Exception:
         pass
 print("VLLM_HELPER_METAL " + json.dumps(out))

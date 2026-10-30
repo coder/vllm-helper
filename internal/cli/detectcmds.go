@@ -585,15 +585,8 @@ func adoptInto(cfg *config.Config) error {
 		changed = true
 		fmt.Printf("Config: VLLM_BIN -> %s\n", s.VLLMBin)
 	}
-	if s.SystemdUnit != "" && cfg.ServiceName() != s.SystemdUnit {
-		cfg.File.Set("SERVICE_NAME", s.SystemdUnit)
-		scope := "system"
-		if s.UserScope {
-			scope = "user"
-		}
-		cfg.File.Set("SERVICE_SCOPE", scope)
+	if adoptService(cfg, s) {
 		changed = true
-		fmt.Printf("Config: SERVICE_NAME -> %s (%s scope)\n", s.SystemdUnit, scope)
 	}
 	if changed {
 		if err := cfg.File.Write(cfg.Dirs.ConfigFile(), 0o644); err != nil {
@@ -621,6 +614,27 @@ func adoptInto(cfg *config.Config) error {
 	fmt.Println("Adoption complete. 'vllm-helper status' now reflects this server, and the")
 	fmt.Println("next 'vllm-helper switch' will manage it.")
 	return nil
+}
+
+// adoptService points SERVICE_NAME and SERVICE_SCOPE at the unit running s,
+// and reports whether either changed. Both are compared: a system-scope job
+// with the default name, adopted from a user-scope config, would otherwise
+// keep status and restart aimed at the wrong domain.
+func adoptService(cfg *config.Config, s detect.Server) bool {
+	if s.SystemdUnit == "" {
+		return false
+	}
+	scope := "system"
+	if s.UserScope {
+		scope = "user"
+	}
+	if cfg.ServiceName() == s.SystemdUnit && cfg.ServiceScope() == scope {
+		return false
+	}
+	cfg.File.Set("SERVICE_NAME", s.SystemdUnit)
+	cfg.File.Set("SERVICE_SCOPE", scope)
+	fmt.Printf("Config: SERVICE_NAME -> %s (%s scope)\n", s.SystemdUnit, scope)
+	return true
 }
 
 // appleBackend says which vLLM backend an Apple Silicon Mac serves with, since

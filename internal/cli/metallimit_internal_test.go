@@ -57,6 +57,39 @@ func TestSuggestWiredLimit(t *testing.T) {
 	}
 }
 
+// A cap already high enough is not raised again, but one set by hand, or left
+// by a run that stopped partway, still has to survive a reboot.
+func TestAutoWiredLimit(t *testing.T) {
+	t.Parallel()
+
+	const raised = 250 * 1024
+	cases := []struct {
+		name             string
+		live, configured int64
+		daemon           bool
+		want             int64
+	}{
+		{"the macOS default is raised", 0, 0, false, 245760},
+		{"a raised cap already persisted is left alone", raised, raised, true, 0},
+		{"a cap set by hand is persisted", raised, 0, false, raised},
+		{"a cap with no boot-time daemon is persisted", raised, raised, false, raised},
+		{"a cap config.env does not match is persisted", raised, 245760, true, raised},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := autoWiredLimit(256*gib, m5UltraWorkingSet, tc.live, tc.configured, tc.daemon); got != tc.want {
+				t.Errorf("autoWiredLimit() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+
+	// A small Mac at the macOS default needs nothing, persisted or not.
+	if got := autoWiredLimit(16*gib, 10*gib, 0, 0, false); got != 0 {
+		t.Errorf("autoWiredLimit() on a 16 GiB Mac = %d, want 0", got)
+	}
+}
+
 func TestValidateWiredLimit(t *testing.T) {
 	t.Parallel()
 

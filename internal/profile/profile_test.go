@@ -324,7 +324,7 @@ func TestRemove(t *testing.T) {
 // RAM, so a Mac serving on its GPU gets its own default. Not parallel: the
 // probe is process-wide.
 func TestCreateDefaultsForVLLMMetal(t *testing.T) {
-	detect.UseMetalProbe(func() bool { return true }, func() int64 { return 239143780352 })
+	detect.UseMetalProbe(func() bool { return true }, func() detect.MetalMemory { return detect.MetalMemory{WorkingSetBytes: 239143780352} })
 	t.Cleanup(func() { detect.UseMetalProbe(nil, nil) })
 
 	p, err := profile.Create(newDirs(t), profile.CreateOpts{Repo: "mlx-community/Qwen3-8B-4bit"})

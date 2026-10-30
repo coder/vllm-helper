@@ -19,7 +19,9 @@ the fact.
   than RAM, and `doctor` skips the source-build toolchain. `setup` finds the
   `vllm` that Homebrew and the install script put off `PATH`. A headless Mac
   runs the server as a LaunchDaemon with `SERVICE_SCOPE=system`. The CPU
-  backend still works where vllm-metal is not installed.
+  backend still works where vllm-metal is not installed. vllm-metal 0.32.0
+  ignores `--kv-cache-memory-bytes`, so there `new` leaves the KV cache to
+  vllm-metal and says so, and plans a size only for builds that honor it.
 - `metal-limit` shows and sets the GPU's wired memory limit on macOS, and
   installs a boot-time daemon to reapply it, since the sysctl resets on
   reboot. A higher limit gives vllm-metal more of the RAM at the cost of
@@ -29,7 +31,14 @@ the fact.
 
 - macOS system-scope LaunchDaemons ran as root, so the server read root's
   config and model cache rather than the ones `setup` wrote. They now run as
-  the installing user, with `HOME` set.
+  the installing user, with `HOME` set. `setup` keeps an existing plist, so a
+  daemon installed by 0.5.0 or earlier has to be removed and set up again;
+  `docs/macos.md` has the steps.
+- `adopt` records the scope of the unit it finds even when the name already
+  matches `SERVICE_NAME`, so a system-scope job under the default name is no
+  longer controlled as a user-scope one.
+- Running `setup` again fills in a `VLLM_BIN` the first run left empty, once
+  a `vllm` can be found, instead of keeping the empty value.
 - The Python beside a symlinked `vllm`, as Homebrew installs it, is found by
   following the link. A Homebrew Cellar path is recorded as the stable `opt`
   path, so `brew upgrade` no longer leaves `VLLM_BIN` pointing at nothing.

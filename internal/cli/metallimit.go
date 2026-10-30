@@ -149,6 +149,21 @@ func suggestWiredLimit(ramBytes, workingSetBytes, limitMiB int64) (int64, bool) 
 	return s, true
 }
 
+// autoWiredLimit is the cap 'metal-limit --set auto' applies, or 0 when there
+// is nothing to do. A live cap at or above the suggestion is kept rather than
+// raised, but it is still persisted unless config.env and the boot-time daemon
+// already carry it: macOS drops a cap set by hand at the next reboot.
+func autoWiredLimit(ramBytes, workingSetBytes, liveMiB, configuredMiB int64, daemonInstalled bool) int64 {
+	s, raise := suggestWiredLimit(ramBytes, workingSetBytes, liveMiB)
+	switch {
+	case raise:
+		return s
+	case liveMiB == 0, daemonInstalled && configuredMiB == liveMiB:
+		return 0
+	}
+	return liveMiB
+}
+
 // validateWiredLimit rejects a cap that would starve either the GPU or macOS.
 func validateWiredLimit(mib, ramBytes int64) error {
 	ramMiB := ramBytes >> 20

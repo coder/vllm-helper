@@ -3,7 +3,10 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/coder/vllm-helper/internal/config"
 )
 
 // /opt/homebrew/bin/vllm resolves into a versioned Cellar directory that the
@@ -67,5 +70,49 @@ func TestStableVLLMPathResolvesOtherSymlinks(t *testing.T) {
 	}
 	if got := stableVLLMPath(link); got != want {
 		t.Errorf("stableVLLMPath(%s) = %s, want %s", link, got, want)
+	}
+}
+
+// The first setup writes an empty VLLM_BIN when it finds no vllm and says to
+// run setup again after installing one, so the rerun has to record it.
+func TestFillMissingVLLMBin(t *testing.T) {
+	t.Parallel()
+
+	found := "/opt/homebrew/opt/vllm-metal/libexec/bin/vllm"
+	cases := []struct {
+		name, config, find string
+		wantFilled         bool
+		wantBin            string
+	}{
+		{"empty is filled", "PORT=8001\nVLLM_BIN=\nSERVICE_SCOPE=user\n", found, true, found},
+		{"missing is filled", "PORT=8001\n", found, true, found},
+		{"set is kept", "VLLM_BIN=/venv/bin/vllm\n", found, false, "/venv/bin/vllm"},
+		{"still nothing to find", "VLLM_BIN=\n", "", false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "config.env")
+			if err := os.WriteFile(path, []byte(tc.config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			bin, filled, err := fillMissingVLLMBin(path, func() string { return tc.find })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if filled != tc.wantFilled || (filled && bin != tc.find) {
+				t.Errorf("fillMissingVLLMBin() = %q, %v; want filled %v", bin, filled, tc.wantFilled)
+			}
+			f, err := config.ParseEnvFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := f.Get("VLLM_BIN"); got != tc.wantBin {
+				t.Errorf("VLLM_BIN = %q, want %q", got, tc.wantBin)
+			}
+			if got := f.Get("PORT"); strings.Contains(tc.config, "PORT=") && got != "8001" {
+				t.Errorf("PORT = %q, want the rest of config.env kept", got)
+			}
+		})
 	}
 }

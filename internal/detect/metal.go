@@ -26,13 +26,22 @@ const metalWorkingSetGuess = 0.75
 // a probe still running when a newer registration replaces it cannot
 // overwrite the newer answer.
 type metalState struct {
-	installed  func() bool
-	workingSet func() int64
+	installed func() bool
+	memory    func() MetalMemory
 
 	installedOnce sync.Once
 	on            bool
-	workingOnce   sync.Once
-	wsBytes       int64
+	memoryOnce    sync.Once
+	mem           MetalMemory
+}
+
+// MetalMemory is what the MLX probe learns about how vllm-metal spends memory.
+type MetalMemory struct {
+	// WorkingSetBytes is MLX's max_recommended_working_set_size in bytes, 0
+	// when unknown.
+	WorkingSetBytes int64
+	// FixedKVCache is whether this vllm-metal honors --kv-cache-memory-bytes.
+	FixedKVCache bool
 }
 
 var (
@@ -41,18 +50,18 @@ var (
 )
 
 // UseMetalProbe registers how to ask the configured vLLM about vllm-metal:
-// installed reports whether the plugin is importable, workingSet returns MLX's
-// max_recommended_working_set_size in bytes (0 when unknown). Neither runs
-// until a caller needs its answer, because each starts a Python interpreter.
-// A nil installed clears the registration.
-func UseMetalProbe(installed func() bool, workingSet func() int64) {
+// installed reports whether the plugin is importable, memory asks MLX and the
+// plugin how memory is sized. Neither runs until a caller needs its answer,
+// because each starts a Python interpreter. A nil installed clears the
+// registration.
+func UseMetalProbe(installed func() bool, memory func() MetalMemory) {
 	metalMu.Lock()
 	defer metalMu.Unlock()
 	if installed == nil {
 		metal = nil
 		return
 	}
-	metal = &metalState{installed: installed, workingSet: workingSet}
+	metal = &metalState{installed: installed, memory: memory}
 }
 
 // currentMetal returns the registration in force, or nil when there is none.
@@ -72,15 +81,18 @@ func (s *metalState) runtime() bool {
 	return s.on
 }
 
-// workingSetBytes reads the Metal working set, or 0 when vllm-metal is not
-// installed or MLX could not report it. It is not probed without vllm-metal,
-// since MLX is not there to ask.
-func (s *metalState) workingSetBytes() int64 {
-	if !s.runtime() || s.workingSet == nil {
-		return 0
+// memoryInfo reads the Metal working set and KV sizing support, or a zero
+// MetalMemory when vllm-metal is not installed or could not be asked. It is
+// not probed without vllm-metal, since MLX is not there to ask.
+func (s *metalState) memoryInfo() MetalMemory {
+	if !s.runtime() || s.memory == nil {
+		return MetalMemory{}
 	}
-	s.workingOnce.Do(func() { s.wsBytes = max(s.workingSet(), 0) })
-	return s.wsBytes
+	s.memoryOnce.Do(func() {
+		s.mem = s.memory()
+		s.mem.WorkingSetBytes = max(s.mem.WorkingSetBytes, 0)
+	})
+	return s.mem
 }
 
 // MetalRuntime reports whether the configured vLLM serves on the Apple Silicon

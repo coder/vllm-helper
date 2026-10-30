@@ -96,6 +96,18 @@ It starts at boot and runs as the user who installed it, so it reads that user's
 `vllm-helper status` and `doctor` read its state without sudo.
 Starting, stopping, restarting, and switching it need sudo, as system scope does on Linux.
 
+A LaunchDaemon installed by vllm-helper 0.5.0 or earlier runs as root, and `setup` keeps a plist that already exists.
+To replace it with one that runs as you, unload and remove it, then run setup again:
+
+```sh
+sudo launchctl bootout system/com.coder.vllm
+sudo rm /Library/LaunchDaemons/com.coder.vllm.plist
+vllm-helper setup
+```
+
+Use your `SERVICE_NAME` in place of `com.coder.vllm` if you changed it.
+The server is down from the `bootout` until setup loads the new daemon.
+
 ## Give the GPU more memory
 
 macOS caps how much unified memory the GPU may wire, and that cap is the working set.
@@ -111,18 +123,24 @@ vllm-helper metal-limit --reset      # back to the macOS default
 
 `--set` writes `METAL_WIRED_LIMIT_MB` to `config.env` and applies the limit now with sudo.
 The setting does not survive a reboot, so it also installs a LaunchDaemon, `com.coder.vllm-helper.wired-limit`, that applies it again at every boot.
+When the live limit is already at or above the suggestion, `--set auto` keeps it rather than raising it, and still installs the daemon and records the limit if either is missing.
 Whenever the live limit differs from `METAL_WIRED_LIMIT_MB`, `vllm-helper start` waits up to 60 seconds for it to match before it starts vLLM, then warns and starts anyway.
 `--reset` removes that daemon and sets the limit back to `0`.
 `doctor` shows the current limit and suggests raising it.
 `metal-limit` needs macOS 15 or later on Apple Silicon, the same as vllm-metal.
 
 After a raise, the ceiling vLLM may touch grows on the next restart, because `GPU_MEMORY_UTILIZATION` is a share of the working set.
-`KV_CACHE_MEMORY_BYTES` does not grow: each profile keeps the cache size it was planned with against the old working set.
-Planning again only changes a cache that was cut short to fit; one that already holds `KV_CONTEXT_TARGET` full contexts comes out the same.
-To use the extra room in the cache, either:
+What happens to the KV cache depends on the vllm-metal build:
 
-- Set the size yourself: `vllm-helper set <profile> KV_CACHE_MEMORY_BYTES=<bytes>`.
-- Plan the profile again: `vllm-helper new <repo>` reuses a profile that already exists, so remove it first with `vllm-helper remove <profile>`. The active profile cannot be removed, so switch to another one first.
+- vllm-metal 0.32.0 and earlier ignore `KV_CACHE_MEMORY_BYTES` and give the cache whatever `GPU_MEMORY_UTILIZATION` leaves after the weights.
+  `vllm-helper new` leaves `KV_CACHE_MEMORY_BYTES` out of the profile there and says why, so `KV_CONTEXT_TARGET` has no effect.
+  The cache grows with the working set on the next restart, with nothing to change.
+- Development builds after 0.32.0 honor `KV_CACHE_MEMORY_BYTES`, and `vllm-helper new` sizes it for `KV_CONTEXT_TARGET` full contexts.
+  That size does not grow: each profile keeps the cache size it was planned with against the old working set.
+  Planning again only changes a cache that was cut short to fit; one that already holds `KV_CONTEXT_TARGET` full contexts comes out the same.
+  To use the extra room in the cache, either set the size yourself with `vllm-helper set <profile> KV_CACHE_MEMORY_BYTES=<bytes>`, or plan the profile again.
+  `vllm-helper new <repo>` reuses a profile that already exists, so remove it first with `vllm-helper remove <profile>`.
+  The active profile cannot be removed, so switch to another one first.
 
 A higher limit gives the GPU more of the RAM and leaves less headroom for macOS.
 That is a good trade on a dedicated server, and a worse one on a desktop you also work on.

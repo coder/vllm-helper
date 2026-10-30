@@ -59,6 +59,12 @@ func (h Hardware) PlanFor(weightBytes, kvPerToken int64, maxLen, contextTarget i
 		p.Note = "this model leaves little room for a KV cache -- vLLM will size it, and may not start"
 		return p
 	}
+	if h.Metal && !h.MetalFixedKVCache {
+		// A size this vllm-metal ignores would be reported as the cache
+		// while the real one is whatever the ceiling leaves.
+		p.Note = "this vllm-metal ignores KV_CACHE_MEMORY_BYTES, so it sizes the KV cache itself from what GPU_MEMORY_UTILIZATION leaves after the weights, not from KV_CONTEXT_TARGET"
+		return p
+	}
 
 	want := float64(contextTarget) * float64(maxLen) * float64(kvPerToken)
 	if want > spare {

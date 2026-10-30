@@ -55,11 +55,14 @@ func TestAMetalBudgetWithoutAWorkingSetIsAnEstimate(t *testing.T) {
 func TestAMetalPlanFitsInsideWhatVLLMMetalMayUse(t *testing.T) {
 	t.Parallel()
 
-	hw := Hardware{TotalMemBytes: macTotal, Unified: true, Metal: true, MetalWorkingSetBytes: macWorkingSet}
+	hw := Hardware{TotalMemBytes: macTotal, Unified: true, Metal: true, MetalWorkingSetBytes: macWorkingSet, MetalFixedKVCache: true}
 	for _, weights := range []float64{1.5e9, 30e9, 150e9} {
 		p := hw.PlanFor(int64(weights), smallModelKVPerToken, 262144, 0)
 		if p.MemUtilization != MetalMemUtilization {
 			t.Errorf("%.0f GB model: MemUtilization %.2f, want %.2f", weights/1e9, p.MemUtilization, MetalMemUtilization)
+		}
+		if p.KVCacheBytes <= 0 {
+			t.Errorf("%.0f GB model: no KV cache size, want one under a vllm-metal that honors it", weights/1e9)
 		}
 		ceiling := MetalMemUtilization * macWorkingSet
 		committed := weights*(1+activationFraction) + metalRuntimeReserve + float64(p.KVCacheBytes)
@@ -67,6 +70,24 @@ func TestAMetalPlanFitsInsideWhatVLLMMetalMayUse(t *testing.T) {
 			t.Errorf("%.0f GB model: commits %.1f GiB against a %.1f GiB ceiling",
 				weights/1e9, committed/gibibyte, ceiling/gibibyte)
 		}
+	}
+}
+
+// vllm-metal 0.32.0 accepts --kv-cache-memory-bytes and ignores it, so a plan
+// must not claim a cache size it cannot hold the server to.
+func TestAMetalPlanLeavesTheCacheToAVLLMMetalThatIgnoresTheSize(t *testing.T) {
+	t.Parallel()
+
+	hw := Hardware{TotalMemBytes: macTotal, Unified: true, Metal: true, MetalWorkingSetBytes: macWorkingSet}
+	p := hw.PlanFor(30e9, smallModelKVPerToken, 262144, 0)
+	if p.KVCacheBytes != 0 || p.Tokens != 0 {
+		t.Errorf("plan sized the cache at %d bytes (%d tokens), want it left to vllm-metal", p.KVCacheBytes, p.Tokens)
+	}
+	if p.MemUtilization != MetalMemUtilization {
+		t.Errorf("MemUtilization %.2f, want %.2f", p.MemUtilization, MetalMemUtilization)
+	}
+	if !strings.Contains(p.Note, "KV_CACHE_MEMORY_BYTES") {
+		t.Errorf("Note = %q, want it to say the size is not honored", p.Note)
 	}
 }
 
@@ -79,27 +100,27 @@ func TestMetalRuntimeAsksEachProbeOnceAndOnlyWhenNeeded(t *testing.T) {
 	if MetalRuntime() {
 		t.Fatal("MetalRuntime() is true with no probe registered")
 	}
-	installedCalls, wsCalls := 0, 0
+	installedCalls, memCalls := 0, 0
 	UseMetalProbe(
 		func() bool { installedCalls++; return true },
-		func() int64 { wsCalls++; return macWorkingSet },
+		func() MetalMemory { memCalls++; return MetalMemory{WorkingSetBytes: macWorkingSet, FixedKVCache: true} },
 	)
 	for range 3 {
 		if !MetalRuntime() {
 			t.Fatal("MetalRuntime() = false, want the probe's answer")
 		}
 	}
-	if wsCalls != 0 {
-		t.Errorf("MetalRuntime read the working set %d times; it imports MLX and is not needed there", wsCalls)
+	if memCalls != 0 {
+		t.Errorf("MetalRuntime read the working set %d times; it imports MLX and is not needed there", memCalls)
 	}
 	m := currentMetal()
 	for range 3 {
-		if ws := m.workingSetBytes(); ws != macWorkingSet {
-			t.Errorf("workingSetBytes() = %d, want %d", ws, int64(macWorkingSet))
+		if mem := m.memoryInfo(); mem.WorkingSetBytes != macWorkingSet || !mem.FixedKVCache {
+			t.Errorf("memoryInfo() = %+v, want the probe's answer", mem)
 		}
 	}
-	if installedCalls != 1 || wsCalls != 1 {
-		t.Errorf("probes ran %d and %d times, want once each: each starts a Python interpreter", installedCalls, wsCalls)
+	if installedCalls != 1 || memCalls != 1 {
+		t.Errorf("probes ran %d and %d times, want once each: each starts a Python interpreter", installedCalls, memCalls)
 	}
 }
 
@@ -107,10 +128,10 @@ func TestMetalRuntimeAsksEachProbeOnceAndOnlyWhenNeeded(t *testing.T) {
 func TestTheWorkingSetIsNotProbedWithoutVLLMMetal(t *testing.T) {
 	t.Cleanup(func() { UseMetalProbe(nil, nil) })
 
-	wsCalls := 0
-	UseMetalProbe(func() bool { return false }, func() int64 { wsCalls++; return macWorkingSet })
-	if ws := currentMetal().workingSetBytes(); ws != 0 || wsCalls != 0 {
-		t.Errorf("workingSetBytes() = %d after %d probes, want 0 without probing", ws, wsCalls)
+	memCalls := 0
+	UseMetalProbe(func() bool { return false }, func() MetalMemory { memCalls++; return MetalMemory{WorkingSetBytes: macWorkingSet} })
+	if mem := currentMetal().memoryInfo(); mem != (MetalMemory{}) || memCalls != 0 {
+		t.Errorf("memoryInfo() = %+v after %d probes, want nothing without probing", mem, memCalls)
 	}
 }
 
