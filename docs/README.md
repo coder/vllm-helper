@@ -7,7 +7,7 @@ vllm-helper serves large models with vLLM on one GPU machine or several, and swi
 It wraps [vLLM](https://github.com/vllm-project/vllm)'s OpenAI-compatible server with saved model profiles, HuggingFace search, tested multi-machine recipes, and an optional [Coder](https://coder.com) Agents sync.
 
 It was built for unified-memory machines like the NVIDIA DGX Spark, where one machine holds one big model and a bigger model needs two or more working together.
-It works on any Linux machine with an NVIDIA GPU, and experimentally on macOS through vLLM's CPU backend.
+It works on any Linux machine with an NVIDIA GPU, and on Apple Silicon Macs on the GPU through [vllm-metal](./macos.md).
 
 ## How it fits together
 

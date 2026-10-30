@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -34,6 +34,20 @@ func runSetup() error {
 	fmt.Println("== vllm-helper setup ==")
 	fmt.Println()
 
+	// Found before probing, because on a Mac it decides whether memory is
+	// budgeted for the GPU (vllm-metal) or the CPU backend.
+	_, statErr := os.Stat(dirs.ConfigFile())
+	vllmBin := ""
+	if statErr != nil {
+		vllmBin = findVLLM()
+		useMetalProbe(vllmBin)
+	} else if bin, filled, err := fillMissingVLLMBin(dirs.ConfigFile(), findVLLM); err != nil {
+		return err
+	} else if filled {
+		fmt.Printf("Detected vllm at %s and recorded it as VLLM_BIN in %s\n\n", bin, dirs.ConfigFile())
+		useMetalProbe(bin)
+	}
+
 	hw := detect.Probe()
 	fmt.Printf("Hardware:  %d GB memory", hw.TotalMemGB)
 	if hw.GPUName != "" {
@@ -42,6 +56,12 @@ func runSetup() error {
 			kind = "unified memory"
 		}
 		fmt.Printf(", %s (%s)", hw.GPUName, kind)
+	}
+	if hw.Metal {
+		fmt.Print(", serving on the GPU through vllm-metal")
+		if hw.MetalWorkingSetGB > 0 {
+			fmt.Printf(" (%d GB Metal working set)", hw.MetalWorkingSetGB)
+		}
 	}
 	fmt.Printf("\nBudget:    ~%d GB of model weights (%s)\n\n", hw.BudgetGB, hw.BudgetReason)
 
@@ -54,17 +74,9 @@ func runSetup() error {
 		return err
 	}
 
-	if _, err := os.Stat(dirs.ConfigFile()); err == nil {
+	if statErr == nil {
 		fmt.Println("Config already exists at", dirs.ConfigFile(), "-- keeping it.")
 	} else {
-		vllmBin := ""
-		if p, err := exec.LookPath("vllm"); err == nil {
-			if resolved, err := filepath.EvalSymlinks(p); err == nil {
-				vllmBin = resolved
-			} else {
-				vllmBin = p
-			}
-		}
 		content := fmt.Sprintf(`# vllm-helper global config. Sourced (exported) into the server's
 # environment on every switch -- values here apply to every profile.
 
@@ -107,9 +119,9 @@ TIKTOKEN_ENCODINGS_BASE=%s
 		fmt.Println("Wrote", dirs.ConfigFile())
 		if vllmBin == "" {
 			fmt.Println()
-			fmt.Println("WARNING: no 'vllm' executable found on PATH. Install vLLM (e.g. in a")
-			fmt.Println("venv: 'uv venv ~/venvs/vllm && uv pip install vllm'), then set VLLM_BIN")
-			fmt.Println("in config.env to its full path.")
+			for _, line := range vllmInstallHint {
+				fmt.Println(line)
+			}
 			fmt.Println()
 		} else {
 			fmt.Println("Detected vllm at", vllmBin)
@@ -167,6 +179,30 @@ VLLM_API_KEY=%s
 		return nil
 	}
 	return installUnit(cfg)
+}
+
+// fillMissingVLLMBin records a vllm installed since config.env was written
+// without one. The first setup leaves VLLM_BIN empty when it finds nothing and
+// tells the user to install vLLM and run setup again, so the rerun has to fill
+// it in. A VLLM_BIN already set is never replaced. It returns the executable
+// it recorded and whether it wrote config.env.
+func fillMissingVLLMBin(path string, find func() string) (string, bool, error) {
+	f, err := config.ParseEnvFile(path)
+	if err != nil {
+		return "", false, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if strings.TrimSpace(f.Get("VLLM_BIN")) != "" {
+		return "", false, nil
+	}
+	bin := find()
+	if bin == "" {
+		return "", false, nil
+	}
+	f.Set("VLLM_BIN", bin)
+	if err := f.Write(path, 0o644); err != nil {
+		return "", false, fmt.Errorf("recording VLLM_BIN=%s in %s: %w", bin, path, err)
+	}
+	return bin, true, nil
 }
 
 // installUnit installs the host's service unit pointing at this binary's

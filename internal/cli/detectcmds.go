@@ -30,7 +30,10 @@ type doctorReport struct {
 	Toolchain   []toolchainCheck   `json:"toolchain"`
 	Coder       coderStatus        `json:"coder_sync"`
 	HFToken     hfTokenStatus      `json:"hf_token"`
-	Warnings    []string           `json:"warnings"`
+	// WiredLimit is the macOS GPU wired memory cap, nil unless the Mac
+	// serves on the GPU through vllm-metal.
+	WiredLimit *wiredLimit `json:"wired_limit,omitempty"`
+	Warnings   []string    `json:"warnings"`
 }
 
 type doctorConfig struct {
@@ -147,6 +150,7 @@ func gatherDoctor() doctorReport {
 	r.Toolchain = gatherToolchain()
 	r.Coder = gatherCoderStatus(cfg)
 	r.HFToken = gatherHFToken(cfg)
+	r.WiredLimit = gatherWiredLimit(cfg, r.Hardware)
 
 	// Drift checks: the part a human wouldn't spot at a glance.
 	if cfg != nil {
@@ -254,6 +258,14 @@ func renderDoctor(r doctorReport, yes bool) {
 			kind = "unified memory"
 		}
 		fmt.Printf("  gpu:        %s (%s)\n", hw.GPUName, kind)
+		if line := appleBackend(hw); line != "" {
+			fmt.Printf("  backend:    %s\n", line)
+		}
+		if r.WiredLimit != nil {
+			for _, line := range doctorWiredLimitLines(*r.WiredLimit, hw.MetalWorkingSetGB) {
+				fmt.Println(line)
+			}
+		}
 	} else {
 		fmt.Println("  gpu:        no NVIDIA GPU visible (nvidia-smi missing or failed)")
 	}
@@ -395,6 +407,10 @@ func hasBins(bins ...string) bool {
 }
 
 func renderToolchain(checks []toolchainCheck, yes bool) {
+	// Nothing to build on this machine, e.g. vllm-metal's prebuilt wheels.
+	if len(checks) == 0 {
+		return
+	}
 	fmt.Println("BUILD TOOLCHAIN (for vLLM/FlashInfer/Triton JIT kernels)")
 	var missing, hints []string
 	for _, c := range checks {
@@ -569,15 +585,8 @@ func adoptInto(cfg *config.Config) error {
 		changed = true
 		fmt.Printf("Config: VLLM_BIN -> %s\n", s.VLLMBin)
 	}
-	if s.SystemdUnit != "" && cfg.ServiceName() != s.SystemdUnit {
-		cfg.File.Set("SERVICE_NAME", s.SystemdUnit)
-		scope := "system"
-		if s.UserScope {
-			scope = "user"
-		}
-		cfg.File.Set("SERVICE_SCOPE", scope)
+	if adoptService(cfg, s) {
 		changed = true
-		fmt.Printf("Config: SERVICE_NAME -> %s (%s scope)\n", s.SystemdUnit, scope)
 	}
 	if changed {
 		if err := cfg.File.Write(cfg.Dirs.ConfigFile(), 0o644); err != nil {
@@ -605,4 +614,41 @@ func adoptInto(cfg *config.Config) error {
 	fmt.Println("Adoption complete. 'vllm-helper status' now reflects this server, and the")
 	fmt.Println("next 'vllm-helper switch' will manage it.")
 	return nil
+}
+
+// adoptService points SERVICE_NAME and SERVICE_SCOPE at the unit running s,
+// and reports whether either changed. Both are compared: a system-scope job
+// with the default name, adopted from a user-scope config, would otherwise
+// keep status and restart aimed at the wrong domain.
+func adoptService(cfg *config.Config, s detect.Server) bool {
+	if s.SystemdUnit == "" {
+		return false
+	}
+	scope := "system"
+	if s.UserScope {
+		scope = "user"
+	}
+	if cfg.ServiceName() == s.SystemdUnit && cfg.ServiceScope() == scope {
+		return false
+	}
+	cfg.File.Set("SERVICE_NAME", s.SystemdUnit)
+	cfg.File.Set("SERVICE_SCOPE", scope)
+	fmt.Printf("Config: SERVICE_NAME -> %s (%s scope)\n", s.SystemdUnit, scope)
+	return true
+}
+
+// appleBackend says which vLLM backend an Apple Silicon Mac serves with, since
+// the same machine runs on its GPU or its CPU depending on what is installed.
+// Empty on anything else.
+func appleBackend(hw detect.Hardware) string {
+	if !strings.HasPrefix(hw.GPUName, "Apple ") {
+		return ""
+	}
+	if !hw.Metal {
+		return "vLLM CPU backend (install vllm-metal to serve on the GPU)"
+	}
+	if hw.MetalWorkingSetGB > 0 {
+		return fmt.Sprintf("vllm-metal on the GPU, %d GB Metal working set", hw.MetalWorkingSetGB)
+	}
+	return "vllm-metal on the GPU (Metal working set unknown)"
 }

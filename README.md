@@ -9,7 +9,7 @@ Serve large models with vLLM on one GPU machine or several, and switch models wi
 
 </div>
 
-vllm-helper manages [vLLM](https://github.com/vllm-project/vllm)'s OpenAI-compatible server on one machine or across several. Each model's working settings are saved as a profile, and switching to another profile restarts the server on it, whether that model runs on this machine alone or spans a group of them. It was built for unified-memory machines like the NVIDIA DGX Spark, where one machine holds one big model and a bigger model needs two or more working together. It works on any Linux machine with an NVIDIA GPU, and experimentally on macOS through vLLM's CPU backend.
+vllm-helper manages [vLLM](https://github.com/vllm-project/vllm)'s OpenAI-compatible server on one machine or across several. Each model's working settings are saved as a profile, and switching to another profile restarts the server on it, whether that model runs on this machine alone or spans a group of them. It was built for unified-memory machines like the NVIDIA DGX Spark, where one machine holds one big model and a bigger model needs two or more working together. It works on any Linux machine with an NVIDIA GPU, and on Apple Silicon Macs on the GPU through [vllm-metal](https://github.com/vllm-project/vllm-metal).
 
 - Save a model's serving settings as a profile, and switch between profiles with one command
 - Search HuggingFace with every result's weight size checked against the machine's memory, and vLLM flags read from its model card
