@@ -20,7 +20,7 @@ vllm-helper manages [vLLM](https://github.com/vllm-project/vllm)'s OpenAI-compat
 - Keep a [Coder](https://coder.com) deployment's model picker in step with whatever is loaded
 
 > [!NOTE]
-> vllm-helper is experimental. It is a useful way to launch local LLMs, but use it on dedicated hardware that runs only your models, not on a shared server.
+> vllm-helper is experimental. It is a useful way to launch local LLMs, but use it on dedicated hardware that runs only your models, on a safe network.
 >
 > A bug in vllm-helper can affect what it controls: the service that setup installs, the vLLM restart when you switch profiles, the web panel, and the model list that it syncs to Coder. A bug cannot break a request in flight, because vllm-helper is a control plane and inference traffic goes straight to vLLM on its own port. The one exception is a pool, because its router sits in the request path.
 
