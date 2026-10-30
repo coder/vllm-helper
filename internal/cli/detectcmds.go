@@ -17,6 +17,7 @@ import (
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/plugin"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 )
 
 // doctorReport is everything doctor learns, in one machine-readable shape.
@@ -34,10 +35,17 @@ type doctorReport struct {
 }
 
 type doctorConfig struct {
-	Path            string `json:"path"`
-	Port            string `json:"port"`
-	VLLMBin         string `json:"vllm_bin"`
-	VLLMBinOK       bool   `json:"vllm_bin_ok"`
+	Path      string `json:"path"`
+	Port      string `json:"port"`
+	VLLMBin   string `json:"vllm_bin"`
+	VLLMBinOK bool   `json:"vllm_bin_ok"`
+	// Provider is what new profiles are made for. Its server is reported
+	// beside VLLM_BIN when it is not vLLM, since that is then the binary
+	// whose absence stops a new profile serving.
+	Provider        string `json:"provider"`
+	ProviderBin     string `json:"provider_bin,omitempty"`
+	ProviderBinOK   bool   `json:"provider_bin_ok,omitempty"`
+	ProviderError   string `json:"provider_error,omitempty"`
 	Service         string `json:"service"`
 	Scope           string `json:"scope"`
 	ServiceState    string `json:"service_state"`
@@ -105,12 +113,7 @@ func gatherDoctor() doctorReport {
 		cfg = nil
 	} else {
 		bin := cfg.VLLMBin()
-		binOK := false
-		if bin != "" {
-			if info, err := os.Stat(bin); err == nil && info.Mode()&0o111 != 0 {
-				binOK = true
-			}
-		}
+		binOK := isExecutable(bin)
 		runner := svc(cfg)
 		health := runner.Health()
 		// Name what is actually serving. Reporting the configured unit beside
@@ -132,6 +135,16 @@ func gatherDoctor() doctorReport {
 			BudgetOverride:  cfg.ModelBudgetGB(),
 			HarmonyVocab:    hasHarmonyVocab(cfg.Dirs.Data),
 			CoderConfigured: cfg.CoderConfigured(),
+		}
+		if prov, err := provider.Lookup(cfg.Provider()); err != nil {
+			r.Config.Provider = cfg.Provider()
+			r.Config.ProviderError = err.Error()
+		} else {
+			r.Config.Provider = prov.Name()
+			if prov.Name() != provider.VLLM {
+				r.Config.ProviderBin = cfg.Lookup(prov.BinKey(), "")
+				r.Config.ProviderBinOK = isExecutable(r.Config.ProviderBin)
+			}
 		}
 	}
 
@@ -275,7 +288,29 @@ func renderDoctor(r doctorReport, yes bool) {
 		c := r.Config
 		fmt.Printf("  config:     %s\n", c.Path)
 		fmt.Printf("  port:       %s\n", c.Port)
+		// Only when there is something to say: an install that never chose a
+		// provider reads as it always did.
 		switch {
+		case c.ProviderError != "":
+			fmt.Printf("  provider:   %s\n", c.ProviderError)
+		case c.Provider != provider.VLLM:
+			p, _ := provider.Lookup(c.Provider)
+			fmt.Printf("  provider:   %s (new profiles)\n", c.Provider)
+			switch {
+			case c.ProviderBin == "":
+				fmt.Printf("  %-11s NOT SET -- set %s in config.env\n", c.Provider+" bin:", p.BinKey())
+			case !c.ProviderBinOK:
+				fmt.Printf("  %-11s %s (MISSING or not executable)\n", c.Provider+" bin:", c.ProviderBin)
+			default:
+				fmt.Printf("  %-11s %s\n", c.Provider+" bin:", c.ProviderBin)
+			}
+			if !p.Capabilities().APIKey {
+				fmt.Printf("              %s checks no API key: keep it on 127.0.0.1 unless the network is trusted\n", p.BinName())
+			}
+		}
+		switch {
+		case c.VLLMBin == "" && c.Provider != provider.VLLM:
+			// Not a fault: vLLM is optional once new profiles go elsewhere.
 		case c.VLLMBin == "":
 			fmt.Println("  vllm bin:   NOT SET -- set VLLM_BIN in config.env")
 		case !c.VLLMBinOK:
@@ -376,6 +411,15 @@ func renderDoctor(r doctorReport, yes bool) {
 			fmt.Println("  ! " + w)
 		}
 	}
+}
+
+// isExecutable reports whether path names a file that can be run.
+func isExecutable(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode()&0o111 != 0
 }
 
 func orUnknown(s string) string {

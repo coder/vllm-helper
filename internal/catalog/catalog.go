@@ -21,6 +21,7 @@ import (
 	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
 	"github.com/coder/vllm-helper/internal/vllm"
 )
 
@@ -230,6 +231,26 @@ func Inspect(ctx context.Context, m hf.Model, budgetGB float64, caps vllm.Caps, 
 type Plan struct {
 	Opts  profile.CreateOpts
 	Notes []string
+}
+
+// PrepareFor is PrepareProfile for whichever provider will serve the model.
+// Everything PrepareProfile works out (card flags, parser checks, a sized KV
+// cache, the template patch) is in vLLM's terms, so a profile for any other
+// provider names the model and leaves the rest to that server's defaults.
+func PrepareFor(ctx context.Context, dirs config.Dirs, prov provider.Provider, repo string, choice *Choice, caps vllm.Caps, contextTarget int) Plan {
+	if prov.Capabilities().VLLMArgs {
+		return PrepareProfile(ctx, dirs, repo, choice, caps, contextTarget)
+	}
+	return Plan{
+		Opts: profile.CreateOpts{
+			Repo:     repo,
+			Provider: prov.Name(),
+			Source:   "vllm-helper new",
+			Status:   "NOT YET VERIFIED -- served by " + prov.Name() + " with its defaults",
+		},
+		Notes: []string{"Served by " + prov.Name() + ". The flags on a model card are vLLM's, so none were copied; " +
+			"add any this server needs to EXTRA_ARGS."},
+	}
 }
 
 // PrepareProfile works out how to serve a model this machine has never run:

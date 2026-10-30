@@ -14,6 +14,8 @@ import (
 	"github.com/coder/vllm-helper/internal/detect"
 	"github.com/coder/vllm-helper/internal/hf"
 	"github.com/coder/vllm-helper/internal/profile"
+	"github.com/coder/vllm-helper/internal/provider"
+	"github.com/coder/vllm-helper/internal/vllm"
 )
 
 // hubTimeout bounds a call that leaves this machine. The Hub client already
@@ -175,8 +177,18 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 	// An explicit quant is resolved against what the repo actually holds,
 	// so a stale page cannot ask for one that is gone -- or one that vLLM
 	// has no way to load.
+	prov, err := provider.Lookup(s.cfg.Provider())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	var choice *catalog.Choice
 	if want := strings.TrimSpace(r.URL.Query().Get("quant")); want != "" {
+		if !prov.Capabilities().VLLMArgs {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "a quant picks a GGUF file for vLLM to load, but new profiles here are served by " + prov.Name()})
+			return
+		}
 		m, err := hf.Lookup(r.Context(), repo)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{
@@ -238,7 +250,11 @@ func (s *Server) handlePull(w http.ResponseWriter, r *http.Request) {
 		out.Notes = append(out.Notes,
 			"Profile '"+name+"' already existed -- switching to it with its saved settings.")
 	default:
-		plan := catalog.PrepareProfile(r.Context(), s.cfg.Dirs, repo, choice, s.caps(), s.cfg.KVContextTarget())
+		var caps vllm.Caps
+		if prov.Capabilities().VLLMArgs {
+			caps = s.caps()
+		}
+		plan := catalog.PrepareFor(r.Context(), s.cfg.Dirs, prov, repo, choice, caps, s.cfg.KVContextTarget())
 		out.Notes = append(out.Notes, plan.Notes...)
 		if _, err := profile.Create(s.cfg.Dirs, plan.Opts); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
