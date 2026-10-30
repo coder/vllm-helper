@@ -679,3 +679,62 @@ func TestGGUFStatusReportsAnInstallInFlight(t *testing.T) {
 			got.Error, got.Log)
 	}
 }
+
+// fakeCluster stands in for a recipe cluster the CLI found serving.
+type fakeCluster struct{ health service.Health }
+
+func (f fakeCluster) Health() service.Health { return f.health }
+func (f fakeCluster) LastLogs(int) string    { return "cluster log line" }
+func (f fakeCluster) LogHint() string        { return "docker logs vllm-node on the head node" }
+
+// While a recipe cluster serves, the native unit is idle. Reading the unit
+// reported a working model as stopped, and its buttons would have started a
+// second vLLM beside the cluster or claimed a stop that changed nothing.
+func TestClusterIsReportedAndNotDriven(t *testing.T) {
+	vllm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer vllm.Close()
+
+	s := newTestServer(t)
+	s.cfg.File.Set("PORT", portOf(t, vllm.URL))
+	s.SetCluster(func() Cluster { return fakeCluster{health: service.Health{State: "active", SubState: "running"}} })
+
+	got := s.status()
+	if got.Phase != "serving" || !got.Healthy {
+		t.Errorf("phase = %q healthy = %v, want serving and healthy: the cluster is up", got.Phase, got.Healthy)
+	}
+	if got.Service != "cluster" || !got.Cluster || got.ControlReason == "" {
+		t.Errorf("service = %q cluster = %v reason = %q, want the cluster named and the controls explained", got.Service, got.Cluster, got.ControlReason)
+	}
+
+	h := s.Handler(Static())
+	do := func(method, target string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, target, nil)
+		r.Header.Set(tokenHeader, s.token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec
+	}
+	for _, target := range []string{"/api/restart", "/api/stop", "/api/switch/demo", "/api/pull?repo=org/other"} {
+		rec := do(http.MethodPost, target)
+		if rec.Code != http.StatusConflict {
+			t.Errorf("POST %s with a cluster serving = %d, want 409", target, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "command line") {
+			t.Errorf("POST %s: body %q should say where to control the cluster", target, rec.Body.String())
+		}
+	}
+
+	rec := do(http.MethodGet, "/api/logs")
+	if !strings.Contains(rec.Body.String(), "cluster log line") {
+		t.Errorf("logs = %q, want the cluster's log, not the idle unit's", rec.Body.String())
+	}
+
+	// No cluster: the native unit is back in charge and nothing is refused
+	// on the cluster's account.
+	s.SetCluster(func() Cluster { return nil })
+	if got := s.status(); got.Cluster || got.Service != "vllm.service" {
+		t.Errorf("without a cluster: cluster = %v service = %q, want the native unit", got.Cluster, got.Service)
+	}
+}

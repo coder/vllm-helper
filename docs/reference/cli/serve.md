@@ -13,6 +13,10 @@ It listens on localhost unless told otherwise. The panel can restart the
 server and change which model runs, so every request needs the token
 printed below -- open the URL it gives you.
 
+The panel drives the native service (systemd or launchd) only. While a
+recipe container cluster serves, it shows the cluster's status and logs
+but leaves switch, restart and stop to the command line.
+
 ## Usage
 
 ```console

@@ -30,6 +30,7 @@ func newPoolInstallServiceCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "install-service --nodes n1,n2",
 		Short: "Install a systemd service for the pool router",
+		Long:  "Writes a systemd unit that runs 'vllm-helper pool serve' with the given nodes. Linux hosts only.",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return installPoolService(poolServiceOptions{

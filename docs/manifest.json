@@ -113,7 +113,7 @@
         },
         {
           "title": "vllm-helper node",
-          "description": "Manage known nodes",
+          "description": "Register machines by HTTP URL and SSH target",
           "path": "./reference/cli/node.md",
           "children": [
             {
@@ -135,7 +135,7 @@
         },
         {
           "title": "vllm-helper pool",
-          "description": "Replica pools (router)",
+          "description": "Run a router in front of replicas serving the same model",
           "path": "./reference/cli/pool.md",
           "children": [
             {
@@ -214,12 +214,12 @@
         },
         {
           "title": "vllm-helper setup",
-          "description": "First-time setup: detect hardware and existing vLLM, write config",
+          "description": "First-time setup: detect hardware and vLLM, write config, offer to install the service",
           "path": "./reference/cli/setup.md"
         },
         {
           "title": "vllm-helper shard",
-          "description": "Sharded (distributed) serving",
+          "description": "Split one model across machines (Ray or vLLM multiprocessing)",
           "path": "./reference/cli/shard.md",
           "children": [
             {
@@ -263,7 +263,7 @@
         },
         {
           "title": "vllm-helper status",
-          "description": "Service state, active model, and whether the endpoint responds",
+          "description": "Server state, active model, and whether the endpoint responds",
           "path": "./reference/cli/status.md"
         },
         {

@@ -37,6 +37,12 @@ type Server struct {
 	svc   service.Service
 	token string
 
+	// cluster reports the recipe cluster serving the active profile, or nil
+	// when the native unit owns it. The CLI owns that lookup, so it is passed
+	// in; asked per request because a switch from the terminal can change the
+	// answer under a running panel.
+	cluster func() Cluster
+
 	// build identifies this binary in the UI, passed in because the CLI
 	// package owns the ldflag-stamped values.
 	build string
@@ -196,6 +202,31 @@ func New(cfg *config.Config, build string) (*Server, error) {
 	ok, reason := checkPrivilege(cfg)
 	s.setPrivilege(ok, reason)
 	return s, nil
+}
+
+// Cluster is what the panel can learn about a recipe cluster: enough to report
+// it truthfully, nothing that drives it. Without this the panel read the idle
+// native unit while a cluster served, and showed a working model as stopped.
+type Cluster interface {
+	Health() service.Health
+	LastLogs(n int) string
+	LogHint() string
+}
+
+// clusterControlReason is why the controls are off while a cluster serves.
+const clusterControlReason = "A recipe cluster is serving this profile. The panel shows its status " +
+	"but can't control it yet: use 'vllm-helper restart', 'stop' or 'switch' on the command line."
+
+// SetCluster tells the panel how to find a recipe cluster serving the active
+// profile. fn returns nil when the native unit owns it.
+func (s *Server) SetCluster(fn func() Cluster) { s.cluster = fn }
+
+// activeCluster is the cluster serving the active profile, or nil.
+func (s *Server) activeCluster() Cluster {
+	if s.cluster == nil {
+		return nil
+	}
+	return s.cluster()
 }
 
 // checkPrivilege works out up front whether restart/stop can succeed, so the

@@ -89,12 +89,15 @@ func TestEndpointURLFollowsTheHead(t *testing.T) {
 	port := strconv.Itoa(r.Port)
 	useRegistry(t,
 		nodes.Node{Name: "here", Host: "http://127.0.0.1:8001"},
-		nodes.Node{Name: "there", Host: "http://10.99.0.7:8001", SSH: "serve@10.99.0.7"})
+		nodes.Node{Name: "there", Host: "http://10.99.0.7:8001", SSH: "serve@10.99.0.7"},
+		// An ~/.ssh/config alias resolves for ssh only; the endpoint is HTTP.
+		nodes.Node{Name: "aliased", Host: "http://10.99.0.8:8001", SSH: "gpu-worker"})
 	for _, c := range []struct {
 		head, want string
 	}{
 		{"here", "http://localhost:" + port},
 		{"there", "http://10.99.0.7:" + port},
+		{"aliased", "http://10.99.0.8:" + port},
 	} {
 		run := &clusterRunner{recipe: r, opts: recipeLaunchOptions{nodeNames: []string{c.head, "here"}}}
 		got, err := run.endpointURL()
@@ -132,5 +135,23 @@ func TestOutgoingNeedsStop(t *testing.T) {
 		if got := outgoingNeedsStop(c.out, c.in, c.cluster, c.state); got != c.wantStop {
 			t.Errorf("%s: outgoingNeedsStop = %v, want %v", c.name, got, c.wantStop)
 		}
+	}
+}
+
+// A restart relaunches the recipe the profile already describes. It used to
+// print the --no-activate warning that the profile and Coder "still describe
+// whatever ran before", which is false there; the warning stays for a user who
+// actually passed --no-activate.
+func TestRestartDoesNotWarnAboutSkippedActivation(t *testing.T) {
+	c := &clusterRunner{opts: recipeLaunchOptions{nodeNames: []string{"a"}}}
+	o := c.restartOpts()
+	if !o.skipCoder {
+		t.Fatal("restart must not re-sync the profile and Coder")
+	}
+	if note := skippedActivationNote(o); note != "" {
+		t.Errorf("restart printed %q", note)
+	}
+	if note := skippedActivationNote(recipeLaunchOptions{skipCoder: true}); note == "" {
+		t.Error("--no-activate lost its warning")
 	}
 }

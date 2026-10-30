@@ -18,7 +18,7 @@ import (
 func newSetupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "setup",
-		Short:   "First-time setup: detect hardware and existing vLLM, write config",
+		Short:   "First-time setup: detect hardware and vLLM, write config, offer to install the service",
 		GroupID: groupMachine,
 		Args:    cobra.NoArgs,
 		RunE:    func(*cobra.Command, []string) error { return runSetup() },

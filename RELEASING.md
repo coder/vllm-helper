@@ -12,6 +12,12 @@ section that fits: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or
 them, and what breaks if they skip it. Mention the symptom, not the function
 name, for anything they might already be hitting.
 
+Keep it short — a couple of lines, and a third only when there is something the
+reader has to act on. One concrete number often does the work of a paragraph of
+explanation. The reasoning behind a change belongs in the commit message and the
+PR, where it is still there for whoever needs it; the changelog is read by
+someone deciding whether to upgrade.
+
 Purely internal work (refactors, tests, CI) doesn't need an entry.
 
 ## Cutting a release
@@ -31,7 +37,11 @@ Purely internal work (refactors, tests, CI) doesn't need an entry.
 The `release` workflow extracts the matching section, then GoReleaser builds
 linux/amd64, linux/arm64, and darwin/arm64 and publishes the release with that
 section as the body. If the tag has no section in `CHANGELOG.md` the workflow
-fails before publishing anything.
+fails before publishing anything, and if the published body comes back empty it
+fails after — extracting the notes and publishing them are separate steps, and
+v0.4.0 went out with an empty body from a run where the extraction was fine.
+Nothing in `.goreleaser.yaml` may set `changelog.disable`: it discards the file
+passed to `--release-notes` as well.
 
 To preview the notes for a version before tagging:
 

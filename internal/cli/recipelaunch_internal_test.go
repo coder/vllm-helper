@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -182,5 +183,65 @@ func TestRecipeOverridesRefuseADifferentModel(t *testing.T) {
 	_, err := recipeOverrides(cfg, r)
 	if err == nil || !strings.Contains(err.Error(), "other/model") {
 		t.Fatalf("expected a refusal naming the model, got %v", err)
+	}
+}
+
+// A stop used to swallow every docker failure and print "stopped" regardless,
+// so stopping twice, or stopping a node whose docker was unreachable, claimed
+// to have freed GPUs it never touched.
+func TestRecipeStopReportsWhatItFound(t *testing.T) {
+	bin := t.TempDir()
+	fake := "#!/bin/sh\ncase \"$FAKE_DOCKER\" in\n" +
+		"present) echo vllm-node; exit 0 ;;\n" +
+		"absent) echo 'Error response from daemon: No such container: vllm-node' >&2; exit 1 ;;\n" +
+		"absent-ok) echo 'Error response from daemon: No such container: vllm-node' >&2; exit 0 ;;\n" +
+		"*) echo 'Cannot connect to the Docker daemon' >&2; exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	for _, tc := range []struct {
+		docker, want, wantErr string
+	}{
+		{"present", "stopped vllm-node on spark2", ""},
+		{"absent", "no vllm-node container on spark2; nothing to stop", ""},
+		// Newer docker CLIs report the missing container but exit 0 under -f.
+		{"absent-ok", "no vllm-node container on spark2; nothing to stop", ""},
+		{"down", "", "Cannot connect to the Docker daemon"},
+	} {
+		t.Run(tc.docker, func(t *testing.T) {
+			cmd := exec.Command("bash", "-c", stopScript("vllm-node"))
+			cmd.Env = append(os.Environ(), "FAKE_DOCKER="+tc.docker)
+			out, err := cmd.Output()
+			if err != nil {
+				t.Fatalf("script failed: %v", err)
+			}
+			got, err := stopReport("vllm-node", "spark2", string(out))
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("err = %v, want it to carry %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Errorf("report = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// launch takes the same wait flags as switch and restart; it used to return
+// as soon as the containers started while restart on the same recipe waited.
+func TestLaunchWaitsLikeRestart(t *testing.T) {
+	c := newRecipesLaunchCmd()
+	for _, name := range []string{"no-follow", "wait", "timeout"} {
+		if c.Flags().Lookup(name) == nil {
+			t.Errorf("recipes launch has no --%s", name)
+		}
+	}
+	// status reads the active profile, which --no-activate leaves alone.
+	if note := notWaitingNote(recipeLaunchOptions{skipCoder: true, container: "vllm-node"}); !strings.Contains(note, "docker logs -f vllm-node") {
+		t.Errorf("--no-activate --no-follow points at %q", note)
 	}
 }

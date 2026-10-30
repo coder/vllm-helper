@@ -24,7 +24,7 @@ vllm-helper node rm spark2
 ```
 
 - `--host` is where the node answers OpenAI requests.
-- `--ssh` is how this machine orchestrates it.
+- `--ssh` is how this machine orchestrates it. Without it the target is derived from `--host`, and `node ls` marks it `(from --host)`.
 
 The registry lives in `nodes.json` beside your config.
 
@@ -40,6 +40,8 @@ vllm-helper recipes stop <id> --nodes spark1,spark2
 ```
 
 `recipes launch` starts the containers over SSH on the nodes you name, writes a profile of the same name, and points Coder at it.
+Like `switch`, it then waits until the head node answers `/health`, following the log on a terminal; `--no-follow` returns as soon as the containers have started.
+`recipes stop` reports, per node, whether there was a container to remove.
 From then on `status`, `logs`, `restart` and `stop` act on the recipe instead of the native service unit, and `switch` stops it before starting another profile.
 `--dry-run` prints the commands, with the API key redacted, and changes nothing.
 

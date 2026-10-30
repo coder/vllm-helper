@@ -47,10 +47,13 @@ checksum:
 snapshot:
   version_template: "{{ incpatch .Version }}-dev.{{ .ShortCommit }}"
 
-# Release notes come from CHANGELOG.md via --release-notes; don't also
-# generate a list of commit subjects.
+# Release notes come from CHANGELOG.md via --release-notes, which already
+# stops GoReleaser generating a list of commit subjects. Do not disable the
+# changelog to say the same thing twice: "disable" also discards the file
+# passed to --release-notes, which publishes a release with an empty body.
+# v0.4.0 shipped that way.
 changelog:
-  disable: true
+  disable: false
 
 release:
   github:

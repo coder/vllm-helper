@@ -20,7 +20,7 @@ vllm-helper new <org/model-repo> [flags]
 | ---- | ------ |
 | Type | `bool` |
 
-restart and return immediately instead of watching the boot
+return as soon as the server is started instead of watching the boot
 
 ### --quant
 

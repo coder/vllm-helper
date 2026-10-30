@@ -25,7 +25,10 @@ func newServeCmd() *cobra.Command {
 			"and what else could be loaded instead.\n\n" +
 			"It listens on localhost unless told otherwise. The panel can restart the\n" +
 			"server and change which model runs, so every request needs the token\n" +
-			"printed below -- open the URL it gives you.",
+			"printed below -- open the URL it gives you.\n\n" +
+			"The panel drives the native service (systemd or launchd) only. While a\n" +
+			"recipe container cluster serves, it shows the cluster's status and logs\n" +
+			"but leaves switch, restart and stop to the command line.",
 		Example: "  vllm-helper serve\n" +
 			"  vllm-helper serve --listen 0.0.0.0:8080",
 		Args: cobra.NoArgs,
@@ -45,6 +48,14 @@ func runServe(cmd *cobra.Command, addr string) error {
 	if err != nil {
 		return err
 	}
+	// The panel reports a recipe cluster instead of the idle native unit. The
+	// explicit nil keeps a nil *clusterRunner from becoming a non-nil interface.
+	srv.SetCluster(func() web.Cluster {
+		if c := activeClusterRunner(cfg); c != nil {
+			return c
+		}
+		return nil
+	})
 
 	handler := srv.Handler(web.Static())
 	// A token in the query string is exchanged for a cookie on first load,
