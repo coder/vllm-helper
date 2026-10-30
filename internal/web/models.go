@@ -108,6 +108,11 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), hubTimeout)
 	defer cancel()
+	prov, err := provider.Lookup(s.cfg.Provider())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 
 	type result struct {
 		d   catalog.Detail
@@ -120,7 +125,13 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 			ch <- result{err: err}
 			return
 		}
-		ch <- result{d: catalog.Inspect(ctx, m, s.budget(), s.caps(), s.cfg.KVContextTarget())}
+		// Judged for the server a pull would create the profile for, so the
+		// quant list offers what that server loads rather than what vLLM does.
+		var caps vllm.Caps
+		if prov.Capabilities().VLLMArgs {
+			caps = s.caps()
+		}
+		ch <- result{d: catalog.ForProvider(catalog.Inspect(ctx, m, s.budget(), caps, s.cfg.KVContextTarget()), prov)}
 	}()
 
 	select {

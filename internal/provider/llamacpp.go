@@ -6,9 +6,11 @@ import "strings"
 // GGUF on Metal, CUDA or the CPU, and sizes its own context and GPU layers to
 // fit the machine, so a profile needs only the model.
 //
-// Unlike mlx_lm.server it checks an API key, so the command binds every
-// interface the way vllm serve does. It downloads a repo's GGUF itself, and
-// its /health reports healthy only once the model is loaded.
+// Unlike mlx_lm.server it checks an API key, so with one set the command binds
+// every interface the way vllm serve does. Without a key it binds 127.0.0.1,
+// so an unset VLLM_API_KEY never leaves the endpoint open. It downloads a
+// repo's GGUF itself, and its /health reports healthy only once the model is
+// loaded.
 type llamaCPP struct{}
 
 func (llamaCPP) Name() string    { return LlamaCPP }
@@ -26,7 +28,11 @@ func (llamaCPP) Command(s Spec) ([]string, error) {
 	if isLocalGGUF(s.Model) {
 		source = "-m"
 	}
-	args := []string{s.Bin, source, s.Model, "--alias", s.Model, "--host", "0.0.0.0", "--port", s.Port}
+	host := "127.0.0.1"
+	if s.APIKey != "" {
+		host = "0.0.0.0"
+	}
+	args := []string{s.Bin, source, s.Model, "--alias", s.Model, "--host", host, "--port", s.Port}
 	if s.APIKey != "" {
 		args = append(args, "--api-key", s.APIKey)
 	}

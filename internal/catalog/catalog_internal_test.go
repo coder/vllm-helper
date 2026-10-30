@@ -221,6 +221,75 @@ func TestChooseGGUFQuantForLlamaCPP(t *testing.T) {
 	}
 }
 
+// Search and the panel offer quants from what Inspect found, which is judged
+// by vLLM's GGUF plugin. llama.cpp gets the split and subfolder quants the
+// plugin refuses, on a machine whose vLLM has no plugin at all, and MLX gets
+// no GGUF to pick, which PrepareFor would otherwise drop without a word.
+func TestForProvider(t *testing.T) {
+	t.Parallel()
+	inspected := Detail{
+		BudgetGB:    80,
+		GGUFReady:   false,
+		ArchBlocked: "a mixture-of-experts model",
+		NeedsGGUF:   true,
+		All: []hf.Variant{
+			{Name: "BF16", Label: "BF16", SizeGB: 66, GGUF: true, Blocked: "split across files, which vLLM's GGUF plugin cannot load"},
+			{Name: "Q8_0.gguf", Label: "Q8_0", SizeGB: 34, GGUF: true, Blocked: "a mixture-of-experts model"},
+			{Name: "Q4_K_M.gguf", Label: "Q4_K_M", SizeGB: 19, GGUF: true, Blocked: "a mixture-of-experts model"},
+		},
+	}
+	get := func(name string) provider.Provider {
+		p, err := provider.Lookup(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	if got := ForProvider(inspected, get(provider.VLLM)); got.ArchBlocked == "" || got.GGUFReady || got.Best != nil {
+		t.Errorf("vllm: %+v, want Inspect's view unchanged", got)
+	}
+
+	llama := ForProvider(inspected, get(provider.LlamaCPP))
+	if !llama.GGUFReady || llama.ArchBlocked != "" {
+		t.Errorf("llamacpp: GGUFReady %v, ArchBlocked %q, want the plugin's limits lifted", llama.GGUFReady, llama.ArchBlocked)
+	}
+	for _, v := range llama.All {
+		if !v.Servable() {
+			t.Errorf("llamacpp: %s blocked as %q", v.Label, v.Blocked)
+		}
+	}
+	if llama.Best == nil || llama.Best.Label != "BF16" {
+		t.Errorf("llamacpp: Best = %+v, want BF16, the biggest that fits", llama.Best)
+	}
+	if inspected.All[0].Blocked == "" {
+		t.Error("ForProvider changed the Detail it was given")
+	}
+
+	mlx := ForProvider(inspected, get(provider.MLX))
+	if mlx.ArchBlocked == "" || mlx.Best != nil {
+		t.Errorf("mlx: ArchBlocked %q, Best %+v, want the GGUF repo refused", mlx.ArchBlocked, mlx.Best)
+	}
+	for _, v := range mlx.All {
+		if v.Servable() {
+			t.Errorf("mlx: %s is offered, want every GGUF quant ruled out", v.Label)
+		}
+	}
+
+	// A repo with both kinds: llama.cpp can only take the GGUF, and MLX only
+	// the safetensors.
+	mixed := Detail{BudgetGB: 80, All: []hf.Variant{
+		{Name: ".", Label: "default", SizeGB: 65},
+		{Name: "m-Q8_0.gguf", Label: "Q8_0", SizeGB: 34, GGUF: true},
+	}}
+	if got := ForProvider(mixed, get(provider.LlamaCPP)); got.Best == nil || got.Best.Label != "Q8_0" || got.All[0].Servable() {
+		t.Errorf("llamacpp mixed repo: Best %+v, safetensors blocked %q, want Q8_0 and the safetensors ruled out", got.Best, got.All[0].Blocked)
+	}
+	if got := ForProvider(mixed, get(provider.MLX)); got.Best == nil || got.Best.Label != "default" || got.All[1].Servable() {
+		t.Errorf("mlx mixed repo: Best %+v, want the safetensors and the GGUF ruled out", got.Best)
+	}
+}
+
 // gpt-oss ships no vllm serve snippet, so nothing was detected and the profile
 // was written with an empty EXTRA_ARGS. Serving it that way answers plain chat
 // normally but returns an empty message for anything with tools, which reads as

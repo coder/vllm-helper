@@ -23,6 +23,14 @@ A profile without one is a vLLM profile.
 `PROVIDER` in `config.env` only picks the provider for the profiles that `new`, `search` and the panel create from then on.
 Changing it leaves your existing profiles on the server they were made for, so a machine can hold profiles for several providers side by side and switch between them.
 
+Coder sync tells Coder each model's context limit from `MAX_MODEL_LEN`.
+MLX and llama.cpp profiles have none, since those servers size their own context, so Coder is told 131072 tokens.
+Set `MAX_MODEL_LEN` on the profile to tell Coder the real limit. Only vLLM passes it to the server.
+
+```sh
+llm-helper set <profile> MAX_MODEL_LEN=32768
+```
+
 ## MLX
 
 [mlx-lm](https://github.com/ml-explore/mlx-lm) serves models on the Apple Silicon GPU through MLX.
@@ -105,7 +113,7 @@ Without `--quant`, llama.cpp picks `Q4_K_M`, or the first GGUF in the repo when 
 
 Things to know about `llama-server`:
 
-- **It checks the API key.** Clients send `VLLM_API_KEY`, as they do for vLLM, so it listens on every interface like vLLM does. Add `--host 127.0.0.1` to `EXTRA_ARGS` to keep it on this machine.
+- **It checks the API key.** Clients send `VLLM_API_KEY`, as they do for vLLM, so it listens on every interface like vLLM does. Add `--host 127.0.0.1` to `EXTRA_ARGS` to keep it on this machine. With no `VLLM_API_KEY` set, it listens on `127.0.0.1` only.
 - **It downloads the model when it starts.** The first start of a profile takes as long as the download, and the GGUF goes to the same Hugging Face cache vLLM uses.
 - **Its health check waits for the model.** `status` and `switch --wait` report the endpoint up only once the model is loaded and it can serve.
 - **Context comes from the model,** then shrinks to fit memory. Set it with `-c <tokens>` in `EXTRA_ARGS`.
@@ -120,6 +128,6 @@ These apply to vLLM profiles alone:
 
 - Reading flags from the model card, and checking parsers against the installed vLLM.
 - KV cache sizing and the `GPU_MEMORY_UTILIZATION` fit.
-- Checking a GGUF quant against what vLLM's GGUF plugin can load. llama.cpp profiles take `new --quant` without those checks, and MLX profiles refuse it.
+- Checking a GGUF quant against what vLLM's GGUF plugin can load. For llama.cpp, `new --quant`, `search` and the panel offer every GGUF quant in a repo, split and subfolder ones too. For MLX they offer no GGUF quant.
 - `adopt`, which looks for running vLLM servers, and recipes, which run vLLM containers.
 - `shard`, which refuses a profile for another provider.

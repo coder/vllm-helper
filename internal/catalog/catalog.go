@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -221,6 +222,45 @@ func Inspect(ctx context.Context, m hf.Model, budgetGB float64, caps vllm.Caps, 
 		// machine is most useful before pulling tens of gigabytes.
 		d.DetectedFlags, d.DroppedFlags = vllm.Check(flags.ExtraArgs, caps)
 		d.MaxModelLen = flags.MaxModelLen
+	}
+	return d
+}
+
+// ForProvider reshapes what Inspect found for the server that will load the
+// model, since Inspect judges GGUF by vLLM's plugin. A server that picks its
+// own GGUF quant has none of the plugin's limits, so split and subfolder
+// quants are offered, and copies that are not GGUF are not. One that loads no
+// GGUF has every GGUF copy ruled out. Best is ranked again over what is left,
+// so search and the panel never offer what the server cannot load.
+func ForProvider(d Detail, prov provider.Provider) Detail {
+	caps := prov.Capabilities()
+	if caps.VLLMArgs {
+		return d
+	}
+	// GGUFReady and ArchBlocked are about vLLM's plugin, and installing it
+	// would change nothing here.
+	d.GGUFReady = true
+	d.ArchBlocked = ""
+	if !caps.GGUFQuant && d.NeedsGGUF {
+		d.ArchBlocked = "only published as GGUF here, which " + prov.Name() + " does not load"
+	}
+	d.All = slices.Clone(d.All)
+	for i := range d.All {
+		v := &d.All[i]
+		switch {
+		case caps.GGUFQuant && v.GGUF:
+			v.Blocked = ""
+		case caps.GGUFQuant:
+			v.Blocked = prov.Name() + " loads only GGUF"
+		case v.GGUF:
+			v.Blocked = prov.Name() + " does not load GGUF"
+		}
+	}
+	d.Best = nil
+	if d.BudgetGB > 0 && len(d.All) > 1 {
+		if best, ok := (hf.Weights{All: d.All}).BestFit(d.BudgetGB, true); ok {
+			d.Best = &best
+		}
 	}
 	return d
 }

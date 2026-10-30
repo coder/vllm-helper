@@ -107,7 +107,13 @@ func TestLlamaCPPCommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
-		want := []string{bin, tc.source, tc.model, "--alias", tc.model, "--host", "0.0.0.0", "--port", "8001"}
+		// Without a key there is nothing to stop other machines, so it stays
+		// on loopback.
+		host := "127.0.0.1"
+		if tc.wantKey {
+			host = "0.0.0.0"
+		}
+		want := []string{bin, tc.source, tc.model, "--alias", tc.model, "--host", host, "--port", "8001"}
 		if tc.wantKey {
 			want = append(want, "--api-key", tc.apiKey)
 		}
