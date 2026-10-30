@@ -21,7 +21,10 @@ llm-helper was called vllm-helper until it served more than vLLM. The old comman
 - Control a machine from a web panel that also serves these docs
 - Keep a [Coder](https://coder.com) deployment's model picker in step with whatever is loaded
 
-llm-helper is a control plane. Inference traffic goes straight to the inference server on its own port, so a bug in llm-helper cannot break a request in flight. The one exception is a pool, whose router sits in front of the replicas by design.
+> [!NOTE]
+> llm-helper is experimental. It is a useful way to launch local LLMs, but use it on dedicated hardware that runs only your models, on a safe network.
+>
+> A bug in llm-helper can affect what it controls: the service that setup installs, the server restart when you switch profiles, the web panel, and the model list that it syncs to Coder. A bug cannot break a request in flight, because llm-helper is a control plane and inference traffic goes straight to the inference server on its own port. The one exception is a pool, because its router sits in the request path.
 
 ## Quickstart
 
