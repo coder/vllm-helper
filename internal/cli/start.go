@@ -58,5 +58,6 @@ func runStart() error {
 	if err != nil {
 		return err
 	}
+	awaitWiredLimit(cfg)
 	return syscall.Exec(spec.Bin, args, serveEnvFromActive(active))
 }

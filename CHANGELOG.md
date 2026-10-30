@@ -9,6 +9,37 @@ the fact.
 
 ## [Unreleased]
 
+### Added
+
+- macOS serves on the Apple Silicon GPU through vllm-metal. vllm-helper asks
+  the Python beside `VLLM_BIN` whether `vllm_metal` is importable and reads the
+  Metal working set from MLX; `setup` and `doctor` say which backend is in use.
+  Under vllm-metal, new profiles default `GPU_MEMORY_UTILIZATION` to `0.9` of
+  the working set, the model budget is measured against the working set rather
+  than RAM, and `doctor` skips the source-build toolchain. `setup` finds the
+  `vllm` that Homebrew and the install script put off `PATH`. A headless Mac
+  runs the server as a LaunchDaemon with `SERVICE_SCOPE=system`. The CPU
+  backend still works where vllm-metal is not installed.
+- `metal-limit` shows and sets the GPU's wired memory limit on macOS, and
+  installs a boot-time daemon to reapply it, since the sysctl resets on
+  reboot. A higher limit gives vllm-metal more of the RAM at the cost of
+  headroom for macOS.
+
+### Fixed
+
+- macOS system-scope LaunchDaemons ran as root, so the server read root's
+  config and model cache rather than the ones `setup` wrote. They now run as
+  the installing user, with `HOME` set.
+- The Python beside a symlinked `vllm`, as Homebrew installs it, is found by
+  following the link. A Homebrew Cellar path is recorded as the stable `opt`
+  path, so `brew upgrade` no longer leaves `VLLM_BIN` pointing at nothing.
+- A user-scope service that fails to load over SSH now says why: a
+  LaunchAgent needs a GUI login session, and launchd reports only error 125.
+  The message points at `SERVICE_SCOPE=system`.
+- `status` and `doctor` read a macOS system-scope job's state without `sudo`.
+  Going through `sudo` failed without a terminal, so a serving job was
+  reported as inactive. Only `start`, `stop`, `restart` and `switch` need it.
+
 ## [0.5.0] - 2026-10-30
 
 ### Added
