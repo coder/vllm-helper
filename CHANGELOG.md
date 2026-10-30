@@ -9,6 +9,8 @@ the fact.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-30
+
 ### Added
 
 - Documentation, served by the binary itself: `vllm-helper serve` now has a
@@ -276,7 +278,8 @@ the fact.
   users, and an idempotent `install.sh` supporting system- and user-scope
   systemd units.
 
-[Unreleased]: https://github.com/coder/vllm-helper/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/coder/vllm-helper/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/coder/vllm-helper/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/coder/vllm-helper/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/coder/vllm-helper/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/coder/vllm-helper/compare/v0.2.0...v0.3.0
