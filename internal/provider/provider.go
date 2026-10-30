@@ -96,7 +96,7 @@ func Validate(p Provider, s Spec) error {
 	if s.Bin == "" {
 		return fmt.Errorf("%s is not set in config.env", p.BinKey())
 	}
-	if info, err := os.Stat(s.Bin); err != nil || info.Mode()&0o111 == 0 {
+	if !Executable(s.Bin) {
 		return fmt.Errorf("%s (%s) does not exist or is not executable", p.BinKey(), s.Bin)
 	}
 	if s.Model == "" {
@@ -106,4 +106,13 @@ func Validate(p Provider, s Spec) error {
 		return fmt.Errorf("PORT is not set")
 	}
 	return nil
+}
+
+// Executable reports whether path names a file with an execute bit set.
+func Executable(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode()&0o111 != 0
 }

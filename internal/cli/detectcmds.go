@@ -113,7 +113,12 @@ func gatherDoctor() doctorReport {
 		cfg = nil
 	} else {
 		bin := cfg.VLLMBin()
-		binOK := isExecutable(bin)
+		binOK := false
+		if bin != "" {
+			if info, err := os.Stat(bin); err == nil && info.Mode()&0o111 != 0 {
+				binOK = true
+			}
+		}
 		runner := svc(cfg)
 		health := runner.Health()
 		// Name what is actually serving. Reporting the configured unit beside
@@ -143,7 +148,7 @@ func gatherDoctor() doctorReport {
 			r.Config.Provider = prov.Name()
 			if prov.Name() != provider.VLLM {
 				r.Config.ProviderBin = cfg.Lookup(prov.BinKey(), "")
-				r.Config.ProviderBinOK = isExecutable(r.Config.ProviderBin)
+				r.Config.ProviderBinOK = provider.Executable(r.Config.ProviderBin)
 			}
 		}
 	}
@@ -411,15 +416,6 @@ func renderDoctor(r doctorReport, yes bool) {
 			fmt.Println("  ! " + w)
 		}
 	}
-}
-
-// isExecutable reports whether path names a file that can be run.
-func isExecutable(path string) bool {
-	if path == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	return err == nil && info.Mode()&0o111 != 0
 }
 
 func orUnknown(s string) string {

@@ -195,17 +195,26 @@ VLLM_API_KEY=%s
 	return installUnit(cfg)
 }
 
-// lookBin finds a provider's server on PATH, "" when it is not there. vLLM's is
-// resolved through symlinks, as it always was, because its venv's python is
-// looked up beside it. Any other is kept as found, so a package manager's
-// stable link is what config.env records and an upgrade does not break it.
+// lookBin finds a provider's server, "" when there is none. Any server but
+// vLLM's is kept as found on PATH, so a package manager's stable link is what
+// config.env records and an upgrade does not break it.
 func lookBin(prov provider.Provider) string {
+	if prov.Name() == provider.VLLM {
+		return lookVLLM()
+	}
 	p, err := exec.LookPath(prov.BinName())
 	if err != nil {
 		return ""
 	}
-	if prov.Name() != provider.VLLM {
-		return p
+	return p
+}
+
+// lookVLLM finds vllm on PATH, resolved through symlinks because its venv's
+// python is looked up beside it.
+func lookVLLM() string {
+	p, err := exec.LookPath("vllm")
+	if err != nil {
+		return ""
 	}
 	if resolved, err := filepath.EvalSymlinks(p); err == nil {
 		return resolved
