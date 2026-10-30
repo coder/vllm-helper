@@ -137,3 +137,21 @@ func TestOutgoingNeedsStop(t *testing.T) {
 		}
 	}
 }
+
+// A restart relaunches the recipe the profile already describes. It used to
+// print the --no-activate warning that the profile and Coder "still describe
+// whatever ran before", which is false there; the warning stays for a user who
+// actually passed --no-activate.
+func TestRestartDoesNotWarnAboutSkippedActivation(t *testing.T) {
+	c := &clusterRunner{opts: recipeLaunchOptions{nodeNames: []string{"a"}}}
+	o := c.restartOpts()
+	if !o.skipCoder {
+		t.Fatal("restart must not re-sync the profile and Coder")
+	}
+	if note := skippedActivationNote(o); note != "" {
+		t.Errorf("restart printed %q", note)
+	}
+	if note := skippedActivationNote(recipeLaunchOptions{skipCoder: true}); note == "" {
+		t.Error("--no-activate lost its warning")
+	}
+}

@@ -40,20 +40,36 @@ type recipeLaunchOptions struct {
 	sshKey     string
 	dryRun     bool
 	skipCoder  bool
+	// relaunch marks a restart of the recipe the active profile already
+	// describes, as opposed to a user's --no-activate.
+	relaunch bool
 }
 
 func newRecipesLaunchCmd() *cobra.Command {
-	var o recipeLaunchOptions
+	var (
+		o recipeLaunchOptions
+		w waitFlags
+	)
 	c := &cobra.Command{
 		Use:   "launch <id>",
 		Short: "Launch a tested recipe, and point the active profile and Coder at it",
 		Long: `Launch a tested recipe, and point the active profile and Coder at it.
 
+Like switch and restart, it then watches the load until the head node answers
+/health: following the log on a terminal, waiting quietly otherwise. Pass
+--no-follow to return as soon as the containers have started.
+
 To bring the current model back up without switching, use "vllm-helper restart":
 it drives whichever runner the active profile belongs to.`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, a []string) error { return runRecipeLaunch(cmd.Context(), a[0], o) },
+		RunE: func(cmd *cobra.Command, a []string) error {
+			if err := runRecipeLaunch(cmd.Context(), a[0], o); err != nil || o.dryRun {
+				return err
+			}
+			return waitForLaunch(a[0], o, w.opts())
+		},
 	}
+	w.register(c)
 	f := c.Flags()
 	f.StringSliceVar(&o.nodeNames, "nodes", nil, "registry node names in rank order; rank 0 serves the API")
 	f.StringVar(&o.iface, "iface", "", "cluster interface to use instead of the discovered one")
@@ -314,10 +330,63 @@ func runRecipeLaunch(ctx context.Context, id string, o recipeLaunchOptions) erro
 	}
 
 	if o.skipCoder {
-		fmt.Println("skipped profile activation, so the active profile and Coder still describe whatever ran before")
+		if note := skippedActivationNote(o); note != "" {
+			fmt.Println(note)
+		}
 		return nil
 	}
 	return activateRecipeProfile(ctx, cfg, r, local, o)
+}
+
+// waitForLaunch watches a launch the way switch and restart watch theirs. It
+// used to return as soon as the containers started, minutes before the
+// endpoint answered, while restart on the same recipe waited for it.
+//
+// The runner is built from the launch itself rather than the active profile,
+// so a --no-activate launch is watched too.
+func waitForLaunch(id string, o recipeLaunchOptions, w watchOpts) error {
+	if !w.follow && !w.wait {
+		fmt.Println(notWaitingNote(o))
+		return nil
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	tested, err := recipe.LoadTested()
+	if err != nil {
+		return err
+	}
+	r, ok := tested.Get(id)
+	if !ok {
+		return fmt.Errorf("no tested recipe %q", id)
+	}
+	t, err := bootTargetFor(cfg, &clusterRunner{recipe: r, opts: o})
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	return watchTarget(t, r.ID, w)
+}
+
+// notWaitingNote says where to look after a --no-follow launch. Status reads
+// the active profile, which a --no-activate launch left pointing elsewhere.
+func notWaitingNote(o recipeLaunchOptions) string {
+	if o.skipCoder {
+		return "Not waiting for the model to load. The active profile does not describe this launch, so follow it with 'docker logs -f " + o.container + "' on the head node."
+	}
+	return "Not waiting for the model to load. Check progress with 'vllm-helper status'."
+}
+
+// skippedActivationNote is what a launch that left the profile alone tells
+// the user. A restart relaunches the recipe the profile already describes, so
+// warning that the profile still describes "whatever ran before" would be
+// false there.
+func skippedActivationNote(o recipeLaunchOptions) string {
+	if o.relaunch {
+		return ""
+	}
+	return "skipped profile activation, so the active profile and Coder still describe whatever ran before"
 }
 
 // recipeOverrides reads the local override layer for a recipe: the profile of
@@ -525,10 +594,38 @@ func runRecipeStop(id string, o recipeLaunchOptions) error {
 			fmt.Printf("# %s\n%s\n", name, cmdline)
 			continue
 		}
-		if _, err := nodeScript(m, o.sshKey, cmdline+" >/dev/null 2>&1 || true", nil); err != nil {
+		out, err := nodeScript(m, o.sshKey, stopScript(o.container), nil)
+		if err != nil {
 			return fmt.Errorf("stop on %s: %w", name, err)
 		}
-		fmt.Printf("stopped %s on %s\n", o.container, name)
+		msg, err := stopReport(o.container, name, out)
+		if err != nil {
+			return err
+		}
+		fmt.Println(msg)
 	}
 	return nil
+}
+
+// stopScript removes the container and says whether there was one. Swallowing
+// every failure reported "stopped" for a container that was never there, and
+// equally for a docker that could not be reached, which left GPUs held.
+func stopScript(container string) string {
+	q := recipe.ShellQuote(container)
+	return `out=$(docker rm -f ` + q + ` 2>&1); rc=$?; ` +
+		`case "$out" in *"No such container"*) echo absent ;; ` +
+		`*) if [ "$rc" -eq 0 ]; then echo removed; else printf 'error: %s\n' "$out"; fi ;; esac`
+}
+
+// stopReport turns stopScript's answer into what the user is told.
+func stopReport(container, node, out string) (string, error) {
+	out = strings.TrimSpace(out)
+	switch {
+	case out == "removed":
+		return fmt.Sprintf("stopped %s on %s", container, node), nil
+	case out == "absent":
+		return fmt.Sprintf("no %s container on %s; nothing to stop", container, node), nil
+	default:
+		return "", fmt.Errorf("stop %s on %s: %s", container, node, strings.TrimSpace(strings.TrimPrefix(out, "error:")))
+	}
 }

@@ -198,9 +198,14 @@ func (c *clusterRunner) Restart() error {
 	if err := c.needNodes(); err != nil {
 		return err
 	}
+	return runRecipeLaunch(context.Background(), c.recipe.ID, c.restartOpts())
+}
+
+func (c *clusterRunner) restartOpts() recipeLaunchOptions {
 	o := c.opts
 	o.skipCoder = true
-	return runRecipeLaunch(context.Background(), c.recipe.ID, o)
+	o.relaunch = true
+	return o
 }
 
 func (c *clusterRunner) Stop() error {

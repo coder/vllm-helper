@@ -31,14 +31,18 @@ const (
 	groupModels  = "models"
 	groupServer  = "server"
 	groupMachine = "machine"
+	// Node, pool and shard drive several machines; they don't belong under a
+	// heading about the one this binary runs on.
+	groupMultiNode = "multi-node"
 )
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "vllm-helper",
-		Short: "Manage a vLLM deployment on this machine",
-		Long: "vllm-helper -- manage a vLLM deployment on this machine (models, switching,\n" +
-			"optional Coder Agents sync). Only one model is loaded at a time.",
+		Short: "Manage vLLM on one GPU machine or several",
+		Long: "vllm-helper -- serve large models with vLLM on one GPU machine or\n" +
+			"several (models, switching, sharding, replica pools, recipes, optional\n" +
+			"Coder Agents sync). Per machine, only one native model is loaded at a time.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// describeBuild, not Version: on the dev channel every build shares
@@ -56,6 +60,7 @@ func newRootCmd() *cobra.Command {
 		&cobra.Group{ID: groupModels, Title: "Model profiles:"},
 		&cobra.Group{ID: groupServer, Title: "Running server:"},
 		&cobra.Group{ID: groupMachine, Title: "This machine:"},
+		&cobra.Group{ID: groupMultiNode, Title: "More than one machine:"},
 	)
 
 	root.AddCommand(
@@ -84,7 +89,7 @@ func newRootCmd() *cobra.Command {
 		newStartCmd(),
 		newVersionCmd(),
 
-		// Multi-node scaffolding
+		// Multi-machine commands, so they don't hide in "This machine:".
 		newNodeCmd(),
 		newPoolCmd(),
 		newShardCmd(),

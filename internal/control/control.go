@@ -118,8 +118,14 @@ func NotifyRemoved(ctx context.Context, cfg *config.Config, name string, out io.
 // binds only once the weights are in memory, so this reports 0 for minutes
 // during an ordinary start.
 func ProbeHealth(port string) (int, bool) {
+	return ProbeHealthURL(fmt.Sprintf("http://localhost:%s", port))
+}
+
+// ProbeHealthURL is ProbeHealth for a server that is not on this machine, such
+// as a recipe cluster whose head is another node.
+func ProbeHealthURL(base string) (int, bool) {
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://localhost:%s/health", port))
+	resp, err := client.Get(strings.TrimSuffix(base, "/") + "/health")
 	if err != nil {
 		return 0, false
 	}

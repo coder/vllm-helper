@@ -17,7 +17,7 @@ import (
 )
 
 func newShardCmd() *cobra.Command {
-	c := &cobra.Command{Use: "shard", Short: "Sharded (distributed) serving", GroupID: groupMachine}
+	c := &cobra.Command{Use: "shard", Short: "Split one model across machines (Ray or vLLM multiprocessing)", GroupID: groupMultiNode}
 	c.AddCommand(newShardInstallRayCmd(), newShardStartCmd(), newShardStopCmd(), newShardStatusCmd())
 	return c
 }
@@ -76,7 +76,7 @@ func newShardStartCmd() *cobra.Command {
 	c.Flags().StringVar(&o.backend, "backend", shardBackendRay, "distributed executor backend: ray or mp")
 	c.Flags().StringVar(&o.headIP, "head-ip", "", "IP workers use to reach the distributed head")
 	c.Flags().StringVar(&o.iface, "iface", "", "network interface for distributed traffic")
-	c.Flags().StringVar(&o.port, "port", "", "openAI API port (defaults to config PORT)")
+	c.Flags().StringVar(&o.port, "port", "", "OpenAI API port (defaults to config PORT)")
 	c.Flags().IntVar(&o.pp, "pp", 2, "pipeline parallel size")
 	c.Flags().IntVar(&o.tp, "tp", 1, "tensor parallel size")
 	c.Flags().IntVar(&o.rayPort, "ray-port", 6379, "ray head port")
@@ -138,7 +138,7 @@ func newShardStopCmd() *cobra.Command {
 	}
 	common.register(c)
 	c.Flags().StringVar(&backend, "backend", shardBackendAll, "backend to stop: all, ray, or mp")
-	c.Flags().StringVar(&serviceName, "service-name", "vllm.service", "service to restart with --start-services")
+	c.Flags().StringVar(&serviceName, "service-name", "vllm.service", "service to start with --start-services")
 	c.Flags().BoolVar(&startServices, "start-services", false, "start the normal vLLM service after stopping sharded runtimes")
 	return c
 }

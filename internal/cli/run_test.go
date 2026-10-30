@@ -120,7 +120,7 @@ func TestRunHelp(t *testing.T) {
 		}
 		// The groups are what keep the command list readable; an ungrouped
 		// command silently lands under "Additional Commands".
-		for _, group := range []string{"Model profiles:", "Running server:", "This machine:"} {
+		for _, group := range []string{"Model profiles:", "Running server:", "This machine:", "More than one machine:"} {
 			if !strings.Contains(stdout, group) {
 				t.Errorf("%v is missing the %q group:\n%s", args, group, stdout)
 			}

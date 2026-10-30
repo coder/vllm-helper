@@ -102,10 +102,16 @@ function renderStatus(s) {
   el.failure.hidden = !failing;
   if (failing) el.failure.textContent = s.last_log;
 
-  el.privilege.hidden = s.privileged;
-  if (!s.privileged) el.privilege.textContent = s.priv_reason;
+  // A recipe cluster is reported but not driven from here, so its reason
+  // takes the same slot as a missing privilege. Removing a profile other than
+  // the active one is still fine: it does not touch whatever is serving.
+  const canControl = s.privileged && !s.cluster;
+  el.privilege.hidden = canControl;
+  if (!canControl) {
+    el.privilege.textContent = s.cluster ? s.control_reason : s.priv_reason;
+  }
 
-  const canAct = s.privileged && !busy;
+  const canAct = canControl && !busy;
   el.restart.disabled = !canAct;
   el.stop.disabled = !canAct || s.phase === "stopped" || s.phase === "idle";
   document
@@ -113,7 +119,10 @@ function renderStatus(s) {
     .forEach((b) => (b.disabled = !canAct || b.dataset.switch === s.profile));
   document
     .querySelectorAll("[data-remove]")
-    .forEach((b) => (b.disabled = !canAct || b.dataset.remove === s.profile));
+    .forEach(
+      (b) =>
+        (b.disabled = !s.privileged || busy || b.dataset.remove === s.profile),
+    );
 }
 
 function renderMachine(m) {

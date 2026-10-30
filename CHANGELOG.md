@@ -25,7 +25,8 @@ the fact.
   report where every setting came from. `recipes launch` starts the containers
   over SSH on the nodes you name — a recipe may span machines — writes a profile
   of the same name, and points Coder at what is now serving, so the picker and
-  the server cannot disagree. `recipes stop` clears them again.
+  the server cannot disagree, then watches the load like `switch` does.
+  `recipes stop` clears them again.
 - `status`, `logs`, `restart` and `stop` follow whatever is actually serving.
   They used to assume the init-system service and would report systemd as
   healthy while a container did the work, or print "Stopped vllm.service" about
@@ -36,7 +37,8 @@ the fact.
   off while a launch is in flight: a model takes minutes to load, and a
   watchdog that reads that silence as an outage restarts the previous profile
   over the top of the new one. A deliberate `stop` or `systemctl stop` is left
-  stopped. The web panel's buttons do not drive recipes yet; use the CLI.
+  stopped. The web panel shows a recipe's health and log, but its buttons do
+  not drive recipes yet; use the CLI.
 - Switching between a recipe and a native profile stops the one being left,
   so neither keeps the GPUs and port the other needs.
 - Declared deviations. Where an entry differs from the upstream recipe it came

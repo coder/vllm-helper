@@ -8,6 +8,10 @@ description: "Launch a tested recipe, and point the active profile and Coder at 
 
 Launch a tested recipe, and point the active profile and Coder at it.
 
+Like switch and restart, it then watches the load until the head node answers
+/health: following the log on a terminal, waiting quietly otherwise. Pass
+--no-follow to return as soon as the containers have started.
+
 To bring the current model back up without switching, use "vllm-helper restart":
 it drives whichever runner the active profile belongs to.
 
@@ -61,6 +65,14 @@ rendezvous port for the ranks
 
 launch only; leave the active profile and Coder alone
 
+### --no-follow
+
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
+
+return as soon as the server is started instead of watching the boot
+
 ### --nodes
 
 |         |               |
@@ -77,3 +89,19 @@ registry node names in rank order; rank 0 serves the API
 | Type | `string` |
 
 private key for reaching non-head nodes
+
+### --timeout
+
+|      |            |
+| ---- | ---------- |
+| Type | `duration` |
+
+give up waiting after this long (default: wait forever)
+
+### --wait
+
+|      |        |
+| ---- | ------ |
+| Type | `bool` |
+
+block until the endpoint is healthy, without streaming logs

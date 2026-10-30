@@ -5,7 +5,7 @@
 
 Serve large models with vLLM on one GPU machine or several, and switch models with one command.
 
-[Quickstart](#quickstart) | [Docs](docs/README.md) | [CLI reference](docs/reference/cli.md) | [Changelog](CHANGELOG.md)
+[Quickstart](#quickstart) | [Docs][docs] | [CLI reference][docs-cli-reference] | [Changelog](CHANGELOG.md)
 
 </div>
 
@@ -23,7 +23,7 @@ vllm-helper is a control plane. Inference traffic goes straight to vLLM on its o
 
 ## Quickstart
 
-> See [Install and upgrade](docs/install.md) for what setup writes and how to stay current, and [Running on macOS](docs/macos.md) for Apple Silicon.
+> See [Install and upgrade][docs-install] for what setup writes and how to stay current, and [Running on macOS][docs-macos] for Apple Silicon.
 
 vllm-helper manages an existing vLLM install; it does not install vLLM. Download the [latest release](https://github.com/coder/vllm-helper/releases) for Linux amd64/arm64 or macOS arm64, then install it and run setup:
 
@@ -54,7 +54,7 @@ vllm-helper recipes list                              # what is tested, and on w
 vllm-helper recipes launch <id> --nodes spark1,spark2
 ```
 
-[More than one machine](docs/multi-node.md) covers recipes, pools and shards.
+[More than one machine][docs-multi-node] covers recipes, pools and shards.
 
 ## How it works
 
@@ -86,18 +86,18 @@ vllm-helper recipes list          # tested configurations, and what verified the
 
 ## Documentation
 
-The docs are compiled into the binary: run `vllm-helper serve` and open the **Docs** tab. The same pages are in [`docs/`](docs/README.md):
+The docs are compiled into the binary: run `vllm-helper serve` and open the **Docs** tab. The same pages are on the [docs site][docs], and their Markdown source is in [`docs/`](docs/README.md):
 
-- [**Quickstart**](docs/quickstart.md): From nothing to serving a model
-- [**Profiles**](docs/profiles.md): What a profile holds, and how to edit one
-- [**Models and quantizations**](docs/models.md): Finding a model that fits, and choosing a quant
-- [**Memory budget**](docs/memory.md): How vllm-helper decides what this machine can hold
-- [**Web panel**](docs/panel.md): The browser control plane, and the permissions it needs
-- [**Coder integration**](docs/coder.md): Keep a Coder deployment's model picker truthful
-- [**Recipes**](docs/recipes.md): Tested launch configurations, and how local overrides layer on top
-- [**More than one machine**](docs/multi-node.md): Run recipes, pools and shards across machines
-- [**Troubleshooting**](docs/troubleshooting.md): When the endpoint is down or the service crash-loops
-- [**CLI reference**](docs/reference/cli.md): Every command and flag, generated from the CLI
+- [**Quickstart**][docs-quickstart]: From nothing to serving a model
+- [**Profiles**][docs-profiles]: What a profile holds, and how to edit one
+- [**Models and quantizations**][docs-models]: Finding a model that fits, and choosing a quant
+- [**Memory budget**][docs-memory]: How vllm-helper decides what this machine can hold
+- [**Web panel**][docs-panel]: The browser control plane, and the permissions it needs
+- [**Coder integration**][docs-coder]: Keep a Coder deployment's model picker truthful
+- [**Recipes**][docs-recipes]: Tested launch configurations, and how local overrides layer on top
+- [**More than one machine**][docs-multi-node]: Run recipes, pools and shards across machines
+- [**Troubleshooting**][docs-troubleshooting]: When the endpoint is down or the service crash-loops
+- [**CLI reference**][docs-cli-reference]: Every command and flag, generated from the CLI
 
 ## Support
 
@@ -118,3 +118,24 @@ Notable changes go in [CHANGELOG.md](CHANGELOG.md). Maintainers cutting a releas
 ## License
 
 [Apache-2.0](LICENSE)
+
+<!--
+  TEMPORARY DOMAIN: vllm-helper-docs.up.railway.app is the Railway-generated
+  domain for the public docs site (Dockerfile.docs), in use until it has a
+  permanent hostname. When that changes, update these links and the BASE_URL
+  variable on the Railway docs service.
+-->
+
+[docs]: https://vllm-helper-docs.up.railway.app/docs
+[docs-cli-reference]: https://vllm-helper-docs.up.railway.app/docs/reference/cli
+[docs-install]: https://vllm-helper-docs.up.railway.app/docs/install
+[docs-macos]: https://vllm-helper-docs.up.railway.app/docs/macos
+[docs-multi-node]: https://vllm-helper-docs.up.railway.app/docs/multi-node
+[docs-quickstart]: https://vllm-helper-docs.up.railway.app/docs/quickstart
+[docs-profiles]: https://vllm-helper-docs.up.railway.app/docs/profiles
+[docs-models]: https://vllm-helper-docs.up.railway.app/docs/models
+[docs-memory]: https://vllm-helper-docs.up.railway.app/docs/memory
+[docs-panel]: https://vllm-helper-docs.up.railway.app/docs/panel
+[docs-coder]: https://vllm-helper-docs.up.railway.app/docs/coder
+[docs-recipes]: https://vllm-helper-docs.up.railway.app/docs/recipes
+[docs-troubleshooting]: https://vllm-helper-docs.up.railway.app/docs/troubleshooting
